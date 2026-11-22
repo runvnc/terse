@@ -4,7 +4,7 @@ A Terse32 program runs at the same speed on every host. Time comes in frames, 60
 
 ## The frame loop
 
-```go examples/host/go/machine/frames.go
+```go from examples/host/go/machine/frames.go
 const FrameBudget = 125000
 
 const (
@@ -26,7 +26,7 @@ type Machine struct {
 
 `Machine` is the processor of step 1 with what the frame loop keeps: the budget, the frame counter, and how the machine stopped. `Devices` is for calls to other devices; it stays empty until step 3.
 
-```go examples/host/go/machine/frames.go
+```go from examples/host/go/machine/frames.go
 func (m *Machine) RunFrame() {
     m.Budget += FrameBudget
     for m.Budget > 0 && m.Stopped == Running {
@@ -67,7 +67,7 @@ In order:
 
 ## Four calls
 
-```go examples/host/go/machine/frames.go
+```go from examples/host/go/machine/frames.go
 func (m *Machine) system(fn uint32) uint32 {
     switch fn {
     case 0:
@@ -94,7 +94,7 @@ func (m *Machine) system(fn uint32) uint32 {
 
 ## The program
 
-```go examples/host/go/step2/main.go
+```go from examples/host/go/step2/main.go
 package main
 
 import (

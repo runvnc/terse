@@ -48,16 +48,24 @@
 
 /* ======================================================= the device ===== */
 
-enum { HISTORY = 16, SECTION = 4 + 4 + HISTORY };       /* x, rolls, history */
+/* The state: x, rolls, history. */
+enum { HISTORY = 16, SECTION = 4 + 4 + HISTORY };
 
 typedef struct {
-    uint32_t x;                         /* the generator: xorshift32, never 0 */
-    uint32_t rolls;                     /* rolls so far */
-    uint8_t last[HISTORY];              /* roll n at last[n % 16] */
+    uint32_t x;             /* xorshift32, never 0 */
+    uint32_t rolls;         /* rolls so far */
+    uint8_t last[HISTORY];  /* roll n at last[n % 16] */
 } Dice;
 
-static void reset(Dice *d) { memset(d, 0, sizeof *d); d->x = 0x2545F491; }
-static void seed(Dice *d, uint32_t s) { d->x = s ? s : 0x2545F491; }
+static void reset(Dice *d)
+{
+    memset(d, 0, sizeof *d);
+    d->x = 0x2545F491;
+}
+static void seed(Dice *d, uint32_t s)
+{
+    d->x = s ? s : 0x2545F491;
+}
 static uint32_t roll(Dice *d, uint32_t sides)
 {
     if (!sides) return 0;
@@ -70,7 +78,7 @@ static uint32_t roll(Dice *d, uint32_t sides)
 static void history(const Dice *d, uint32_t n, uint8_t *out)
 {
     for (uint32_t i = 0; i < n; i++) {
-        uint32_t k = d->rolls - n + i;              /* which roll, if any */
+        uint32_t k = d->rolls - n + i;  /* which roll, if any */
         out[i] = d->rolls >= n - i ? d->last[k % HISTORY] : 0;
     }
 }

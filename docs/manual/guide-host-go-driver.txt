@@ -12,7 +12,7 @@ cargo build --release -p terse-devices
 
 Every message is a length (4 bytes, of the rest), an address (the machine, 4 bytes, always 0 here; a slot; 3 zero bytes) and a body whose first byte is its type. Integers are little-endian. `send` writes one; `request` writes one and reads the reply, which must be of the type asked for. Anything else, an `ERROR` from the driver included, ends the run with status 3:
 
-```go examples/host/go/machine/bus.go
+```go from examples/host/go/machine/bus.go
 func check(err error) {
     if err != nil {
         fmt.Fprintln(os.Stderr, "bus:", err)
@@ -44,7 +44,7 @@ func (b *Bus) request(slot, want byte, body []byte) []byte {
 
 ## Starting the driver
 
-```go examples/host/go/machine/bus.go
+```go from examples/host/go/machine/bus.go
 type Bus struct {
     m      *Machine
     conn   net.Conn
@@ -132,7 +132,7 @@ In order:
 
 ## Calls through the table
 
-```go examples/host/go/machine/bus.go
+```go from examples/host/go/machine/bus.go
 func (b *Bus) Call(slot, fn uint32) (uint32, int64) {
     m := b.m
     entry := b.tables[slot][fn]
@@ -202,7 +202,7 @@ A function the table does not have is a call the machine does not have: `FFFF_FF
 
 BEGIN (`30h`) starts each frame: the frame counter, the time (0 here), no input events, an empty replay field. The reply, INPUTS, may charge the frame and bring events; the terminal does neither, and this host reads only the charge:
 
-```go examples/host/go/machine/bus.go
+```go from examples/host/go/machine/bus.go
 func (b *Bus) Begin(frame uint32) int64 {
     begin := le.AppendUint32([]byte{0x30, 0, 0, 0}, frame)
     begin = append(begin, make([]byte, 12)...)
@@ -212,7 +212,7 @@ func (b *Bus) Begin(frame uint32) int64 {
 
 END (`31h`) ends the frame, with no reply. STATE (`40h`) asks for a slot's part of the machine's state; the terminal's starts with its 2,400 cells, 4 bytes each: a character (16 bits), a foreground and a background colour. SHUTDOWN (`60h`) stops the driver:
 
-```go examples/host/go/machine/bus.go
+```go from examples/host/go/machine/bus.go
 func (b *Bus) End() {
     stopped := byte(flag(b.m.Stopped != Running))
     end := []byte{0x31, stopped, 0, 0}
@@ -233,7 +233,7 @@ func (b *Bus) Close() {
 
 ## The program
 
-```go examples/host/go/step3/main.go
+```go from examples/host/go/step3/main.go
 package main
 
 import (

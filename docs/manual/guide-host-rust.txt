@@ -6,7 +6,7 @@ This step reads a program file, sets up memory and runs the processor until the 
 
 A program file (`.terse`) is a 32-byte header, two bytes for each device the program uses, then the ROM: the program's code and data. `load` checks the header and makes the processor at reset: the ROM at `0001_0000h`; the RAM, as many 8 KiB pages as the header asks for, all zero, at `0010_0000h`; `pc` on the first byte of ROM and the stack pointer `x2` at the end of RAM.
 
-```rust examples/host/rust/src/image.rs
+```rust from examples/host/rust/src/image.rs
 use crate::cpu::{Cpu, RAM_BASE, ROM_BASE};
 
 pub struct Device {
@@ -55,7 +55,7 @@ The list of devices matters from step 3 on.
 
 The processor is RV32IMC: RISC-V's 32-bit integer instructions, multiply and divide (M) and 16-bit compressed forms of the common ones (C). `decode` takes a 32-bit instruction apart into its fields:
 
-```rust examples/host/rust/src/decode.rs
+```rust from examples/host/rust/src/decode.rs
 #[derive(Clone, Copy, Default)]
 pub struct Instruction {
     pub op: u32,
@@ -106,7 +106,7 @@ pub fn decode(i: u32) -> Instruction {
 
 `expand` gives a 16-bit instruction the same fields, as the 32-bit instruction it stands for, so that one `execute` runs both. After the immediates, whose bits the 16-bit forms scatter, its first cases are:
 
-```rust examples/host/rust/src/decode.rs
+```rust from examples/host/rust/src/decode.rs
     let none = Instruction::default();
     let i = Instruction { rd, rs1: rd, ..none };
     let compact = Instruction { rd: rdc, rs1: rdc, ..none };
@@ -147,7 +147,7 @@ and so on for the other 16-bit forms, 140 lines in all. A form the machine does 
 
 `step` fetches one instruction from ROM or RAM, 16 or 32 bits, and runs it. It returns what the instruction costs, which step 2 uses, and whether it was an `ecall`, or a fault:
 
-```rust examples/host/rust/src/cpu.rs
+```rust from examples/host/rust/src/cpu.rs
     pub fn step(&mut self) -> Result<(i64, bool), Fault> {
         let mut raw = self.parcel(self.pc)?;
         let (instruction, next) = if raw & 3 == 3 {
@@ -170,7 +170,7 @@ and so on for the other 16-bit forms, 140 lines in all. A form the machine does 
 
 `execute` is one `match` on the opcode, with the encoding's checks as guards. Each arm gives the value for `rd` (never written to `x0`), if any, and moves `pc` on; anything no arm takes is an illegal instruction:
 
-```rust examples/host/rust/src/cpu.rs
+```rust from examples/host/rust/src/cpu.rs
     fn execute(&mut self, i: Instruction, mut next: u32)
     -> Result<bool, Fault> {
         let (pc, link) = (self.pc, next);
@@ -236,7 +236,7 @@ A fault stops the machine with `pc` on the faulting instruction, which is not ca
 
 `ecall` calls a device: `a7` (`x17`) holds the device's slot × 256 + the function, `a0` to `a5` (`x10` to `x15`) the arguments, and the result goes in `a0`. This step has one call, `exit`, `106h`; every other call returns `FFFF_FFFFh`, as a call the machine does not have must:
 
-```rust examples/host/rust/src/bin/step1.rs
+```rust from examples/host/rust/src/bin/step1.rs
 use host::image::load;
 use std::error::Error;
 use std::process::exit;

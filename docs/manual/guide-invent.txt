@@ -1,0 +1,114 @@
+# Invent a device
+
+The devices of the specification, the terminal, the vector displays, sound and the others, are each written down exactly, and every host has them. To try an idea for a new one there is a shortcut, the **experimental device**: a driver says what its calls are, what they cost and how big its state is, and the core checks and charges the calls and keeps the state without knowing what the device means. Programs reach it on a slot from 240 to 255, by its name. This page walks through one, the driver in C and a program that uses it in C; [the next page](terse:{guide-invent-rust}) has the program in Rust.
+
+## The device
+
+`example.dice` is a dice roller with a memory. Its driver, `native/driver-experimental/dice.c` in the Tersenet sources, is one file of C, about 310 lines. This is the device itself:
+
+```c native/driver-experimental/dice.c /the device ===/ /the bus ===/
+/* The state: x, rolls, history. */
+enum { HISTORY = 16, SECTION = 4 + 4 + HISTORY };
+
+typedef struct {
+    uint32_t x;             /* xorshift32, never 0 */
+    uint32_t rolls;         /* rolls so far */
+    uint8_t last[HISTORY];  /* roll n at last[n % 16] */
+} Dice;
+
+static void reset(Dice *d)
+{
+    memset(d, 0, sizeof *d);
+    d->x = 0x2545F491;
+}
+static void seed(Dice *d, uint32_t s)
+{
+    d->x = s ? s : 0x2545F491;
+}
+static uint32_t roll(Dice *d, uint32_t sides)
+{
+    if (!sides) return 0;
+    d->x ^= d->x << 13; d->x ^= d->x >> 17; d->x ^= d->x << 5;
+    uint32_t r = 1 + d->x % sides;
+    d->last[d->rolls++ % HISTORY] = r;
+    return r;
+}
+/* The last n rolls, oldest first; 0 where there were fewer. */
+static void history(const Dice *d, uint32_t n, uint8_t *out)
+{
+    for (uint32_t i = 0; i < n; i++) {
+        uint32_t k = d->rolls - n + i;  /* which roll, if any */
+        out[i] = d->rolls >= n - i ? d->last[k % HISTORY] : 0;
+    }
+}
+```
+
+The rest is the device bus, as in any driver: the messages HELLO, OPEN, CALL, STATE and the others over a local socket. Three things differ from a driver of a numbered device, each marked `EXPERIMENTAL` in the file:
+
+- **HELLO.** The core names the device it wants, `example.dice`, and one slot; the driver answers with its name and the most bytes its state can have.
+- **Charges.** Every call's cost is declared in the driver's call table, and the core charges by the table, never by what the driver says afterwards.
+- **State.** The 24 bytes of `Dice` are the driver's own layout. The core keeps them in the machine's state, so the state hash, snapshots and replays work as for any device.
+
+Nothing in the device reads a clock or a random source: the program seeds it.
+
+## The program
+
+`roll.c`:
+
+```c examples/program/c/roll.c
+#include "terse.h"
+
+#define DICE 240
+#define DICE_SEED (DICE << 8 | 0)
+#define DICE_ROLL (DICE << 8 | 1)
+
+int main(void)
+{
+    uint32_t seed;
+    if (!terse_has_device(DICE)) {
+        term_puts("No dice here: run me with example.dice.\n");
+        for (;;)
+            terse_wait_frame();
+    }
+    terse_random(&seed, 4);
+    terse_call(DICE_SEED, seed, 0, 0);
+    for (;;) {
+        for (int frame = 0; frame < 30; frame++)
+            terse_wait_frame();
+        term_puts("You rolled ");
+        term_putc('0' + terse_call(DICE_ROLL, 6, 0, 0));
+        term_puts(".\n");
+    }
+}
+```
+
+Function `f` of the device on slot 240 is the call `(240 << 8) | f`, made with `terse_call`; `terse_has_device` says whether the host granted the device. The seed comes from the machine's own random bytes, which the host records, so a replay rolls the same dice.
+
+## Build them and run them
+
+The image names the device on a slot, as optional: an experimental device is never required, and a host without its driver runs the program without it.
+
+```
+cc -std=c11 -O2 -o dice native/driver-experimental/dice.c
+terse build roll.c --optional 240:0=example.dice
+terse-bus roll.terse --driver example.dice=$PWD/dice \
+    --frames 100 --dump
+```
+
+`terse-bus` is the host that runs every device as a driver, from the downloads' `bus` folder or built from the sources; the C driver needs Linux or macOS. It prints:
+
+```
+You rolled 1.
+You rolled 2.
+You rolled 5.
+```
+
+(Headless, the random bytes are zeros, so the dice are always these.) `terse run roll.terse --frames 30 --dump` and `terse-host`, which never load drivers, print `No dice here: run me with example.dice.` `terse info roll.terse` shows the device's name: `experimental: 240=example.dice (not covered by conformance)`.
+
+`terse drivers add dice` installs the driver, so that `terse-bus` uses it with no `--driver`.
+
+## What you have now
+
+A device of your own, and a program that uses it where it is granted and runs without it elsewhere. The program is `examples/program/c/roll.c`; the driver, a fuller program, `demo.c`, and a test of every rule are in `native/driver-experimental`. Next, [the program in Rust](terse:{guide-invent-rust}).
+
+The rules (slots 240 to 255, names, optional only, charges, state) are in [Experimental devices](terse:{experimental}).

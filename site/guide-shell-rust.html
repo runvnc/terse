@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Make a shell in Rust - the Tersenet manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Contents</a></nav></header>
+<main>
+<article>
+<h1 id="make-a-shell-in-rust">Make a shell in Rust</h1>
+<p>The shell of &quot;Make a shell&quot;, in Rust: it starts the built-in program <code>hello</code> and gives it the whole screen and the keyboard.</p>
+<h2 id="the-program">The program</h2>
+<p><code>myshell.rs</code>:</p>
+<pre>#![no_std]
+#![no_main]
+
+use terse::*;
+
+entry!(main);
+
+fn main() {
+    let hello = mach_start_named(&amp;[0; 32], &quot;hello&quot;);
+    mach_place(hello, 0, 0, 640, 480);
+    mach_focus(hello);
+    loop {
+        wait_frame();
+    }
+}</pre>
+<p>The runtime has three calls of device 8, the ones a first shell needs, with the C library&#39;s names: <code>mach_start_named</code> (the key, 32 zero bytes for a built-in program, and the name), <code>mach_place</code> and <code>mach_focus</code>. The other calls of the device (listing the built-in programs, a machine&#39;s state, snapshots) are not wrapped; a program reaches them with the runtime&#39;s <code>call</code>, which takes the call&#39;s number, <code>(8 &lt;&lt; 8) | function</code>, and its arguments, as <a href="device-machines.html">The Machines device</a> lists them.</p>
+<h2 id="build-it-and-run-it">Build it and run it</h2>
+<pre>terse build myshell.rs --device 8:0
+terse run --shell myshell.terse --frames 30 --dump
+terse-host --shell myshell.terse</pre>
+<p>The headless run prints what the C shell&#39;s does: <code>-- machine 1 running 0 0 640 480 hello --</code> and hello&#39;s screen.</p>
+<h2 id="what-you-have-now">What you have now</h2>
+<p>A shell in Rust. It is <code>examples/program/rust/myshell.rs</code> in the Tersenet sources; the full shell, <code>programs/shell/shell.c</code>, is in C. Next, a device of your own: <a href="guide-invent.html">Invent a device</a>.</p>
+<p>Panels, the 3D view and input routing are in <a href="device-machines-screens.html">Screens, panels and input</a>.</p>
+</article>
+</main>
+<footer><nav class="pn"><a rel="prev" href="guide-shell.html">← Make a shell</a><a rel="next" href="guide-invent.html">Invent a device →</a></nav></footer>
+</body>
+</html>

@@ -1,31 +1,19 @@
-# Write a program
+# Write a program in C
 
-Besides articles, Tersenet can carry small programs. Each runs on its own Terse32 machine, a tiny virtual computer: at most 1 MiB of memory, a fixed amount of work per frame at 60 frames a second, and a few devices to talk to, such as an 80 by 30 grid of text and a display for lines and shapes. A program cannot see your files, and before one publishes anything in your name or changes the feeds you follow, the host asks you. Programs are optional: nothing in the reader depends on them.
+Besides articles, Tersenet can carry small programs. Each runs on its own Terse32 machine, a tiny virtual computer: at most 1 MiB of memory, a fixed amount of work per frame at 60 frames a second, and a few devices to talk to, such as an 80 by 30 grid of text and a display for lines. A program cannot see your files. Programs are optional: nothing in the reader depends on them.
 
-## Three commands
+The program pages come in pairs, C and then Rust, the two languages with a runtime library for Terse32; Go, used on other pages of this guide, has no compiler for the machine's 32-bit RISC-V processor. This one is in C; [the same in Rust](terse:{guide-program-rust}) comes next.
 
-```
-terse new hello.c
-terse build hello.c
-terse-host hello.terse
-```
+## The program
 
-`terse new` writes a small C program to start from: it prints a line and ends when you press Esc. `terse build` compiles it into `hello.terse`, the program file, with the text grid and the line display as its devices. `terse-host` runs it in a window.
+`hello.c`:
 
-`terse build` needs clang and its linker lld; if one is missing, it says in one sentence what to install. Nothing else is needed: the C library comes inside `terse`.
-
-The same works in Rust, `terse new hello.rs` and then `terse build hello.rs`, with rustc and its target for this machine, which `terse build` also names if it is missing.
-
-## What a program looks like
-
-Open `hello.c`. Without its comments it is short:
-
-```
+```c examples/program/c/hello.c
 #include "terse.h"
 
 int main(void)
 {
-    term_color(15, 4); /* white on blue */
+    term_color(15, 4);
     term_puts(" Hello from hello! ");
     term_color(7, 0);
     term_puts("\n\nPress Esc to exit.\n");
@@ -41,28 +29,45 @@ int main(void)
 }
 ```
 
-`term_puts` writes text on the grid. `terse_wait_frame` says "done for this frame": the program sleeps until the next one. There are no threads and no interrupts; a program does a frame's work, then waits. If it does too much, the machine simply pauses it and carries on in the next frame. Keys arrive as events, and returning from `main` ends the program.
+`term_puts` writes on the text grid; `term_color` picks the colours, 15 on 4 being white on blue and 7 on 0 grey on black. The loop is the shape of every program. `terse_wait_frame` says "done for this frame" and returns at the next one, 60 times a second; then `terse_event_pop` takes the input that arrived meanwhile, one event at a time, until there is none. A key down event has the key in `e.a`. Returning from `main` ends the program.
 
-Change the text, build again, run again: that is the whole loop.
+There are no threads and no interrupts. A program that does too much in one frame is simply paused, and goes on in the next.
 
-## Run it without a window
+## Build it and run it
+
+```
+terse new hello.c
+terse build hello.c
+terse-host hello.terse
+```
+
+`terse new` writes this program, with a comment on each part. `terse build` compiles it into `hello.terse`, the program file, which lists the text grid and the line display as its devices. `terse-host` runs it in a window. `terse build` needs clang and its linker lld, and says in one sentence what to install if one is missing; the C library comes inside `terse`.
+
+## Test it without a window
 
 ```
 terse run hello.terse --frames 60 --dump
 ```
 
-runs it for 60 frames with no window and prints the text grid. That is how programs are tested: the machine is deterministic, so the same program with the same input gives the same result on every computer. `terse build hello.c --run --frames 60 --dump` builds and runs in one go.
-
-## Share it
+runs it for 60 frames with no window and prints the text grid:
 
 ```
-terse feed publish --program hello.terse
+ Hello from hello!
+
+Press Esc to exit.
 ```
 
-publishes it in your feed, under its name (make your key first with `terse key new`, once). People who follow your feed see it in the launcher of `terse-host` and can start it with Enter.
+and then the grid's empty rows. Now give it a key. Save the line `5 press esc` as `esc.txt` (a frame number, then what happens) and run
+
+```
+terse run hello.terse --frames 60 --events esc.txt \
+    --hash-every 1
+```
+
+It prints one line per frame, the frame's number and the machine's state hash, and stops after frame 6: the program saw Esc and returned. The machine is deterministic, so the same program with the same input gives the same lines on every computer. That is how programs are tested.
 
 ## What you have now
 
-A program, running in a window and headless, that you can publish. Next, make it draw and listen to the keyboard: [Draw a line and read a key](terse:{guide-drawing}).
+A program that you build, run in a window and test without one. It is `examples/program/c/hello.c` in the Tersenet sources; `programs/hello/hello.c` is a fuller one, the built-in hello, with typed text and Unicode. Next: [the same in Rust](terse:{guide-program-rust}), or, staying with C, [Draw a line and read a key](terse:{guide-drawing}).
 
-Every option of `terse build`, the C library and the Rust runtime are in [Building a program](terse:{toolchain}); running, testing and publishing in more detail in [Running and publishing a program](terse:{running-programs}).
+Every option of `terse build` is in [Building a program](terse:{toolchain}), the library in [The C library](terse:{toolchain-c}), and running, testing and publishing a program in [Running and publishing a program](terse:{running-programs}).

@@ -24,7 +24,11 @@ guide-reader-fetch-rust
 guide-reader-feed-go
 guide-reader-feed-rust
 guide-program
+guide-program-rust
 guide-drawing
+guide-drawing-rust
+guide-game
+guide-game-rust
 guide-host
 guide-host-go
 guide-host-rust
@@ -39,6 +43,9 @@ guide-device-go
 guide-device-rust
 guide-swap
 guide-shell
+guide-shell-rust
+guide-invent
+guide-invent-rust
 how-it-works
 toolchain
 toolchain-c
@@ -66,6 +73,7 @@ device-machines-screens
 content-blobs
 content-feeds
 content-records
+experimental
 network
 events
 charges

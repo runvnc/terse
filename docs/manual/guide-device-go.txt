@@ -6,7 +6,7 @@ This driver is the terminal, device 2, in one file of Go with no dependencies: `
 
 A driver tells the core, for each of its device's calls, where the call's buffer is and what the call costs: 64 bytes per function. With that the core checks a call before sending it, and for a deferred call, one whose result and charge follow from its arguments, it can work them out itself and send the call later in a batch.
 
-```go examples/device/go/main.go
+```go from examples/device/go/main.go
 const (
     columns  = 80
     rows     = 30
@@ -47,7 +47,7 @@ var table = []entry{
 
 The five calls `hello` makes: `write` (0; a buffer at `a0` of `a1` bytes, at most 4,096, read, may be in ROM; returns `a1`; 2 units a byte), `command` (1; 150 units for commands 1 to 3), `set_cursor` (2), `set_colours` (4) and `cells_write` (7; a buffer at `a1` of `a2` cells of 4 bytes; `a0`, the first cell, at most 2,399; returns `a2`; a unit per 4 bytes). All five are deferred. `encode` writes an entry in DEVICES.md section 5's layout:
 
-```go examples/device/go/main.go
+```go from examples/device/go/main.go
 func words(b []byte, values ...uint32) []byte {
     for _, v := range values {
         b = le.AppendUint32(b, v)
@@ -70,7 +70,7 @@ func (e entry) encode() []byte {
 
 ## The terminal
 
-```go examples/device/go/main.go
+```go from examples/device/go/main.go
 var xterm = []byte{
     0, 0, 0, 205, 0, 0, 0, 205, 0, 205, 205, 0,
     0, 0, 238, 205, 0, 205, 0, 205, 205, 229, 229, 229,
@@ -105,7 +105,7 @@ func newTerminal() *terminal {
 
 At reset every cell is a space in colour 7 on 0, and the palette is xterm's 256 colours.
 
-```go examples/device/go/main.go
+```go from examples/device/go/main.go
 func (t *terminal) put(cell int, code uint16) {
     le.PutUint16(t.grid[4*cell:], code)
     t.grid[4*cell+2], t.grid[4*cell+3] = t.fg, t.bg
@@ -150,7 +150,7 @@ func (t *terminal) write(text []byte) {
 
 `write` decodes its bytes as UTF-8 with Go's own decoder (`range` over a string), prints each character at the cursor and moves on, wrapping at the end of a row and scrolling at the bottom.
 
-```go examples/device/go/main.go
+```go from examples/device/go/main.go
 func (t *terminal) call(body []byte) (result, charge uint32) {
     a := func(i int) uint32 { return le.Uint32(body[4+4*i:]) }
     data := body[40 : 40+le.Uint32(body[36:])]
@@ -199,7 +199,7 @@ func (t *terminal) state() []byte {
 
 ## The messages
 
-```go examples/device/go/main.go
+```go from examples/device/go/main.go
 func hello(body []byte) []byte {
     name := "terminal (Go example)"
     reply := []byte{0x81, 1, 0, 0, byte(len(name)), 0}

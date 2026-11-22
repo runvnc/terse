@@ -39,7 +39,7 @@ are joined into one paragraph.
 <h2 id="publish-it">Publish it</h2>
 <pre>terse feed publish hello.txt --title &quot;Hello, Tersenet&quot;</pre>
 <pre>seq 2 blob 5d86159d495906bb…ad537da380d</pre>
-<p>The article is now entry #2 of your feed (your profile was #1), signed with your key, on your relay. Anyone who can reach that relay can read it. The title is what timelines show; the heading at the top of the text is for people who open the article by a link.</p>
+<p>The article is now entry #2 of your feed (your profile was #1), signed with your key, on your relay; the line before it, <code>terse: taken by 1 of 1 relays: ws&#58;//127.0.0.1:7878</code>, says so. Anyone who can reach that relay can read it. The title is what timelines show; the heading at the top of the text is for people who open the article by a link.</p>
 <h2 id="see-it">See it</h2>
 <p>The timeline shows the feeds you follow, so follow your own:</p>
 <pre>terse feed subscribe $(terse key show)</pre>

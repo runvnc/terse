@@ -6,7 +6,7 @@ This driver is the terminal, device 2, in one file of Rust with no dependencies:
 
 A driver tells the core, for each of its device's calls, where the call's buffer is and what the call costs: 64 bytes per function, in DEVICES.md section 5's layout. `Entry` has a field for each part of it, and `PLAIN` is a call with no buffer whose result is a constant 0. The table is the five calls `hello` makes:
 
-```rust examples/device/rust/src/main.rs
+```rust from examples/device/rust/src/main.rs
 const TABLE: [Entry; 5] = [
     Entry {
         function: 0,
@@ -52,7 +52,7 @@ const TABLE: [Entry; 5] = [
 
 ## The terminal
 
-```rust examples/device/rust/src/main.rs
+```rust from examples/device/rust/src/main.rs
 struct Terminal {
     grid: Vec<u8>,
     col: usize,
@@ -67,7 +67,7 @@ struct Terminal {
 
 At reset (`Terminal::new`) every cell is a space in colour 7 on 0, and the palette is xterm's 256 colours.
 
-```rust examples/device/rust/src/main.rs
+```rust from examples/device/rust/src/main.rs
     fn write(&mut self, text: &[u8]) {
         for c in String::from_utf8_lossy(text).chars() {
             if c == '\n' {
@@ -95,7 +95,7 @@ At reset (`Terminal::new`) every cell is a space in colour 7 on 0, and the palet
 
 `write` decodes its bytes as UTF-8 with the standard library (`from_utf8_lossy`), prints each character at the cursor and moves on, wrapping at the end of a row and scrolling at the bottom (`newline`).
 
-```rust examples/device/rust/src/main.rs
+```rust from examples/device/rust/src/main.rs
     fn call(&mut self, body: &[u8]) -> (u32, u32) {
         let a = |i: usize| word(body, 4 + 4 * i);
         let data = &body[40..40 + word(body, 36) as usize];
@@ -148,7 +148,7 @@ At reset (`Terminal::new`) every cell is a space in colour 7 on 0, and the palet
 
 ## The messages
 
-```rust examples/device/rust/src/main.rs
+```rust from examples/device/rust/src/main.rs
 fn hello(body: &[u8]) -> Vec<u8> {
     let name = "terminal (Rust example)";
     let mut reply = vec![0x81, 1, 0, 0, name.len() as u8, 0];

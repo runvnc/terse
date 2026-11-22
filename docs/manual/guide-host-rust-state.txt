@@ -6,7 +6,7 @@ Your host shows what the reference shows. This step proves that it agrees to the
 
 Between frames, a machine's whole state is one string of bytes; its BLAKE3-256 hash is the state hash. Two hosts given the same program and input agree exactly when their hashes agree after every frame.
 
-```rust examples/host/rust/src/state.rs
+```rust from examples/host/rust/src/state.rs
 use crate::frames::{Machine, Status};
 
 impl Machine {
@@ -59,7 +59,7 @@ In order: `terse-state-1` and the image ID; `pc` and the registers `x1` to `x31`
 
 ## The program
 
-```rust examples/host/rust/src/bin/step4.rs
+```rust from examples/host/rust/src/bin/step4.rs
 use host::bus::Bus;
 use host::frames::{Machine, Status};
 use host::image::load;

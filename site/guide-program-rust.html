@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Write a program in Rust - the Tersenet manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Contents</a></nav></header>
+<main>
+<article>
+<h1 id="write-a-program-in-rust">Write a program in Rust</h1>
+<p>The program of the last page, &quot;Write a program in C&quot;, in Rust. It uses <code>terse</code>, the Rust runtime for Terse32, which <code>terse build</code> provides.</p>
+<h2 id="the-program">The program</h2>
+<p><code>hello.rs</code>:</p>
+<pre>#![no_std]
+#![no_main]
+
+use terse::*;
+
+entry!(main);
+
+fn main() {
+    term_color(15, 4);
+    term_puts(&quot; Hello from hello! &quot;);
+    term_color(7, 0);
+    term_puts(&quot;\n\nPress Esc to exit.\n&quot;);
+
+    loop {
+        wait_frame();
+        while let Some(e) = next_event() {
+            if e.kind == EV_KEY_DOWN &amp;&amp; e.key() == KEY_ESCAPE {
+                exit(0);
+            }
+        }
+    }
+}</pre>
+<p>A Terse32 machine has no operating system under it, so a program is <code>#![no_std]</code> (the <code>core</code> library only, no <code>std</code>) and <code>#![no_main]</code>; <code>entry!(main)</code> names the function the machine starts. <code>use terse::*</code> brings in the runtime: the C library&#39;s calls, without their <code>terse_</code> prefix. <code>next_event</code> gives <code>Some(event)</code> until the queue is empty, and <code>e.key()</code> is a key event&#39;s key. <code>exit(0)</code> ends the program, as returning from <code>main</code> does.</p>
+<h2 id="build-it-and-run-it">Build it and run it</h2>
+<pre>terse new hello.rs
+terse build hello.rs
+terse run hello.terse --frames 60 --dump
+terse-host hello.terse</pre>
+<p><code>terse new hello.rs</code> writes this program with comments. <code>terse build</code> needs rustc from rustup with the target for this machine; if the target is missing it says what to run, <code>rustup target add riscv32imc-unknown-none-elf</code>. rustc links with its own linker, so clang is not needed.</p>
+<p>The screen is the C program&#39;s, word for word, and the <code>esc.txt</code> of the last page stops it after frame 6 too. The image is 268 bytes; the C one is 386.</p>
+<h2 id="what-you-have-now">What you have now</h2>
+<p>The same program in Rust, built, run and tested the same way. It is <code>examples/program/rust/hello.rs</code> in the Tersenet sources. Next, draw and react to keys: <a href="guide-drawing.html">Draw a line and read a key</a>, in C, then in Rust.</p>
+<p>What the runtime gives, what things cost and how to build a larger program with cargo is in <a href="toolchain-rust.html">Rust programs</a>.</p>
+</article>
+</main>
+<footer><nav class="pn"><a rel="prev" href="guide-program.html">← Write a program in C</a><a rel="next" href="guide-drawing.html">Draw a line and read a key →</a></nav></footer>
+</body>
+</html>

@@ -40,7 +40,7 @@ The reports program gathers the reports in the feeds you follow, and with F a sa
 | NON-CONFORMANT IN SAMPLE | at least 1 in 3 of them failed |
 | CONFORMANT IN SAMPLE | otherwise |
 
-Each feed key counts once, with its newest report, however many it published. Computers with fewer than 4 cores or 4 GiB are listed but not judged. A reporter fails a build if the host halted a machine because of it, or a terse perf requirement or ceiling failed; frames late because the computer was busy never count.
+Each feed key counts once, with its newest report, however many it published. Computers with fewer than 4 cores or 4 GiB are listed but not judged. A reporter fails a build if the host halted a machine because of it, said that its own drawing does not keep up on that computer, or a terse perf requirement or ceiling failed; frames late because the computer was busy never count.
 
 Trust the first column. Anyone can make feed keys, so "all found" may hold fakes: fifty reports from fifty new keys say little. Enter on a build lists its reporters with their names, so you can judge. P publishes the table as an article, with the sample sizes, the rule and the date; it is a sample, never a ruling. `terse perf aggregate <files>` computes the same verdicts from report files.
 

@@ -1,0 +1,69 @@
+# Draw a line and read a key in Rust
+
+The program of "Draw a line and read a key", in Rust: one line, whose top end Left and Right swing; Esc quits.
+
+## The program
+
+`line.rs`:
+
+```rust examples/program/rust/line.rs
+#![no_std]
+#![no_main]
+
+use terse::*;
+
+entry!(main);
+
+fn main() {
+    let mut buf = [0u8; 64];
+    let mut x: i16 = 320;
+    loop {
+        while let Some(e) = next_event() {
+            if e.kind != EV_KEY_DOWN {
+                continue;
+            }
+            match e.key() {
+                KEY_LEFT => x -= 10,
+                KEY_RIGHT => x += 10,
+                KEY_ESCAPE => exit(0),
+                _ => {}
+            }
+        }
+        let mut list = VecList::new(&mut buf);
+        list.move_to(320 * VEC_UNIT, 400 * VEC_UNIT);
+        list.line_to(x * VEC_UNIT, 80 * VEC_UNIT);
+        list.submit();
+        wait_frame();
+    }
+}
+```
+
+Build it with `terse build line.rs` and run it with `terse-host line.terse`.
+
+## What is different from C
+
+- The list is built by a `VecList`, which writes the commands into a buffer the program owns and `submit` ends and hands over. The buffer is a local array, so it is on the stack, which is in RAM, as a display list must be.
+- Coordinates are `i16` sixteenths of a screen unit, and `VEC_UNIT` is 16: `320 * VEC_UNIT` is 320 units.
+- The keys are a `match` on `e.key()`, with the same names as in C. `exit` never returns, so it can stand as an arm of the `match`.
+
+## Test it without a window
+
+With the `keys.txt` of the last page (Left at frames 5 and 6),
+
+```
+terse run line.terse --frames 10 --events keys.txt \
+    --dump --dump-vectors
+```
+
+prints the same list as the C program, byte for byte:
+
+```
+-- vectors: 11 list bytes --
+line 5120 6400 4800 1280 w 16 c ffffffff
+```
+
+## What you have now
+
+A Rust program that draws and reacts to keys. It is `examples/program/rust/line.rs` in the Tersenet sources. Next, a small game: [Make a small game](terse:25579f0d099a07b1582236d877154448853adf2ccc67bc733ac21c9b59d675d7), in C, then in Rust.
+
+`VecList` and the other drawing calls of the runtime are in [Rust programs](terse:697299ec36d1e2ced432d7be8757d8ef201882954a7bd21fdd59fbd449a7b685); every command of the display in [The 2D vector display](terse:6c6b812bc0498df9321e562dae3dee47c6e9b272436c051b51e0bb1fa09d152d).

@@ -4,7 +4,7 @@ A Terse32 program runs at the same speed on every host. Time comes in frames, 60
 
 ## The frame loop
 
-```rust examples/host/rust/src/frames.rs
+```rust from examples/host/rust/src/frames.rs
 pub const FRAME_BUDGET: i64 = 125_000;
 
 pub enum Status {
@@ -23,7 +23,7 @@ pub struct Machine {
 
 `Machine` is the processor of step 1 with what the frame loop keeps: the budget, the frame counter, and whether and how the machine stopped.
 
-```rust examples/host/rust/src/frames.rs
+```rust from examples/host/rust/src/frames.rs
     pub fn run_frame<D>(&mut self, mut devices: D)
     where
         D: FnMut(&mut Cpu, i64, u32, u32) -> (u32, i64),
@@ -70,7 +70,7 @@ In order:
 
 ## Four calls
 
-```rust examples/host/rust/src/frames.rs
+```rust from examples/host/rust/src/frames.rs
     fn system(&mut self, function: u32) -> u32 {
         let a0 = self.cpu.x[10];
         match function {
@@ -96,7 +96,7 @@ In order:
 
 ## The program
 
-```rust examples/host/rust/src/bin/step2.rs
+```rust from examples/host/rust/src/bin/step2.rs
 use host::frames::{Machine, Status};
 use host::image::load;
 use std::error::Error;

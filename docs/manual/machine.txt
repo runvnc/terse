@@ -162,7 +162,7 @@ the device entries, then the ROM. All numbers are little-endian.
 | 9 | 3D vector display | 0 | none |
 | 10 | Full text (no calls) | 0 | reading |
 
-Slots 0 and 11 to 255 are not devices.
+Slots 0 and 11 to 239 are not devices; 240 to 255 are for experimental devices.
 
 ## Calls
 

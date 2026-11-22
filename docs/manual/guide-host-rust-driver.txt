@@ -12,7 +12,7 @@ cargo build --release -p terse-devices
 
 Every message is a length (4 bytes, of the rest), an address (the machine, 4 bytes, always 0 here; a slot; 3 zero bytes) and a body whose first byte is its type. Integers are little-endian. `send` writes one; `request` writes one and reads the reply, which must be of the type asked for. Anything else, an `ERROR` from the driver included, ends the run with status 3 (`fail`):
 
-```rust examples/host/rust/src/bus.rs
+```rust from examples/host/rust/src/bus.rs
     fn send(&mut self, slot: u8, body: &[u8]) {
         let length = 8 + body.len() as u32;
         let mut message = length.to_le_bytes().to_vec();
@@ -38,7 +38,7 @@ Every message is a length (4 bytes, of the rest), an address (the machine, 4 byt
 
 ## Starting the driver
 
-```rust examples/host/rust/src/bus.rs
+```rust from examples/host/rust/src/bus.rs
     pub fn start(
         command: &str,
         cpu: &Cpu,
@@ -127,7 +127,7 @@ In order:
 
 ## Calls through the table
 
-```rust examples/host/rust/src/bus.rs
+```rust from examples/host/rust/src/bus.rs
     pub fn call(
         &mut self,
         cpu: &mut Cpu,
@@ -203,7 +203,7 @@ A function the table does not have is a call the machine does not have: `FFFF_FF
 
 BEGIN (`30h`) starts each frame: the frame counter, the time (0 here), no input events, an empty replay field. The reply, INPUTS, may charge the frame and bring events; the terminal does neither, and this host reads only the charge:
 
-```rust examples/host/rust/src/bus.rs
+```rust from examples/host/rust/src/bus.rs
     pub fn begin(&mut self, frame: u32) -> i64 {
         let mut begin = vec![0x30, 0, 0, 0];
         begin.extend(frame.to_le_bytes());
@@ -214,7 +214,7 @@ BEGIN (`30h`) starts each frame: the frame counter, the time (0 here), no input 
 
 END (`31h`) ends the frame, with no reply. STATE (`40h`, `state`) asks for a slot's part of the machine's state; the terminal's starts with its 2,400 cells, 4 bytes each: a character (16 bits), a foreground and a background colour. SHUTDOWN (`60h`, `close`) stops the driver:
 
-```rust examples/host/rust/src/bus.rs
+```rust from examples/host/rust/src/bus.rs
     pub fn end(&mut self, frame: u32, stopped: bool) {
         let mut end = vec![0x31, stopped as u8, 0, 0];
         end.extend(frame.to_le_bytes());
@@ -234,7 +234,7 @@ END (`31h`) ends the frame, with no reply. STATE (`40h`, `state`) asks for a slo
 
 ## The program
 
-```rust examples/host/rust/src/bin/step3.rs
+```rust from examples/host/rust/src/bin/step3.rs
 use host::bus::Bus;
 use host::frames::{Machine, Status};
 use host::image::load;

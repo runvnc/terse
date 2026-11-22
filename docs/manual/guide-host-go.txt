@@ -6,7 +6,7 @@ This step reads a program file, sets up memory and runs the processor until the 
 
 A program file (`.terse`) is a 32-byte header, two bytes for each device the program uses, then the ROM: the program's code and data. `Load` checks the header and makes the processor at reset: the ROM at `0001_0000h`; the RAM, as many 8 KiB pages as the header asks for, all zero, at `0010_0000h`; `pc` on the first byte of ROM and the stack pointer `x2` at the end of RAM.
 
-```go examples/host/go/machine/image.go
+```go from examples/host/go/machine/image.go
 package machine
 
 import "errors"
@@ -46,7 +46,7 @@ The list of devices matters from step 3 on.
 
 The processor is RV32IMC: RISC-V's 32-bit integer instructions, multiply and divide (M) and 16-bit compressed forms of the common ones (C). `decode` takes a 32-bit instruction apart into its fields:
 
-```go examples/host/go/machine/decode.go
+```go from examples/host/go/machine/decode.go
 type instruction struct {
     op, f3, f7, rd, rs1, rs2, imm uint32
 }
@@ -79,7 +79,7 @@ func decode(i uint32) instruction {
 
 `expand` gives a 16-bit instruction the same fields, as the 32-bit instruction it stands for, so that one `execute` runs both. Its first cases:
 
-```go examples/host/go/machine/decode.go
+```go from examples/host/go/machine/decode.go
 func expand(c uint32) instruction {
     rd, rs2 := c>>7&31, c>>2&31
     rdc, rs2c := 8+c>>7&7, 8+c>>2&7
@@ -116,7 +116,7 @@ and so on for the other 16-bit forms, 90 lines in all. A form the machine does n
 
 `Step` fetches one instruction from ROM or RAM, 16 or 32 bits, and runs it. It returns what the instruction costs, which step 2 uses, whether it was an `ecall`, or a fault:
 
-```go examples/host/go/machine/cpu.go
+```go from examples/host/go/machine/cpu.go
 func (c *CPU) Step() (cost int64, ecall bool, fault *Fault) {
     raw, fault := c.fetch()
     if fault != nil {
@@ -140,7 +140,7 @@ func (c *CPU) Step() (cost int64, ecall bool, fault *Fault) {
 
 `execute` is one switch on the opcode. Each case checks the encoding as the specification says, then writes the result to `rd` (never to `x0`) and moves `pc` on:
 
-```go examples/host/go/machine/cpu.go
+```go from examples/host/go/machine/cpu.go
 func (c *CPU) execute(in instruction, next uint32) (
     bool, *Fault) {
     a, b, pc := c.X[in.rs1], c.X[in.rs2], c.PC
@@ -238,7 +238,7 @@ A fault stops the machine with `pc` on the faulting instruction, which is not ca
 
 `ecall` calls a device: `a7` (`x17`) holds the device's slot × 256 + the function, `a0` to `a5` (`x10` to `x15`) the arguments, and the result goes in `a0`. This step has one call, `exit`, `106h`; every other call returns `FFFF_FFFFh`, as a call the machine does not have must:
 
-```go examples/host/go/step1/main.go
+```go from examples/host/go/step1/main.go
 package main
 
 import (
