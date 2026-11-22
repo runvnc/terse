@@ -14,7 +14,7 @@ path = "src/main.rs"
 default = ["window"]
 # Presents the composed picture in a window (softbuffer); never needed for
 # --screenshot or --bench.
-window = ["dep:winit", "dep:softbuffer", "dep:arboard", "terse-host/input"]
+window = ["dep:winit", "dep:softbuffer", "dep:arboard", "terse-host/input", "terse-host/audio"]
 
 [dependencies]
 terse-core.workspace = true

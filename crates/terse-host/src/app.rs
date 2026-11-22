@@ -34,6 +34,8 @@ const FRAME: Duration = Duration::from_nanos(1_000_000_000 / 60);
 
 /// How long a notice of the host's stays (frames).
 const NOTICE_FRAMES: u64 = 300;
+/// How long the volume shows after a change (frames).
+const VOLUME_NOTICE_FRAMES: u64 = 90;
 
 /// The host's own part, for the user.
 fn host_part(c: terse_perflog::Component) -> &'static str {
@@ -152,14 +154,10 @@ pub fn run(
             watch.shed(crate::phosphor::SHED_PLAIN, "check");
         }
     }
-    // A self-test never makes a sound (it runs unattended, often in a
-    // headless compositor); nor does a host told TERSE_AUDIO=off.
-    #[cfg(feature = "audio")]
-    let audio = if selftest.is_some() || std::env::var_os("TERSE_AUDIO").is_some_and(|v| v == "off") {
-        crate::audio::Audio::disabled()
-    } else {
-        crate::audio::Audio::default()
-    };
+    // A self-test makes no sound unless TERSE_AUDIO says where (it runs
+    // unattended, often in a headless compositor); nor does a host told
+    // TERSE_AUDIO=off.
+    let audio = crate::audio::Audio::new(crate::audio::Choice::from_env(selftest.is_some()));
     let mut app = App {
         system,
         io: HashMap::new(),
@@ -197,7 +195,6 @@ pub fn run(
         notice: None,
         halted: None,
         monitor: None,
-        #[cfg(feature = "audio")]
         audio,
     };
     event_loop.run_app(&mut app).map_err(|e| e.to_string())?;
@@ -726,7 +723,7 @@ struct App {
     monitor: Option<winit::monitor::MonitorHandle>,
     /// The sound device's output (SPEC §sound.presentation), opened when a machine
     /// first gives samples.
-    #[cfg(feature = "audio")]
+    /// The sound (SPEC §sound.presentation).
     audio: crate::audio::Audio,
 }
 
@@ -821,8 +818,7 @@ impl App {
         self.system.set_eye(self.eye);
         self.system.frame(&self.pending, controllers, &mut driver);
         let ran = driver.ran;
-        #[cfg(feature = "audio")]
-        self.audio.frame(&mut self.system);
+        self.sound();
         self.pending.clear();
         self.watch.emulated();
         let emulate = start.elapsed();
@@ -899,11 +895,27 @@ impl App {
     }
 
     fn show_notice(&mut self, heading: &str, what: String, then: &str) {
+        self.show_notice_for(heading, what, then, NOTICE_FRAMES);
+    }
+
+    fn show_notice_for(&mut self, heading: &str, what: String, then: &str, frames: u64) {
         let n = crate::consent::Notice { heading: heading.into(), what, then: then.into() };
         if let Some(gfx) = &mut self.gfx {
             gfx.display_mut().set_notice(Some(n.clone()));
         }
-        self.notice = Some((n, self.watch.frame + NOTICE_FRAMES));
+        self.notice = Some((n, self.watch.frame + frames));
+    }
+
+    /// The frame's sound to the output; if it cannot be heard, the user
+    /// is told (once, and again when the cause changes).
+    fn sound(&mut self) {
+        let mut frame = [0i16; 2 * terse_core::sound::FRAME_SAMPLES];
+        let any = self.system.take_audio(&mut frame);
+        if let Some(s) = self.audio.frame(any.then_some(&frame[..])) {
+            eprintln!("terse-host: {}", s.line());
+            let (heading, what, then) = s.notice();
+            self.show_notice(&heading, what, &then);
+        }
     }
 
     fn expire_notice(&mut self) {
@@ -1008,6 +1020,17 @@ impl App {
         if self.is_system() && event.physical_key == PhysicalKey::Code(HOME_KEY) {
             if pressed && !event.repeat {
                 self.pending.push(Event::home());
+            }
+            return;
+        }
+        // The volume: the host's keys, never a program's.
+        if let PhysicalKey::Code(code) = event.physical_key
+            && let Some(k) = crate::keymap::volume_key(code, self.modifiers)
+        {
+            if pressed {
+                swallow(&mut self.swallowed, usage);
+                let what = self.audio.change(k);
+                self.show_notice_for("sound", what, "Ctrl+Alt+minus and plus change it, Ctrl+Alt+M mutes; it is kept.", VOLUME_NOTICE_FRAMES);
             }
             return;
         }

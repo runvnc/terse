@@ -587,6 +587,8 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
             looks: opts.looks,
             resizes: opts.resizes.clone(),
         };
+        // The volume terse-host keeps (<config>/sound).
+        terse_host::audio::configure(terse_net::default_config_dir(), None, false);
         return window::run(bs, script, native, w);
     }
     #[cfg(not(feature = "window"))]

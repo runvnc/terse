@@ -15,7 +15,7 @@ name = "terse-host"
 path = "src/main.rs"
 
 [features]
-default = ["gpu", "window"]
+default = ["gpu", "window", "audio"]
 # The GPU renderer (wgpu).
 gpu = ["dep:wgpu", "dep:pollster"]
 # The window (winit), drawn with the GPU renderer or, through softbuffer,
@@ -25,10 +25,13 @@ gpu = ["dep:wgpu", "dep:pollster"]
 # The window's input (keys, paste), for hosts with windows of their own.
 input = ["dep:winit", "dep:arboard"]
 window = ["input", "dep:softbuffer", "dep:gilrs"]
-# Plays the sound device (SPEC §sound) in the window (cpal: ALSA, which
-# PipeWire serves). Off by default, so no test or headless run ever opens
-# an audio device; build with `--features audio` to hear it.
-audio = ["window", "dep:cpal"]
+# Plays the sound device (SPEC §sound) in the window (src/audio). On Linux
+# it loads libpulse-simple (PipeWire, PulseAudio) or libasound (ALSA) when
+# a program first makes sound: no headers to build with, nothing linked.
+# Elsewhere cpal (CoreAudio, WASAPI). Without it the host says, when a
+# program makes sound, that it was built without sound. Tests never open
+# an output: --selftest plays nothing unless TERSE_AUDIO says where.
+audio = ["dep:libloading", "dep:cpal"]
 
 [dependencies]
 terse-core.workspace = true
@@ -46,11 +49,16 @@ unicode-script = "0.5"
 png = "0.18"
 getrandom = "0.4"
 gilrs = { version = "0.11", optional = true }
-cpal = { version = "0.15", optional = true }
 cosmic-text = { version = "0.19", default-features = false, features = ["std", "swash"] }
 swash = "0.2"
 tiny-skia = { version = "0.11", default-features = false, features = ["std", "simd"] }
 arboard = { version = "3.7", default-features = false, features = ["wayland-data-control"], optional = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libloading = { version = "0.8", optional = true }
+
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+cpal = { version = "0.15", optional = true }
 
 [dev-dependencies]
 terse-testkit.workspace = true

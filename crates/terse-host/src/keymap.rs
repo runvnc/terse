@@ -96,6 +96,30 @@ pub const MAX_PASTE: usize = 1 << 20;
 /// The host's home key (SPEC §machines.input) when it runs a shell.
 pub const HOME_KEY: KeyCode = KeyCode::F12;
 
+/// The volume keys the host keeps (SPEC §events "Keys a host keeps"):
+/// Ctrl+Alt+minus and Ctrl+Alt+equals (plus) a tenth down and up,
+/// Ctrl+Alt+M mute, and the keyboard's own volume keys when the desktop
+/// lets them reach the window. Physical keys, so every layout has them in
+/// the same place.
+pub fn volume_key(key: KeyCode, mods: ModifiersState) -> Option<crate::audio::VolumeKey> {
+    use crate::audio::VolumeKey::*;
+    match key {
+        KeyCode::AudioVolumeDown => return Some(Down),
+        KeyCode::AudioVolumeUp => return Some(Up),
+        KeyCode::AudioVolumeMute => return Some(Mute),
+        _ => {}
+    }
+    if !(mods.control_key() && mods.alt_key()) || mods.super_key() {
+        return None;
+    }
+    match key {
+        KeyCode::Minus | KeyCode::NumpadSubtract => Some(Down),
+        KeyCode::Equal | KeyCode::NumpadAdd => Some(Up),
+        KeyCode::KeyM => Some(Mute),
+        _ => None,
+    }
+}
+
 /// The characters of pasted text the program receives: newlines (a CR LF
 /// pair or a lone CR counts as one) and no other control characters.
 pub fn paste_chars(text: &str) -> impl Iterator<Item = char> + '_ {
