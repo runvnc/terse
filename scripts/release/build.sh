@@ -40,6 +40,16 @@ build() { # <target> <cargo args...>
     "${cargo[@]}" build --release --locked --target "$target" "$@"
 }
 
+# The licences of the TLS libraries built into terse, terse-host and
+# terse-relay (NOTICE), as one file.
+tls_licences() {
+    for f in third_party/tls/*; do
+        printf '==> %s <==\n\n' "${f##*/}"
+        cat "$f"
+        printf '\n'
+    done
+}
+
 stage() { # <name>: a fresh directory named for the download
     local dir="$stage_root/$1"
     mkdir -p "$dir"
@@ -71,6 +81,8 @@ linux-x86_64 | linux-aarch64)
     mkdir "$dir/bus"
     for bin in "${bus_programs[@]}"; do cp "target/$gnu/release/$bin" "$dir/bus/"; done
     cp LICENSE "$dir/LICENSE"
+    cp NOTICE "$dir/NOTICE.txt"
+    tls_licences >"$dir/TLS-LICENSES.txt"
     cp crates/terse-host/fonts/LICENSE "$dir/FONTS-LICENSE.txt"
     sed "s/@VERSION@/$VERSION/g" packaging/linux/README.txt >"$dir/README.txt"
     tar -C "$stage_root" -czf "$out/$name.tar.gz" --owner=0 --group=0 "$name"
@@ -107,6 +119,8 @@ macos)
     done
     codesign --force --sign - "$app"
     cp LICENSE "$dir/LICENSE"
+    cp NOTICE "$dir/NOTICE.txt"
+    tls_licences >"$dir/TLS-LICENSES.txt"
     cp crates/terse-host/fonts/LICENSE "$dir/FONTS-LICENSE.txt"
     sed "s/@VERSION@/$VERSION/g" packaging/macos/README.txt >"$dir/README.txt"
     rm -f "$out/$name.zip"
@@ -124,6 +138,8 @@ windows-x86_64)
     mkdir "$dir/bus"
     for bin in "${bus_programs[@]}"; do cp "target/$t/release/$bin.exe" "$dir/bus/"; done
     cp LICENSE "$dir/LICENSE.txt"
+    sed 's/$/\r/' NOTICE >"$dir/NOTICE.txt"
+    tls_licences | sed 's/$/\r/' >"$dir/TLS-LICENSES.txt"
     sed 's/$/\r/' crates/terse-host/fonts/LICENSE >"$dir/FONTS-LICENSE.txt"
     sed "s/@VERSION@/$VERSION/g" packaging/windows/README.txt | sed 's/$/\r/' >"$dir/README.txt"
     rm -f "$out/$name.zip"

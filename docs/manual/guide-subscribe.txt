@@ -16,7 +16,7 @@ The other adds it once, with the first one's computer name or address on your ne
 terse relay add ws://their-computer:7878
 ```
 
-A relay has no accounts and no encryption: anyone who can reach it can read what is on it, but nobody can publish in your name. Tersenet has no public relay yet; once there is one, adding it is the same command.
+A relay has no accounts: anyone who can reach it can read what is on it, but nobody can publish in your name. A relay reached with `wss://` (over TLS) also hides from the network what you read; a name alone, as in `terse relay add relay.example.org`, means `wss://relay.example.org`. Tersenet has no public relay yet; once there is one, adding it is the same command.
 
 ## From an address
 
