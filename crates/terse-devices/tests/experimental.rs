@@ -445,9 +445,9 @@ fn a_slow_driver_stops_every_machine_that_uses_it() {
 fn the_shell_marks_a_granted_program() {
     let Some((h, dice)) = ready() else { return };
     let Some(demos) = demos(&h) else { return };
-    let id = Command::new(bin("terse")).args(["info", &demos[0], "--relay", "none"]).args(h.dirs()).output().unwrap();
-    let id = String::from_utf8_lossy(&id.stdout).lines().find_map(|l| l.strip_prefix("id:").map(|s| s.trim().to_string())).unwrap();
-    let bytes: Vec<String> = (0..32).map(|i| u8::from_str_radix(&id[2 * i..2 * i + 2], 16).unwrap().to_string()).collect();
+    let image = terse_core::Image::parse(&std::fs::read(&demos[0]).unwrap()).unwrap();
+    let id: String = image.id.iter().map(|b| format!("{b:02x}")).collect();
+    let bytes: Vec<String> = image.id.iter().map(|b| b.to_string()).collect();
     let src = h.path("opener.c");
     std::fs::write(
         &src,

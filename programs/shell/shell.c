@@ -728,7 +728,7 @@ static void draw_bar(void)
         if (q2) {
             for (uint8_t i = 0; i < TERM_COLS; i++)
                 bar[i] = i < 4 ? cell(' ', BAR_FG, BAR_BG) : cell(' ', SEL_FG, SEL_BG);
-            bar_text(5, TERM_COLS - 6, question + q2, q_n - q2, SEL_FG, SEL_BG);
+            bar_text(4, TERM_COLS - 4, question + q2, q_n - q2, SEL_FG, SEL_BG);
             term_cells_write(TERM_COLS, bar, TERM_COLS);
         }
         return;

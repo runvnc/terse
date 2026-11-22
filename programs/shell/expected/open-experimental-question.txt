@@ -1,5 +1,5 @@
  ⌂   opener asks to start an unpublished program dicer (2b1e3e…db3956).     Y/N
-     Can use an experimental device (example.dice); here it runs without it.
+    Can use an experimental device (example.dice); here it runs without it.
 
 
 
