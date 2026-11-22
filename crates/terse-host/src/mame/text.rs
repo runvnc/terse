@@ -1,10 +1,10 @@
 //! The terminal's screen as strokes: each cell's character from the stroke
-//! font ([`crate::stroke`]) in its foreground colour, the cursor as a
+//! font ([`crate::mame::stroke`]) in its foreground colour, the cursor as a
 //! stroke under its cell, in reading order (the order the beam draws them).
 
 use terse_core::{COLS, ROWS, Terminal};
 
-use crate::stroke::{CELL_H, CELL_W, Font, Stroke, strokes_in};
+use crate::mame::stroke::{CELL_H, CELL_W, Font, Stroke, strokes_in};
 
 /// A stroke on the screen, in screen units, with its colour.
 #[derive(Clone, Copy, Debug, PartialEq)]

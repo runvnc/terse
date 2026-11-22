@@ -40,6 +40,7 @@ mod gamepad;
 pub mod glyphs;
 #[cfg(feature = "input")]
 pub mod keymap;
+pub mod mame;
 pub mod page;
 #[cfg(feature = "gpu")]
 mod halo;

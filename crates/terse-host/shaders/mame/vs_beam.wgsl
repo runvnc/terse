@@ -40,5 +40,8 @@ fn vs_beam(in: BeamInput) -> BeamVaryings {
 	out.v_beam = vec4<f32>(along, across, beamLength, sigma);
 	out.v_beam_color = vec4<f32>(in.i_data1.rgb, in.i_data2.z);
 	out.v_beam_timing = in.i_data2;
+	// Tersenet: the intensity at the end (i_data2.w, unused in MAME) and
+	// the butt ends (i_data3.xy), for fs_beam.
+	out.v_beam_ends = vec4<f32>(in.i_data2.w, in.i_data3.x, in.i_data3.y, 0.0);
 	return out;
 }

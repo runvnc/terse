@@ -40,7 +40,12 @@ fn fs_beam(in: BeamVaryings) -> @location(0) vec4<f32>
 	let across = in.v_beam.y;
 	let beamLength = in.v_beam.z;
 
-	let intensity = max(in.v_beam_color.a, 0.0);
+	// Tersenet: the intensity goes from the start's (v_beam_color.a) to the
+	// end's (v_beam_ends.x) along the segment, a 3D segment's depth cue; a
+	// MAME line has the same at both ends. (segmentPosition as below.)
+	let fadePosition =
+		select(0.5, clamp(along / beamLength, 0.0, 1.0), beamLength > 0.0001);
+	let intensity = max(mix(in.v_beam_color.a, in.v_beam_ends.x, fadePosition), 0.0);
 	let intensityResponse = sqrt(clamp(intensity, 0.0, 1.0));
 
 	// Brighter vectors get a slightly wider core and a somewhat wider halo.
@@ -79,12 +84,18 @@ fn fs_beam(in: BeamVaryings) -> @location(0) vec4<f32>
 	let scanPersistence = max(u.u_vector_params.y, u.u_vector_params.x * 10.0);
 	let temporal = exp(-age / max(scanPersistence, 0.001));
 
+	// Tersenet: no light beyond a butt end (v_beam_ends.y the start's,
+	// .z the end's): the segment stops there, flat, where the next piece
+	// takes over, instead of ending in a round cap.
+	let cut = (in.v_beam_ends.y > 0.5 && along < 0.0) || (in.v_beam_ends.z > 0.5 && along > beamLength);
+
 	let energy =
 		in.v_beam_color.rgb *
 		intensity *
 		radial *
 		temporal *
-		u.u_vector_params.z;
+		u.u_vector_params.z *
+		select(1.0, 0.0, cut);
 
 	return vec4<f32>(energy, 1.0);
 }

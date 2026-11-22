@@ -29,6 +29,7 @@ pub mod page;
 pub mod panel;
 #[cfg(test)]
 mod look;
+pub mod mame;
 pub mod phosphor;
 pub mod scene;
 
