@@ -1,1 +1,4 @@
 target/
+bin/
+*.terse
+/device/go/terminal
