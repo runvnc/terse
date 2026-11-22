@@ -270,7 +270,11 @@ fn an_installed_driver_that_cannot_be_used_gives_way_to_the_shipped_one() {
         if prog.is_empty() {
             std::fs::remove_file(home.installed(name).join("prog")).unwrap();
         }
-        let args = [image, "--frames", "20", "--hash", "--bench", "--start-timeout", "1"];
+        // Only the hanging driver is ended by the start timeout; the others
+        // end their start themselves (they exit, or answer wrongly), so
+        // theirs bounds a hang only.
+        let start_timeout = if name == "hangs" { "1" } else { "60" };
+        let args = [image, "--frames", "20", "--hash", "--bench", "--start-timeout", start_timeout];
         let out = home.bus(&args, &[]);
         let err = text(&out.stderr);
         assert!(out.status.success(), "{name}: {err}");
