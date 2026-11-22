@@ -1,8 +1,18 @@
 # Contents
 
-The manual has two parts. The guide is a series of short steps, each one you can finish in a sitting. The reference is everything, complete and exact.
+The manual has three parts. The user guide gets you from installing Tersenet to reading, publishing and following others, with no programming. The implementation guide builds the parts of Tersenet yourself: a reader, a program, a host, a device and a shell. Both are short steps, each one you can finish in a sitting. The reference is everything, complete and exact.
 
-## Guide
+## User guide
+
+- [Install Tersenet](terse:{guide-install}): one command on Linux and macOS, a zip on Windows, or from the source.
+- [Run Tersenet](terse:{guide-run}): the window, the launcher, the reader and this manual.
+- [Create your profile](terse:{guide-profile}): your key, your name and your address; no account needed.
+- [Write and publish an article](terse:{guide-write}): a plain text file, how it compares with Markdown, and your feed.
+- [Read articles and follow links](terse:{guide-read}): the timeline, links and search.
+- [Subscribe to someone's feed](terse:{guide-subscribe}): a shared relay, by address or by name, nicknames.
+- [Find and play a game](terse:{guide-games}): the built-in game, programs from feeds and links, saving your place.
+
+## Implementation guide
 
 - [Make a reader, step 1: show an article](terse:{guide-reader}): the article format's first rules, and a test to check yourself.
 - [Make a reader, step 2: fetch an article](terse:{guide-reader-fetch}): get an article from a relay and check that it is genuine.
@@ -16,7 +26,6 @@ The manual has two parts. The guide is a series of short steps, each one you can
 - [Make a device](terse:{guide-device}): a device as a separate program on the device bus.
 - [Swap in your own part](terse:{guide-swap}): your reader, core or device with the reference for everything else.
 - [Make a shell](terse:{guide-shell}): the program that starts other machines and lays out their screens.
-- [Using Tersenet](terse:{guide-using}): install, read, follow, write and publish; no programming needed.
 
 ## Reference
 

@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Create your profile - the Tersenet manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Contents</a></nav></header>
+<main>
+<article>
+<h1 id="create-your-profile">Create your profile</h1>
+<p>On Tersenet nobody gives out accounts: there is no sign-up, no e-mail address and no password. You are a key that your computer makes, and your articles are a feed signed with it. Anyone can check that an article in your feed came from you, and nobody without your key can add to it.</p>
+<p>These commands go in a terminal, with the window from the last page still open. (On Windows, open PowerShell in the folder where you unzipped Tersenet and write <code>.\terse</code> for <code>terse</code>.)</p>
+<h2 id="your-key">Your key</h2>
+<pre>terse key new</pre>
+<pre>terse: new identity saved in /home/me/.config/terse/identity.key
+7105227f05be8a2efd2ef3e7d503342cebf594666854b14db7680ef9987e084c</pre>
+<p>The 64 hexadecimal digits are the public half of your key: your feed&#39;s address, which you give to people. The file holds the secret half. Keep it safe and keep a copy: whoever has the file can publish as you, and if you lose it you cannot add to your feed again. <code>terse key show</code> prints your key whenever you need it.</p>
+<p>You can skip this step: the window makes a key by itself the first time something publishes, for example when you press T in the reader.</p>
+<h2 id="your-name">Your name</h2>
+<pre>terse profile set --name Sam --listed</pre>
+<pre>seq 1 blob c87e03f4b03f250e…8ce0369e33e (listed)</pre>
+<p>(Before that line <code>terse</code> says which relay it used, as every command that uses the network does. Long numbers are shortened with <code>…</code> on these pages.) Your profile is the first entry of your feed. It gives you a name, from 1 to 48 bytes, that readers show beside your key. <code>--listed</code> lets search find the name; leave it out and only people who already have your key see it. Names are not unique: two people may both be &quot;Sam&quot;, which is why readers always show the key too. Run the command again to change the name.</p>
+<pre>terse profile show</pre>
+<pre>feed:        7105227f05be8a2e…ebf594666854b14db7680ef9987e084c
+name:        Sam
+profile:     #1 of 2026-11-22 00:17, blob c87e03f4…0369e33e
+listed:      yes</pre>
+<p>In the reader you can do the same without a terminal: F opens your feeds, P asks for your name and then whether search may find it, and the window asks you to confirm.</p>
+<h2 id="your-address">Your address</h2>
+<pre>terse feed address</pre>
+<p>prints the address to give to people: your key, and after an <code>@</code> the relays where others can find you. For now it is the key alone, with a note that only people on the same relay will find your feed: your relay is on your own computer. <a href="guide-subscribe.html">Subscribe to someone&#39;s feed</a> says how to share a relay. The reader&#39;s help page (?) shows the address too.</p>
+<h2 id="what-is-kept-where">What is kept where</h2>
+<div class="table"><table>
+<thead><tr><th>Folder</th><th>Holds</th></tr></thead>
+<tbody>
+<tr><td><code>~/.config/terse</code></td><td>your key, the feeds you follow, your relays</td></tr>
+<tr><td><code>~/.local/share/terse</code></td><td>what programs keep, the relay&#39;s store</td></tr>
+<tr><td><code>~/.cache/terse</code></td><td>articles and programs you downloaded</td></tr>
+</tbody></table></div>
+<p>On Windows the first is <code>%APPDATA%\terse</code> and the others are in <code>%LOCALAPPDATA%\terse</code>.</p>
+<h2 id="what-you-have-now">What you have now</h2>
+<p>A key, a name and an address: an identity no one issued and no one can take away. Next, put something in your feed: <a href="guide-write.html">Write and publish an article</a>.</p>
+<p>Profiles, names and addresses in full are in <a href="network.html">The network</a>.</p>
+</article>
+</main>
+<footer><nav class="pn"><a rel="prev" href="guide-run.html">← Run Tersenet</a><a rel="next" href="guide-write.html">Write and publish an article →</a></nav></footer>
+</body>
+</html>

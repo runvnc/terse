@@ -200,7 +200,9 @@ fn site_dir() -> PathBuf {
 #[test]
 fn site_is_up_to_date() {
     let built = manual::build(&manual::read_sources(&dir()).unwrap()).unwrap();
-    let files = terse_net::manual_site::site(&built);
+    let mut files = terse_net::manual_site::site(&built);
+    // The extra files (docs/manual/site-files: the install script) are copied as they are.
+    files.extend(terse_net::manual_site::extra_files(&dir()).unwrap());
     let stale = "site/ is stale: run `terse manual site --out site`";
     let mut on_disk: Vec<String> =
         std::fs::read_dir(site_dir()).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
@@ -319,7 +321,11 @@ fn site_is_self_contained() {
     let css = page("style.css").unwrap();
     assert!(css.len() < 8192, "a small stylesheet");
     let mut figures = 0;
+    let extra: Vec<String> = terse_net::manual_site::extra_files(&dir()).unwrap().into_iter().map(|(n, _)| n).collect();
     for (name, html) in &files {
+        if extra.contains(name) {
+            continue; // copied as they are, not pages (the install script names its download address)
+        }
         let lower = html.to_lowercase();
         for bad in ["<script", "javascript:", "http://", "https://", "@import", "url(", " src=", "<iframe", "<object", "<embed", "<img", "<link rel=\"pre"] {
             assert!(!lower.contains(bad), "{name} contains {bad}");
@@ -357,14 +363,19 @@ fn site_is_self_contained() {
     assert!(sources >= 4);
     assert_eq!(figures, sources, "every figure is drawn");
     // The landing page is the index article alone: its heading, the
-    // paragraph and two links (the guide's first page, then the contents);
-    // no navigation and no list of articles.
+    // paragraph and three links (the user guide's first page, the
+    // implementation guide's, then the contents); no navigation and no
+    // list of articles.
     let index = page("index.html").unwrap();
     let (name, title, _) = builtin::MANUAL[0];
     assert_eq!(name, "index");
     assert!(index.contains(&format!(">{title}</h1>")), "{index}");
     let links: Vec<&str> = attrs(index, "href").into_iter().filter(|h| h.ends_with(".html")).collect();
-    assert_eq!(links, ["guide-reader.html", "contents.html"], "index.html links to the guide and the contents only");
+    assert_eq!(
+        links,
+        ["guide-install.html", "guide-reader.html", "contents.html"],
+        "index.html links to the two guides and the contents only"
+    );
     assert!(!index.contains("<header>") && !index.contains("<footer>") && !index.contains("<li>"), "{index}");
     // The contents page lists every other article, the guide first.
     let contents = page("contents.html").unwrap();
@@ -375,5 +386,6 @@ fn site_is_self_contained() {
         }
     }
     let at = |h: &str| contents.find(&format!("href=\"{h}\">")).unwrap();
-    assert!(at("guide-reader.html") < at("how-it-works.html"), "the guide comes before the reference");
+    assert!(at("guide-install.html") < at("guide-reader.html"), "the user guide comes before the implementation guide");
+    assert!(at("guide-reader.html") < at("how-it-works.html"), "the guides come before the reference");
 }

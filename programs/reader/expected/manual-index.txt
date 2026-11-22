@@ -28,9 +28,9 @@
 
 
                          Tab link  Enter follow  ↑↓ PgUp PgDn  Esc/← back
--- page: height 306, scroll 0 (stored 0), region 64 0 512 464 --
+-- page: height 316, scroll 0 (stored 0), region 64 0 512 464 --
    14  33     0   sans26b |Tersenet
-   53  15     0   sans12 |terse:9145cb…27c543  ·  not in your timeline  ·  688 bytes
+   53  15     0   sans12 |terse:00c82a…40e6a1  ·  not in your timeline  ·  694 bytes
    78   8     0  -- rule --
    96  19     0   sans15 |First and foremost, Tersenet is a way to share information:
   115  19     0   sans15 |formatted text, with diagrams where they help, without the bloat of
@@ -39,6 +39,6 @@
   172  19     0   sans15 |optionally, it can be used to share very lightweight programs, at
   191  19     0   sans15 |most 1 MiB of memory each, that run on tiny isolated virtual
   210  19     0   sans15 |machines.
-  239  19     0   sans15 |[Write your own Tersenet reader: it starts with a text file and a few]{1}
-  258  19     0   sans15 |[rules]{1}
-  287  19     0   sans15 |[Contents: a step-by-step guide, and the complete reference]{2}
+  239  19     0   sans15 |[Install and try Tersenet]{1}
+  268  19     0   sans15 |[Write your own Tersenet reader]{2}
+  297  19     0   sans15 |[Contents]{3}

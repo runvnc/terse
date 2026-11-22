@@ -1,0 +1,74 @@
+# Write and publish an article
+
+An article is a plain text file. Write it in any text editor and save it as `hello.txt`:
+
+```
+# Hello, Tersenet
+
+This is my first article. Lines next to each other
+are joined into one paragraph.
+
+## What I like
+
+- short pages
+- no adverts
+- `code` in backquotes
+
+| Day | Walked |
+|---|--:|
+| Monday | 4 km |
+| Tuesday | 6 km |
+```
+
+A blank line ends a paragraph. `# ` starts a heading and `## ` a smaller one; `- ` starts an item of a list; text between backquotes is code; lines that start with `|` are a table, and the `|---|--:|` line under its first row makes that row a header and puts the second column on the right.
+
+## Is it Markdown?
+
+It looks like Markdown, and what the two have in common is written the same way as in GitHub-flavoured Markdown: paragraphs, `#` and `##` headings, lists with `-` or `*`, code blocks (indented four spaces, or between lines of three backquotes), code spans, tables, and links written `[text](target)`. But it is not strictly a subset of it. It is much smaller, and a few things differ:
+
+- Not in Tersenet, and shown just as you typed them: emphasis and bold (`*`, `_`), headings smaller than `##`, numbered and nested lists, quotes (`>`), images, HTML, rules (`---`), backslash escapes, and links to web pages: a link's target must be a `terse:` address.
+- Tersenet's own: `terse:` links to articles, feeds and programs, and figures: drawings, written as a fence whose opening backquotes are followed by `path` and a size.
+- Read differently: a table needs no `|---|` line (without one it simply has no header), and a line indented four spaces starts a code block even right after a paragraph's line.
+
+So an article that keeps to what the two share shows much the same on GitHub, and a Markdown file mostly reads well in Tersenet, with its emphasis marks showing. [Writing an article](terse:{writing-articles}) shows every rule.
+
+## Publish it
+
+```
+terse feed publish hello.txt --title "Hello, Tersenet"
+```
+
+```
+seq 2 blob 5d86159d495906bb…ad537da380d
+```
+
+The article is now entry #2 of your feed (your profile was #1), signed with your key, on your relay. Anyone who can reach that relay can read it. The title is what timelines show; the heading at the top of the text is for people who open the article by a link.
+
+## See it
+
+The timeline shows the feeds you follow, so follow your own:
+
+```
+terse feed subscribe $(terse key show)
+```
+
+```
+subscribed to 7105227f05be8a2efd…6854b14db7680ef9987e084c
+```
+
+(That works in bash, zsh, fish and PowerShell; or paste your key after `subscribe`.) The window reads the list of feeds you follow when it starts, so close it, run `terse-host` again and start the reader:
+
+```
+Timeline
+1 article  ·  1 feed
+Hello, Tersenet
+Sam (710522…7e084c)  ·  2026-11-22 00:17  ·  233 bytes
+```
+
+Enter opens it: the title, a grey line with your name, the entry number, the date and the size, then the text, with the paragraph wrapped to the column, "What I like" in bold, the list with bullets, `code` in a monospaced face and the table as a grid with its header in bold. Esc goes back to the timeline.
+
+The heading is the title, so the reader shows it once. A shortcut for trying this: T in the reader publishes a short test article and follows your feed for you, after the window asks you.
+
+## What you have now
+
+A feed with an article in it, and a reader that shows it. Next, the reader itself: [Read articles and follow links](terse:{guide-read}).

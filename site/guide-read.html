@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Read articles and follow links - the Tersenet manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Contents</a></nav></header>
+<main>
+<article>
+<h1 id="read-articles-and-follow-links">Read articles and follow links</h1>
+<p>The reader is where you spend most of your time in Tersenet. It has a few views, and the bottom row always shows the keys of the one you are in.</p>
+<h2 id="the-timeline">The timeline</h2>
+<p>The timeline lists the articles of every feed you follow, newest first. Each has its title and, below it, the feed&#39;s name and short key, the date and time (UTC) and the size:</p>
+<pre>Timeline
+2 articles  ·  1 feed
+A game for you
+Ana (73670a…a9ee5f)  ·  2026-11-22 00:18  ·  133 bytes
+Spring in the valley
+Ana (73670a…a9ee5f)  ·  2026-11-22 00:18  ·  82 bytes</pre>
+<p>Up and Down choose, Enter opens. New articles appear by themselves while the window is open. Small articles are downloaded as they arrive, so they open at once and can be read without a network later.</p>
+<h2 id="reading">Reading</h2>
+<p>An article fills the window as a column of text. Up and Down scroll a little, PgUp, PgDn and Space a screen, Home and End to the top and the end; the bottom row shows how far you are. Esc goes back.</p>
+<h2 id="links">Links</h2>
+<p>Links are in colour. Tab moves to the next one (Shift+Tab to the one before), which turns amber while the bottom row shows where it leads; Enter follows it. A link can lead to:</p>
+<ul>
+<li>another article, which opens in place: Esc comes back, up to 8 articles deep, each where you left it;</li>
+<li>a feed, whose page shows its name and key and offers to subscribe (the next page);</li>
+<li>a program, which the launcher starts in a tile of its own, after asking you if it is not one of the built-in ones (<a href="guide-games.html">Find and play a game</a>).</li>
+</ul>
+<p>There are no links to web pages: an address such as <code>https&#58;//example.org</code> in an article is plain text. Links are written <code>terse:</code> and a long number, and a reader shows them by their text or shortened.</p>
+<p>Someone may send you an article&#39;s link, <code>terse:</code> and 64 digits, in an e-mail or a message. The reader opens articles from your timeline, from links and from search, but not from a pasted link. In a terminal, <code>terse get</code> and the 64 digits prints the article, if one of your relays has it.</p>
+<h2 id="search">Search</h2>
+<p>/ on the timeline searches. Type words and press Enter: the reader looks through the articles on this computer, by title and text, and asks your relays for feeds by name and articles by title. Letters A to Z match either case. Enter on a result opens it.</p>
+<h2 id="the-manual">The manual</h2>
+<p>M on the timeline opens the first page of this manual. It is part of every Tersenet window, so it is there without a network.</p>
+<h2 id="what-you-have-now">What you have now</h2>
+<p>The timeline, articles, links and search. The timeline is only as good as the feeds you follow, so next: <a href="guide-subscribe.html">Subscribe to someone&#39;s feed</a>.</p>
+<p>Every view and key of the reader is in <a href="using-reader.html">Using the reader</a>.</p>
+</article>
+</main>
+<footer><nav class="pn"><a rel="prev" href="guide-write.html">← Write and publish an article</a><a rel="next" href="guide-subscribe.html">Subscribe to someone&#39;s feed →</a></nav></footer>
+</body>
+</html>

@@ -58,7 +58,11 @@ test.yml --ref <branch>`), never on a push.
    manual. Edit the notes if you like (say what changed).
 5. Publish it. The README's download links point at
    `https://github.com/runvnc/terse/releases/latest`, which is the newest
-   published, non-pre-release release.
+   published, non-pre-release release; so does the install script (below).
+6. Try the install script against it, into a scratch folder:
+
+       curl -fsSL https://tersenet.org/install.sh | TERSE_PREFIX=/tmp/terse-try sh
+       /tmp/terse-try/bin/terse --version
 
 To try the workflow without releasing: Actions, "release", "Run workflow"
 (or `gh workflow run release.yml --ref <branch>`). That run makes no release;
@@ -76,6 +80,38 @@ To build one download locally, as the workflow does:
 
 (it needs the musl target, `rustup target add x86_64-unknown-linux-musl`, and
 `musl-gcc`, or `CC_x86_64_unknown_linux_musl=clang`). The files go to `dist/`.
+
+## The install script
+
+`curl -fsSL https://tersenet.org/install.sh | sh` (the manual's "Install
+Tersenet" and the README) runs `docs/manual/site-files/install.sh`, which
+`terse manual site --out site` copies into `site/`; the site is then deployed
+as usual. After changing the script, regenerate `site/` and deploy it.
+
+It relies on what this page describes, so keep them in step:
+
+- `SHA256SUMS.txt` among the release's files, in `sha256sum` format
+  (`<hash>  <file>`), naming `terse-<v>-linux-x86_64.tar.gz`,
+  `terse-<v>-linux-aarch64.tar.gz` and `terse-<v>-macos.zip`;
+- each archive holding one folder named like it (without `.tar.gz` or `.zip`)
+  with `terse-host`, `terse` and `terse-relay` at its top;
+- the files at `https://github.com/runvnc/terse/releases/latest/download/<file>`
+  (the newest published release), or `releases/download/v<version>/<file>`
+  with `TERSE_VERSION`.
+
+It installs the three programs into `~/.local/bin` (`$TERSE_PREFIX/bin`),
+never with sudo, and edits no shell profile. `bus/` and `Terse.app` are not
+installed (the download has them). To test it without a release, serve a
+folder holding `dist/`'s files and their `SHA256SUMS.txt` over HTTP and point
+the script at it:
+
+    (cd dist && sha256sum -- terse-*.tar.gz > SHA256SUMS.txt && python3 -m http.server 8765 --bind 127.0.0.1) &
+    TERSE_RELEASE_URL=http://127.0.0.1:8765 TERSE_PREFIX=/tmp/terse-try sh docs/manual/site-files/install.sh
+
+There is no script for Windows: the zip already runs where it is unpacked,
+and a PowerShell script would add only a Start menu entry and a `PATH`
+change, untested on Windows so far. The guide says: download, Extract All,
+double-click `terse-host.exe`.
 
 ## What is not signed
 

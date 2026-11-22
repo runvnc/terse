@@ -180,6 +180,14 @@ The panel, a green triangle with a light outline, and a yellow curve. In brief:
 
 Paths are filled with the non-zero rule, then stroked with round joins and ends, later ones over earlier ones. Anything malformed, or a missing closing line, shows the figure as its source text, which is why a figure still reads as text where it cannot be drawn. This reader's column is 512 units, so a unit is one screen unit; it shrinks a figure wider than the column to fit, uniformly. A reader with a narrower column scales figures down in proportion to it, and no reader draws them larger than that unless it enlarges its text the same way. The full rules are in ARTICLE.md; how the reader hands figures to the page device is in [figures on the page](terse:{device-page-figures}).
 
+## Compared with Markdown
+
+What the format shares with Markdown is written as in GitHub-flavoured Markdown (GFM): paragraphs, `# ` and `## ` headings, `- ` and `* ` items, indented and fenced code, code spans, tables and `[text](target)` links. It is not strictly a subset of GFM:
+
+- Not in the format, so shown as written: emphasis, bold and strikethrough (`*`, `_`, `~`), `###` and smaller or underlined headings, numbered, nested and task lists, `>` quotes, images, HTML, rules, backslash escapes (but `\|` in a table cell), double-backquote code spans, autolinks, and link targets other than `terse:` links.
+- Only in Tersenet: `terse:` links, bare or as targets, and figures (`path` fences).
+- Read differently: every run of lines that start with `|` is a table, with or without an alignment row (GFM needs one, and allows rows without the leading bar); an indented line right after a paragraph's line starts a preformatted block (GFM continues the paragraph); a list item ends at a blank line.
+
 ## Size and publishing
 
 Keep articles to a few kilobytes. A host downloads an entry's article without being asked when it is at most 16,384 bytes (the user may change this limit), so such articles open at once; larger ones are fetched when opened. The reader shows at most 48 KiB of an article (a longer one ends with a note saying how much is shown), and does not open a linked article larger than that.
