@@ -8,6 +8,9 @@ description = "Checks Tersenet feed entries: every validity rule, with strict Ed
 repository = "https://github.com/runvnc/terse"
 keywords = ["ed25519", "signature", "tersenet", "no_std"]
 categories = ["cryptography", "no-std"]
+readme = "README.md"
+# The tests read ../testdata and the repository's vectors: not packaged.
+include = ["src", "README.md", "LICENSE"]
 
 [dependencies]
 curve25519-dalek = { version = "4.1", default-features = false }

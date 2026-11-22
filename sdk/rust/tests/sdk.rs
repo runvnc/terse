@@ -135,6 +135,13 @@ fn torsion() -> Vec<EdwardsPoint> {
     (0..8u8).map(|i| t * Scalar::from(i)).collect()
 }
 
+/// The point with y = `y` and x positive, if there is one.
+fn point_y(y: u8) -> Option<EdwardsPoint> {
+    let mut b = [0; 32];
+    b[0] = y;
+    CompressedEdwardsY(b).decompress()
+}
+
 /// A field element as 32 bytes, little-endian: p + `add` (p = 2^255 - 19).
 fn p_plus(add: u8, sign: bool) -> [u8; 32] {
     let mut b = [0xff; 32];
@@ -299,14 +306,12 @@ fn cases() -> Vec<Case> {
         add(name.clone(), key, msg(&name), sign(&key, a, Scalar::ZERO, rb, &msg(&name)), "SignatureR");
     }
     let mut off = [0; 32];
-    off[0] = (2..=18u8).find(|&y| CompressedEdwardsY([[y].as_slice(), &[0; 31]].concat().try_into().unwrap()).decompress().is_none()).unwrap();
+    off[0] = (2..=18u8).find(|&y| point_y(y).is_none()).unwrap();
     let mut sig = honest("r-not-on-curve");
     sig[..32].copy_from_slice(&off);
     add("r-not-on-curve".into(), key, msg("r-not-on-curve"), sig, "SignatureR");
     // R written y + p, of large order: the canonical encoding computed differs.
-    let y0 = (2..=18u8)
-        .find(|&y| CompressedEdwardsY([[y].as_slice(), &[0; 31]].concat().try_into().unwrap()).decompress().is_some_and(|p| !p.is_small_order()))
-        .unwrap();
+    let y0 = (2..=18u8).find(|&y| point_y(y).is_some_and(|p| !p.is_small_order())).unwrap();
     let mut sig = honest("r-not-canonical");
     sig[..32].copy_from_slice(&p_plus(y0, false));
     add("r-not-canonical".into(), key, msg("r-not-canonical"), sig, "Signature");
@@ -332,7 +337,8 @@ fn cases() -> Vec<Case> {
                 continue;
             }
             have[holds as usize] = true;
-            add(name.clone(), mixed, msg(&name), sign(&mixed, a, r, rb, &msg(&name)), if holds { "valid" } else { "Signature" });
+            let expect = if holds { "valid" } else { "Signature" };
+            add(name.clone(), mixed, msg(&name), sign(&mixed, a, r, rb, &msg(&name)), expect);
             if have == [true, true] {
                 break;
             }
@@ -371,7 +377,8 @@ fn strictness_cases() {
     if std::env::var_os("UPDATE_GOLDEN").is_some() {
         std::fs::write(&path, &text).unwrap();
     }
-    assert_eq!(std::fs::read_to_string(&path).unwrap(), text, "sdk/testdata/strict.txt is out of date (UPDATE_GOLDEN=1)");
+    let file = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(file, text, "sdk/testdata/strict.txt is out of date (UPDATE_GOLDEN=1)");
     let mut valid = 0;
     for c in &cases {
         // The check verify() makes, through an entry-shaped door: the
