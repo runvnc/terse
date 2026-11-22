@@ -527,7 +527,11 @@ driver. A component is **late** in a frame only if (`RECORD.md` 4):
 1. the frame overran its deadline, one frame;
 2. it would still have overrun had nobody waited for a CPU (the frame's
    time less every component's and the frame loop's starvation);
-3. the system was not stalled on memory for a quarter of a frame;
+3. the system was not stalled on memory for a quarter of a frame, or
+   the component spent more than its allowance and that stall on a CPU
+   (a stall excuses blocking, which may be its pages read back, but no
+   more time on a CPU than it lasted: another program's swapping does
+   not hide a driver that spins);
 4. the component's **own time** (its time less its starvation: on a CPU
    or blocked) is over its **allowance**, half a frame (8.3 ms), and the
    most of any component's.

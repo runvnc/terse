@@ -13,7 +13,11 @@
 //!    time less every component's and the frame loop's own starvation is
 //!    over the deadline;
 //! 3. the system was not stalled on memory for a quarter of a frame or
-//!    more (memory pressure: pages being swapped back, nobody's fault);
+//!    more (memory pressure: pages being swapped back, nobody's fault),
+//!    or the component spent more than its allowance and that stall on a
+//!    CPU (a stall excuses its blocked time, but no more of its time on a
+//!    CPU than the stall itself: a driver that spins is not excused by
+//!    another program's swapping);
 //! 4. the component's own time (its time less its starvation: on a CPU,
 //!    or blocked, on a disk, a lock, a sleep) is over its allowance, half
 //!    a frame, and the most of any component's.
@@ -304,7 +308,7 @@ pub fn verdict(r: &Rule, s: &FrameSample) -> Option<Late> {
     let starved: u64 = s.parts.iter().map(Part::starved).sum::<u64>() + s.host_starved_ns.unwrap_or(0);
     let verdict = if s.wall_ns.saturating_sub(starved) <= r.deadline_ns {
         Verdict::Starved
-    } else if s.memory_stall_ns.is_some_and(|m| m >= r.memory_ns) {
+    } else if s.memory_stall_ns.is_some_and(|m| m >= r.memory_ns && cpu_beyond_stall(&top, m) <= r.allowance_ns) {
         Verdict::Memory
     } else if top.own() > r.allowance_ns {
         Verdict::Blamed
@@ -312,6 +316,19 @@ pub fn verdict(r: &Rule, s: &FrameSample) -> Option<Late> {
         Verdict::Spread
     };
     Some(Late { frame: s.frame, wall_ns: s.wall_ns, verdict, top })
+}
+
+/// Of `p`'s time on a CPU, what a memory stall of `stall_ns` cannot
+/// explain (`RECORD.md` 4, `memory`). The stall is the whole system's,
+/// not the component's. Its pages read back from swap leave a component
+/// blocked, and the record cannot tell that from any other blocking: a
+/// stall may account for all of its blocked time. Memory reclaimed in its
+/// own allocations runs on its CPU and is counted in the stall: a stall
+/// accounts for no more of its time on a CPU than the stall itself; the
+/// rest is its work. Where its time on a CPU is not known (the host's own
+/// parts), 0: the stall excuses it.
+fn cpu_beyond_stall(p: &Part, stall_ns: u64) -> u64 {
+    p.run_ns.map_or(0, |_| p.cpu().saturating_sub(stall_ns))
 }
 
 /// The excuse for frames just after a size change of the window's surface
@@ -472,8 +489,29 @@ mod tests {
         let mut f = frame(4, 42 * MS, &[dev(2, 20 * MS, 5 * MS, 0)]);
         f.host_starved_ns = Some(30 * MS);
         assert_eq!(j.verdict(&f).unwrap().verdict, Verdict::Starved);
-        // Memory pressure excuses.
+        // Memory pressure excuses blocked time.
         let mut f = frame(5, 42 * MS, &[dev(2, 40 * MS, 0, 0)]);
+        f.memory_stall_ns = Some(5 * MS);
+        assert_eq!(j.verdict(&f).unwrap().verdict, Verdict::Memory);
+        // But not time on a CPU beyond the stall: 40 ms spinning in a
+        // frame in which the system stalled 5 ms (another program
+        // swapping) is the driver's doing; so is 18 ms with 9 ms of stall.
+        let spin = |cpu: u64, stall: u64| {
+            let mut f = frame(5, 42 * MS, &[dev(2, 40 * MS, cpu, 0)]);
+            f.memory_stall_ns = Some(stall);
+            j.verdict(&f).unwrap().verdict
+        };
+        assert_eq!(spin(40 * MS, 5 * MS), Verdict::Blamed);
+        assert_eq!(spin(18 * MS, 9 * MS), Verdict::Blamed);
+        // The stall may explain as much CPU time as it lasted (reclaim in
+        // the driver's own allocations): within the allowance once that
+        // is taken off, excused.
+        assert_eq!(spin(16 * MS, 8 * MS), Verdict::Memory);
+        assert_eq!(spin(40 * MS, 35 * MS), Verdict::Memory);
+        // Below a quarter of a frame a stall excuses nothing.
+        assert_eq!(spin(0, 4 * MS), Verdict::Blamed);
+        // Where the CPU time is not known, the stall excuses as before.
+        let mut f = frame(5, 42 * MS, &[Part { run_ns: None, ..dev(2, 40 * MS, 0, 0) }]);
         f.memory_stall_ns = Some(5 * MS);
         assert_eq!(j.verdict(&f).unwrap().verdict, Verdict::Memory);
         // Late, but nobody over half a frame.
