@@ -684,7 +684,8 @@ fn selecting_with_keys_and_the_pointer() {
         .at(&format!("pointer {} {} 0", 5 * COLW + 10, row7 + 2));
     let mut run = Run::new(&k2);
     run.finish(&k2);
-    assert_eq!(run.entry(), "D6:E7   ");
+    // (the active cell D6, where the drag began, holds a formula)
+    assert_eq!(run.entry(), "D6:E7   =B6*C6   = 608");
     // The selection's row numbers and column letters are in its colour.
     let l = run.layout();
     let accent = [26, 100, 210];

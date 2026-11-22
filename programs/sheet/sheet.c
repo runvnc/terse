@@ -3502,6 +3502,7 @@ static uint32_t frame, ev_frame, press_frame, press_r = 0xFFFF, press_c;
 static void key(uint8_t k, uint8_t mods)
 {
     int shift = mods & MOD_SHIFT, ctrl = mods & MOD_CTRL;
+    press_r = 0xFFFF; /* a key between two presses: not a double-click */
     /* The modifier keys themselves (a window sends them as keys too): only
      * the keys they modify count, but Shift is followed for Shift+click. */
     if (k >= 0xE0 && k <= 0xE7) {
@@ -3637,7 +3638,9 @@ static void pointer(const terse_event *e)
             move_to((int32_t)r, (int32_t)c, 1);
         return;
     }
-    dbl = h == H_CELL && r == press_r && c == press_c && ev_frame - press_frame <= DOUBLE_FRAMES;
+    /* A second press on the selected cell, soon after the first and with
+     * no key between: a double-click. */
+    dbl = h == H_CELL && r == press_r && c == press_c && r == sr && c == sc && ev_frame - press_frame <= DOUBLE_FRAMES;
     press_r = h == H_CELL ? r : 0xFFFF;
     press_c = c;
     press_frame = ev_frame;
