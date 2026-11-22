@@ -574,6 +574,11 @@ pub mod property {
     /// are then light like the text's, and the core adds the light of
     /// every light layer as it is instead of drawing its own tube.
     pub const TUBE: &str = "vector.tube";
+    /// Published by the core for the drivers that draw a look of their own
+    /// (DEVICES.md 7.2): how much of it the host sheds because its frames
+    /// run long (PERFORMANCE.md R15 step 1), a level (u8) from 0 (none) to
+    /// 3 (the most), as terse-host's phosphor look sheds; empty: 0.
+    pub const SHED: &str = "core.shed";
     /// Published by the core for the vector driver: the ink caps the
     /// machine's lists are drawn within, its share of the system ink (SPEC
     /// §machines.ink): the 2D cap (u64) and the 3D cap (f64); empty: the

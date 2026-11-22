@@ -27,6 +27,8 @@ pub struct Summary {
     pub mem: BTreeMap<(String, u64), (u64, u64, u64, u64, u64)>,
     pub blocks: u64,
     pub sheds: u64,
+    /// Size changes of the window's surface.
+    pub resizes: u64,
     pub warnings: Vec<String>,
     pub stops: Vec<String>,
     pub checks: Vec<String>,
@@ -78,6 +80,7 @@ impl Summary {
                 }
                 Line::Block { .. } => self.blocks += 1,
                 Line::Shed { .. } => self.sheds += 1,
+                Line::Resize { .. } => self.resizes += 1,
                 Line::Warn { frame, component, count } => self.warnings.push(format!("frame {frame}: {component} late {count} times")),
                 Line::Stop { frame, component, machine, image, saved } => {
                     self.stops.push(format!("frame {frame}: {component}, machine {machine} (program {}), saved {saved}", if image.is_empty() { "-" } else { image }))
@@ -159,6 +162,9 @@ impl Summary {
         }
         if self.blocks > 0 || self.sheds > 0 {
             let _ = writeln!(o, "  blockages (waits of 100 ms or more): {}; the look shed {} times", self.blocks, self.sheds);
+        }
+        if self.resizes > 0 {
+            let _ = writeln!(o, "  the window changed size {} times (late frames just after: resize, not counted)", self.resizes);
         }
         let mut grew: Vec<(f64, String)> = Vec::new();
         for ((c, _), (s0, k0, s1, k1, max)) in &self.mem {

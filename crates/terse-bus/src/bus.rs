@@ -844,6 +844,13 @@ impl Proc {
     }
 
     fn request(&mut self, to: Addr, kind: u8, f: impl FnOnce(&mut Writer), mem: ReadMem) -> Result<Vec<u8>, String> {
+        self.send_request(to, kind, f)?;
+        self.wait_reply(to, kind, mem)
+    }
+
+    /// Sends a request (with what is held and batched in front) without
+    /// waiting for its reply.
+    fn send_request(&mut self, to: Addr, kind: u8, f: impl FnOnce(&mut Writer)) -> Result<(), String> {
         self.out.clear();
         self.out.append(&mut self.held);
         self.take_batch();
@@ -853,8 +860,7 @@ impl Proc {
         let out = std::mem::take(&mut self.out);
         let sent = self.link.send(&out);
         self.out = out;
-        sent?;
-        self.wait_reply(to, kind, mem)
+        sent
     }
 }
 
@@ -1042,16 +1048,34 @@ impl BusDevices {
         let mut bus = self.bus.borrow_mut();
         bus.flush()?;
         let mut updates = Vec::new();
+        if let Some(e) = &bus.failed {
+            return Err(e.clone());
+        }
+        // PRESENT to every driver with layers first, then collect: the
+        // drivers draw at once (as BEGIN). Each is accountable for the time
+        // the core waited for it after the ones before (R14).
+        let to = Addr::of(self.instance);
+        let mut sent = Vec::new();
         for &p in &self.procs {
             if !self.layers.iter().any(|(s, _)| self.slot_proc[*s as usize] == Some(p)) {
                 continue;
             }
             let start = Instant::now();
-            let reply = bus.request(p, Addr::of(self.instance), msg::PRESENT, |w| {
-                w.u8(0).u16(0).u16(picture.0 as u16).u16(picture.1 as u16);
-                w.f32(screen.0).f32(screen.1).f32(screen.2).f32(screen.3).u16(cell as u16).u16(0);
-            }, None)?;
-            bus.procs[p].stats.present.add(start.elapsed());
+            bus.procs[p]
+                .send_request(to, msg::PRESENT, |w| {
+                    w.u8(0).u16(0).u16(picture.0 as u16).u16(picture.1 as u16);
+                    w.f32(screen.0).f32(screen.1).f32(screen.2).f32(screen.3).u16(cell as u16).u16(0);
+                })
+                .map_err(|e| bus.fail(p, e))?;
+            sent.push((p, start));
+        }
+        for (p, start) in sent {
+            let waited = Instant::now();
+            let reply = bus.procs[p].wait_reply(to, msg::PRESENT, None).map_err(|e| bus.fail(p, e))?;
+            let class = bus.class(msg::PRESENT, self.instance);
+            let d = &mut bus.procs[p];
+            d.acct.add(class, self.instance, waited.elapsed().as_nanos() as u64);
+            d.stats.present.add(start.elapsed());
             let mut r = Reader::new(&reply);
             r.u8()?;
             let k = r.u8()?;

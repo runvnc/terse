@@ -1045,8 +1045,10 @@ A machine's screen is its layers composed in increasing z (equal z:
 increasing slot, then the order declared) over opaque black.
 
 When it presents (HELLO flag bit 1), the core sends PRESENT for an
-instance to each of its drivers with layers, in order: the driver brings
-that machine's layers up to date for a picture of a size the core chooses:
+instance to each of its drivers with layers (the reference core sends it to
+all of them, then collects the replies in the same order, so that they
+draw at once): the driver brings that machine's layers up to date for a
+picture of a size the core chooses:
 
 | Offset | Size | Field |
 |---|---|---|
@@ -1200,6 +1202,21 @@ lines over the panels are the core's). `crates/terse-mame-crt`
 (`terse-dev-mame`) is such a driver, for both groups: MAME's vector CRT
 renderer, and the terminal's text as strokes.
 
+**Shedding a driver's own look.** When the host's frames run long to draw
+and present, it sheds its own look first (`PERFORMANCE.md` R15 step 1:
+the reference's phosphor look, levels 0 to 3). A driver that draws a look
+of its own subscribes to **`core.shed`**: the core gives it the same level
+(u8, 0 none to 3 the most; it publishes it with the machine's other
+presentation facts, and only to subscribers, so a driver that does not
+know it is never told). What each level gives up is the driver's to say,
+optional work only, never what a device requires; `terse-dev-mame`: 1
+draws its phosphor at most 720 lines high, 2 at most 480, 3 also without
+the bloom. The reference core raises the level after 3 frames in a row
+whose drawing (the PRESENT round, its own composing, copying to the
+window; not the wait for the window system to give a buffer back) took
+more than a frame, and lowers it after 120 frames that took less than
+half of one.
+
 **The system ink** (SPEC §machines.ink) is the core's: it counts what it
 shows with terse-core's count, the pictures' areas, then the machines'
 2D lists (device 3's state from `vector.list`) and 3D lists
@@ -1240,6 +1257,7 @@ reference drivers and core:
 | `vector.list` | vector display | core | device 3's state as `STATE.md` 1.7's section: style (u8), persistence (u8), fill mode (u8: 1 outlines), the list's length (u32) and the list; the core counts the system ink from it and draws the phosphor style's beam (section 7.1) |
 | `core.light` | core | terminal, page, vector display | 1: the machine is shown in the phosphor style and its layers are light (section 7.1); 0 or empty: the clean style |
 | `vector.tube` | a vector display that draws its own tube (not the reference's) | core | 1: in the phosphor style its layers are light and the core adds the layers' light as it is, without its own tube (section 7.1); 0 or empty: the core draws the tube |
+| `core.shed` | core | a driver with a look of its own (not the reference's) | how much of its optional look to shed because the host's frames run long (section 7.1): a level (u8), 0 none to 3 the most; empty: 0 |
 | `core.caps` | core | vector display | the ink caps the machine's lists are drawn within, its share of the system ink (SPEC §machines.ink): the 2D cap (u64) and the 3D cap (f64), each at most the device's own; empty: the devices' own |
 | `core.eye` | core | vector display | the eye: two f32, screen units from the reference eye (SPEC §vector3d.space) |
 | `core.view` | core | vector display | the shell's scene: which Screens are in effect (u8) and the view (12 f64: the linear part by rows, then the translation); empty: none |

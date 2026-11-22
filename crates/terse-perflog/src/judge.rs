@@ -20,11 +20,21 @@
 //!
 //! The rule (`Rule::default`): after 3 late frames of one component within
 //! 60 frames the host warns the user; after 10 within 300 it stops the
-//! machines that use it (a device), or only shows it (the host's own
-//! components: the core, composing, presenting). A device is stopped only
-//! for blames that are [`certain`]: the system said how long it and the
-//! frame loop waited for a CPU. Everything here is
-//! deterministic given the samples: tests feed it frames.
+//! machines that use it (a device). The host's own components (the core,
+//! composing, presenting) cannot be stopped: they are warned about once,
+//! until they have gone 300 frames without a late frame. A device is
+//! stopped only for blames that are [`certain`]: the system said how long
+//! it and the frame loop waited for a CPU.
+//!
+//! **Resizing.** When the window's surface changes size every driver and
+//! the host draw everything again, at the new size, in new buffers. A
+//! frame that would be blamed within [`Rule::resize_frames`] frames of a
+//! size change (the frame first composed at the new size and the two
+//! after it) is recorded as `resize` instead and counts toward nothing,
+//! at most [`Rule::resize_budget`] frames within any [`Rule::stop_within`]:
+//! a window resized without end does not excuse a slow component for
+//! longer than that. Everything here is deterministic given the samples:
+//! tests feed it frames.
 
 use std::collections::{HashMap, VecDeque};
 
@@ -136,6 +146,9 @@ pub struct FrameSample {
     pub host_starved_ns: Option<u64>,
     /// The system's full memory stall in the frame (PSI), if known.
     pub memory_stall_ns: Option<u64>,
+    /// The frame is the first composed at a new size of the window's
+    /// surface (or the first of all, in a window).
+    pub size_changed: bool,
 }
 
 /// Why a late frame was late.
@@ -149,6 +162,9 @@ pub enum Verdict {
     Memory,
     /// No component's own time was over its allowance.
     Spread,
+    /// It would have been blamed, but the window's surface had just
+    /// changed size (within the rule's bounds).
+    Resize,
 }
 
 impl Verdict {
@@ -158,6 +174,7 @@ impl Verdict {
             Verdict::Starved => "starved",
             Verdict::Memory => "memory",
             Verdict::Spread => "spread",
+            Verdict::Resize => "resize",
         }
     }
 
@@ -167,6 +184,7 @@ impl Verdict {
             "starved" => Verdict::Starved,
             "memory" => Verdict::Memory,
             "spread" => Verdict::Spread,
+            "resize" => Verdict::Resize,
             _ => return None,
         })
     }
@@ -189,7 +207,7 @@ pub enum Action {
     /// the warning window).
     Warn { component: Component, count: u32 },
     /// Stop the machines that use `component` (a device), after taking
-    /// their snapshots; for the host's own components, show it only.
+    /// their snapshots. Never for the host's own components.
     Stop { component: Component, count: u32 },
 }
 
@@ -206,6 +224,11 @@ pub struct Rule {
     pub warn_within: u64,
     pub stop_after: u32,
     pub stop_within: u64,
+    /// Frames after a size change of the window's surface (that frame
+    /// included) whose blame is excused as `resize`.
+    pub resize_frames: u64,
+    /// At most this many frames excused as `resize` within `stop_within`.
+    pub resize_budget: u32,
 }
 
 impl Default for Rule {
@@ -218,6 +241,8 @@ impl Default for Rule {
             warn_within: 60,
             stop_after: 10,
             stop_within: 300,
+            resize_frames: 3,
+            resize_budget: 120,
         }
     }
 }
@@ -231,6 +256,10 @@ pub struct Judge {
     blamed: HashMap<Component, VecDeque<(u64, bool)>>,
     /// Components warned about and not yet back to good behaviour.
     warned: HashMap<Component, u64>,
+    /// The last frame first composed at a new surface size.
+    size_changed: Option<u64>,
+    /// Frames excused as `resize`, oldest first, within `stop_within`.
+    excused: VecDeque<u64>,
 }
 
 impl Judge {
@@ -260,10 +289,25 @@ impl Judge {
 
     /// Judges one frame: its verdict, and the actions the rule now asks
     /// for. A component is warned about once until it has gone a whole
-    /// stop window without blame; after a stop its count starts again.
+    /// stop window without blame; after a stop its count starts again. The
+    /// host's own components are never stopped (only warned about).
     pub fn judge(&mut self, s: &FrameSample) -> (Option<Late>, Vec<Action>) {
-        let late = self.verdict(s);
+        let mut late = self.verdict(s);
         let r = self.rule;
+        if s.size_changed {
+            self.size_changed = Some(s.frame);
+        }
+        while self.excused.front().is_some_and(|&f| f + r.stop_within <= s.frame) {
+            self.excused.pop_front();
+        }
+        if let Some(l) = &mut late
+            && l.verdict == Verdict::Blamed
+            && self.size_changed.is_some_and(|c| s.frame >= c && s.frame - c < r.resize_frames)
+            && (self.excused.len() as u32) < r.resize_budget
+        {
+            l.verdict = Verdict::Resize;
+            self.excused.push_back(s.frame);
+        }
         let horizon = r.warn_within.max(r.stop_within);
         for q in self.blamed.values_mut() {
             while q.front().is_some_and(|&(f, _)| f + horizon <= s.frame) {
@@ -280,7 +324,7 @@ impl Judge {
             // towards a stop.
             let within = |w: u64, only_certain: bool| q.iter().filter(|&&(f, sure)| f + w > s.frame && (sure || !only_certain)).count() as u32;
             let (warn, stop) = (within(r.warn_within, false), within(r.stop_within, true));
-            if stop >= r.stop_after {
+            if stop >= r.stop_after && c.is_device() {
                 actions.push(Action::Stop { component: c, count: stop });
                 q.clear();
                 self.warned.remove(&c);
@@ -321,7 +365,7 @@ mod tests {
     const MS: u64 = 1_000_000;
 
     fn frame(n: u64, wall: u64, parts: &[Part]) -> FrameSample {
-        FrameSample { frame: n, wall_ns: wall, parts: parts.to_vec(), host_starved_ns: Some(0), memory_stall_ns: Some(0) }
+        FrameSample { frame: n, wall_ns: wall, parts: parts.to_vec(), host_starved_ns: Some(0), memory_stall_ns: Some(0), size_changed: false }
     }
 
     fn dev(slot: u8, wall: u64, run: u64, starved: u64) -> Part {
@@ -387,7 +431,7 @@ mod tests {
     fn without_starvation_readings_a_device_is_warned_about_never_stopped() {
         // Windows, or Linux without schedstats: the driver's wait is all
         // the host knows.
-        let unknown = |n| FrameSample { frame: n, wall_ns: 50 * MS, parts: vec![Part::new(Component::Device(2), 45 * MS)], host_starved_ns: None, memory_stall_ns: None };
+        let unknown = |n| FrameSample { frame: n, wall_ns: 50 * MS, parts: vec![Part::new(Component::Device(2), 45 * MS)], host_starved_ns: None, memory_stall_ns: None, size_changed: false };
         let mut j = Judge::default();
         let mut actions = Vec::new();
         for n in 0..600u64 {
@@ -431,6 +475,100 @@ mod tests {
             warns,
             vec![(2, Action::Warn { component: c, count: 3 }), (400 + 2, Action::Warn { component: c, count: 3 })]
         );
+    }
+
+    #[test]
+    fn the_hosts_own_components_are_warned_about_once_never_stopped() {
+        // The host's compose late in every frame for ten seconds: one
+        // warning, at the third, then nothing while it goes on.
+        let mut j = Judge::default();
+        let mut actions = Vec::new();
+        for n in 0..600u64 {
+            let (late, a) = j.judge(&frame(n, 30 * MS, &[Part::new(Component::Compose, 25 * MS)]));
+            assert_eq!(late.unwrap().verdict, Verdict::Blamed);
+            actions.extend(a.into_iter().map(|a| (n, a)));
+        }
+        assert_eq!(actions, vec![(2, Action::Warn { component: Component::Compose, count: 3 })]);
+        // After 300 good frames it is warned about again.
+        let good = |n| frame(n, 2 * MS, &[Part::new(Component::Compose, MS)]);
+        for n in 600..900u64 {
+            assert!(j.judge(&good(n)).1.is_empty());
+        }
+        let a: Vec<Action> = (900..903u64).flat_map(|n| j.judge(&frame(n, 30 * MS, &[Part::new(Component::Compose, 25 * MS)])).1).collect();
+        assert_eq!(a, vec![Action::Warn { component: Component::Compose, count: 3 }]);
+    }
+
+    /// `f` with a size change of the window's surface.
+    fn resized(mut f: FrameSample) -> FrameSample {
+        f.size_changed = true;
+        f
+    }
+
+    #[test]
+    fn frames_after_a_resize_are_excused() {
+        let slow = |n| frame(n, 40 * MS, &[dev(3, 30 * MS, 30 * MS, 0)]);
+        let good = |n| frame(n, 2 * MS, &[dev(3, MS, MS, 0)]);
+        // A resize every 30 frames, the driver late in the three frames
+        // after each: all excused, nothing counted, for ten seconds.
+        let mut j = Judge::default();
+        for n in 0..600u64 {
+            let f = match n % 30 {
+                0 => resized(slow(n)),
+                1 | 2 => slow(n),
+                _ => good(n),
+            };
+            let (late, a) = j.judge(&f);
+            assert!(a.is_empty(), "{n}: {a:?}");
+            if n % 30 < 3 {
+                assert_eq!(late.unwrap().verdict, Verdict::Resize, "{n}");
+            }
+        }
+        // The fourth frame after a resize is not excused.
+        let mut j = Judge::default();
+        let verdicts: Vec<Verdict> = (0..5u64).map(|n| j.judge(&if n == 0 { resized(slow(n)) } else { slow(n) }).0.unwrap().verdict).collect();
+        assert_eq!(verdicts, [Verdict::Resize, Verdict::Resize, Verdict::Resize, Verdict::Blamed, Verdict::Blamed]);
+        // Starved and spread frames keep their verdicts.
+        let mut j = Judge::default();
+        assert_eq!(j.judge(&resized(good(0))).0, None);
+        let f = resized(frame(1, 60 * MS, &[dev(3, 58 * MS, 2 * MS, 50 * MS)]));
+        assert_eq!(j.judge(&f).0.unwrap().verdict, Verdict::Starved);
+        let f = resized(frame(2, 20 * MS, &[dev(3, 6 * MS, 6 * MS, 0)]));
+        assert_eq!(j.judge(&f).0.unwrap().verdict, Verdict::Spread);
+    }
+
+    #[test]
+    fn a_slow_device_is_stopped_however_the_window_is_resized() {
+        // The surface changes size in every frame (a resize that never
+        // ends) and the driver is late in every frame: 120 frames are
+        // excused, then it is warned (3 within 60) and stopped (10 within
+        // 300), 120 frames later than without the resizing; then again 10
+        // frames later, the budget still spent.
+        let c = Component::Device(3);
+        let late = |n| frame(n, 40 * MS, &[dev(3, 30 * MS, 30 * MS, 0)]);
+        let mut j = Judge::default();
+        let actions: Vec<(u64, Action)> = (0..140u64).flat_map(|n| j.judge(&resized(late(n))).1.into_iter().map(move |a| (n, a))).collect();
+        assert_eq!(
+            actions,
+            [
+                (122, Action::Warn { component: c, count: 3 }),
+                (129, Action::Stop { component: c, count: 10 }),
+                (132, Action::Warn { component: c, count: 3 }),
+                (139, Action::Stop { component: c, count: 10 })
+            ]
+        );
+        let mut j = Judge::default();
+        let actions: Vec<(u64, Action)> = (0..10u64).flat_map(|n| j.judge(&late(n)).1.into_iter().map(move |a| (n, a))).collect();
+        assert_eq!(actions, [(2, Action::Warn { component: c, count: 3 }), (9, Action::Stop { component: c, count: 10 })]);
+        // The budget comes back as the excused frames leave the window.
+        let mut j = Judge::default();
+        let mut excused = 0;
+        for n in 0..1200u64 {
+            let (l, _) = j.judge(&resized(late(n)));
+            if l.unwrap().verdict == Verdict::Resize {
+                excused += 1;
+            }
+        }
+        assert_eq!(excused, 4 * 120);
     }
 
     #[test]

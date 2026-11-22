@@ -29,6 +29,16 @@ use winit::window::{Window, WindowId};
 
 const FRAME: Duration = Duration::from_micros(16_667);
 
+/// While the window's surface is changing size, the machines are held (no
+/// frame runs, nothing is drawn; the last picture is shown scaled) until
+/// the size has kept still for this many frame periods (PERFORMANCE.md
+/// R15, "Resizing")...
+pub const SETTLE: u64 = 6;
+/// ...for at most this many frame periods in a row...
+pub const MAX_HOLD: u64 = 60;
+/// ...and not again until this many frames have run since.
+pub const RUN_BETWEEN: u64 = 60;
+
 pub struct Options {
     pub size: Option<(u32, u32)>,
     pub eye: (f32, f32),
@@ -40,15 +50,26 @@ pub struct Options {
     pub startup: Duration,
     /// How the phosphor style is drawn.
     pub looks: terse_bus::compose::Looks,
+    /// `--resize` (with --selftest): the window's surface takes these sizes
+    /// before these frames, as when the window system configures it (a
+    /// script of size changes, for testing R15).
+    pub resizes: Vec<(u64, (u32, u32))>,
 }
 
 /// One frame's timings (ms).
-#[derive(Default, Clone, Copy)]
+#[derive(Default, Clone)]
 struct FrameLog {
     emulate: f64,
     bus: f64,
+    /// Composition: the drivers' PRESENT waits and the core's own work.
     compose: f64,
+    /// Each driver's PRESENT, from sending it to its reply (by driver).
+    drivers: Vec<f64>,
     present: f64,
+    /// Of `present`, waiting for the compositor to release a buffer.
+    buffer_wait: f64,
+    /// The compositor's own account of the draw.
+    profile: terse_bus::compose::Profile,
 }
 
 struct App {
@@ -79,6 +100,24 @@ struct App {
     created: Instant,
     /// Sheds the phosphor look when frames run long.
     governor: terse_host::phosphor::Governor,
+    /// The last presents' frame sizes and damage, newest first (what a
+    /// buffer of an age is missing).
+    presented: VecDeque<((u32, u32), Vec<terse_host::soft::base::IRect>)>,
+    /// The last present's wait for a buffer the compositor had released (ms).
+    buffer_wait: f64,
+    /// The highest shed level said on standard error.
+    shed_said: u8,
+    /// `--resize`: the window's surface sizes before these frame periods.
+    resizes: VecDeque<(u64, (u32, u32))>,
+    /// Frame periods so far (run or held).
+    ticks: u64,
+    /// The frame period in which the surface last changed size.
+    resized_tick: Option<u64>,
+    /// Frame periods held in a row, and frames run since the last hold.
+    held_run: u64,
+    since_hold: u64,
+    /// Frame periods held in all.
+    held: u64,
 }
 
 impl App {
@@ -92,6 +131,11 @@ impl App {
                 h.iter().map(|x| x.sum_ns as f64).sum::<f64>() / 1e6
             })
             .sum()
+    }
+
+    /// Each driver's PRESENT waits so far (ms).
+    fn present_ms(&self) -> Vec<f64> {
+        self.bs.bus.borrow().procs.iter().map(|d| d.stats.present.sum_ns as f64 / 1e6).collect()
     }
 
     fn frame(&mut self) -> Result<(), String> {
@@ -133,48 +177,140 @@ impl App {
             self.eye = (step(self.eye.0, target.0), step(self.eye.1, target.1));
         }
         self.comp.set_eye(self.eye);
+        let presents_before = self.present_ms();
         let start = Instant::now();
         let prompt = self.bs.prompt()?;
         let viewport = self.viewport;
         self.comp.notice = self.bs.notice.as_ref().map(|(n, _)| (n.heading.clone(), n.what.clone(), n.then.clone()));
         self.comp.draw(&mut self.bs.system, viewport, prompt.as_ref().map(|(p, n, t)| (p, *n, t.clone())))?;
         let compose = start.elapsed().as_secs_f64() * 1000.0;
+        // R15: a new size of the surface is recorded, and the frames just
+        // after it are excused.
+        self.bs.surface(viewport);
+        let drivers: Vec<f64> = self.present_ms().iter().zip(&presents_before).map(|(a, b)| a - b).collect();
         let start = Instant::now();
         if let Some(surface) = &mut self.surface {
             let mut buffer = surface.buffer_mut().map_err(|e| e.to_string())?;
+            self.buffer_wait = start.elapsed().as_secs_f64() * 1000.0;
             let frame = self.comp.frame();
-            let n = buffer.len().min(frame.data.len());
-            buffer[..n].copy_from_slice(&frame.data[..n]);
-            buffer.present().map_err(|e| e.to_string())?;
+            let size = (frame.area.width() as u32, frame.area.height() as u32);
+            // The damage, as at most a few rectangles: many small ones (a
+            // tile row each) cost the window system more than they save.
+            let mut damage = self.comp.damage().to_vec();
+            if damage.len() > 4 {
+                let b = damage.iter().fold(damage[0], |a, r| terse_host::soft::base::IRect::new(a.x0.min(r.x0), a.y0.min(r.y0), a.x1.max(r.x1), a.y1.max(r.y1)));
+                damage = vec![b];
+            }
+            // Only what changed is copied and presented: the buffer holds
+            // the frame of `age` presents ago (softbuffer), so the damage
+            // since then. A new size, or an older buffer, is copied whole.
+            let age = buffer.age() as usize;
+            let known = age >= 1 && age <= self.presented.len() + 1 && self.presented.iter().take(age - 1).all(|p| p.0 == size) && buffer.len() == frame.data.len();
+            let whole = [terse_host::soft::base::IRect::of_size(size)];
+            let mut copy: Vec<terse_host::soft::base::IRect> = damage.clone();
+            if known {
+                for p in self.presented.iter().take(age - 1) {
+                    copy.extend_from_slice(&p.1);
+                }
+            } else {
+                copy = whole.to_vec();
+            }
+            let w = size.0 as usize;
+            for r in &copy {
+                let r = r.intersect(&whole[0]);
+                for y in r.y0..r.y1 {
+                    let row = y as usize * w;
+                    buffer[row + r.x0 as usize..row + r.x1 as usize].copy_from_slice(&frame.data[row + r.x0 as usize..row + r.x1 as usize]);
+                }
+            }
+            self.presented.push_front((size, damage.clone()));
+            self.presented.truncate(2);
+            let rects: Vec<softbuffer::Rect> = (if known { &damage[..] } else { &whole[..] })
+                .iter()
+                .filter_map(|r| {
+                    let r = r.intersect(&whole[0]);
+                    Some(softbuffer::Rect { x: r.x0 as u32, y: r.y0 as u32, width: NonZeroU32::new(r.width() as u32)?, height: NonZeroU32::new(r.height() as u32)? })
+                })
+                .collect();
+            if rects.is_empty() {
+                // Nothing changed: the same picture again (a commit keeps
+                // the frame callbacks going), one pixel's damage.
+                buffer.present_with_damage(&[softbuffer::Rect { x: 0, y: 0, width: NonZeroU32::MIN, height: NonZeroU32::MIN }]).map_err(|e| e.to_string())?;
+            } else {
+                buffer.present_with_damage(&rects).map_err(|e| e.to_string())?;
+            }
         }
         let present_took = start.elapsed();
         let present = present_took.as_secs_f64() * 1000.0;
         // PERFORMANCE.md R15 step 1: the phosphor look is shed first when
-        // frames run long to draw and present (terse-host's governor).
+        // frames run long to draw and present (terse-host's governor): the
+        // core's tube, and a driver's own look through core.shed. The wait
+        // for the window system to give a buffer back is not the host's
+        // drawing: shedding would not shorten it.
+        let drawing = compose + (present - self.buffer_wait).max(0.0);
         if !self.comp.looks.look.no_shed
-            && let Some(floor) = self.governor.presented(Duration::from_secs_f64((compose + present) / 1000.0))
+            && let Some(floor) = self.governor.presented(Duration::from_secs_f64(drawing / 1000.0))
         {
             let why = if floor > self.comp.looks.look.floor { "late" } else { "recover" };
             self.comp.looks.look.floor = floor;
             if let Some(m) = &self.bs.monitor {
                 m.add(terse_perflog::record::Line::Shed { frame: m.frame, level: floor as u32, why: why.into() });
             }
-            eprintln!("terse-bus: frames ran long or caught up: the phosphor look sheds from level {floor}");
+            // Said when it sheds further than before in the run (the
+            // record has every change).
+            if floor > self.shed_said {
+                self.shed_said = floor;
+                eprintln!("terse-bus: frames ran long: the phosphor look is shed to level {floor} of 3 while they do");
+            }
         }
-        for line in self.bs.end_frame(present_took)? {
+        let wait = Duration::from_secs_f64(self.buffer_wait.min(present) / 1000.0);
+        self.bs.display_wait(wait);
+        for line in self.bs.end_frame(present_took.saturating_sub(wait))? {
             eprintln!("{line}");
         }
         self.presents.push(Instant::now());
         if self.first_frame.is_none() {
             self.first_frame = Some(self.opts.startup + self.created.elapsed());
         }
-        self.log.push(FrameLog { emulate, bus, compose, present });
+        self.log.push(FrameLog { emulate, bus, compose, drivers, present, buffer_wait: self.buffer_wait, profile: self.comp.profile });
         self.frames += 1;
         Ok(())
     }
 
+    /// A held frame period: no machine runs and nothing is drawn; the last
+    /// picture is shown scaled to the surface (nearest pixel).
+    fn hold(&mut self) -> Result<(), String> {
+        let Some(surface) = &mut self.surface else { return Ok(()) };
+        let mut buffer = surface.buffer_mut().map_err(|e| e.to_string())?;
+        let frame = self.comp.frame();
+        let (fw, fh) = (frame.area.width().max(0) as usize, frame.area.height().max(0) as usize);
+        let (w, h) = (self.viewport.0 as usize, self.viewport.1 as usize);
+        if buffer.len() < w * h {
+            return Ok(());
+        }
+        if fw == 0 || fh == 0 {
+            buffer[..w * h].fill(0);
+        } else {
+            let xs: Vec<usize> = (0..w).map(|x| x * fw / w).collect();
+            for y in 0..h {
+                let src = &frame.data[(y * fh / h) * fw..][..fw];
+                let out = &mut buffer[y * w..(y + 1) * w];
+                for (o, &sx) in out.iter_mut().zip(&xs) {
+                    *o = src[sx];
+                }
+            }
+        }
+        // The next frame drawn is copied whole.
+        self.presented.clear();
+        buffer.present().map_err(|e| e.to_string())
+    }
+
     fn resize(&mut self, size: PhysicalSize<u32>) {
-        self.viewport = (size.width.max(1), size.height.max(1));
+        let size_now = (size.width.max(1), size.height.max(1));
+        if size_now != self.viewport && self.frames > 0 {
+            self.resized_tick = Some(self.ticks);
+        }
+        self.viewport = size_now;
         if let Some(s) = &mut self.surface {
             let _ = s.resize(NonZeroU32::new(self.viewport.0).unwrap(), NonZeroU32::new(self.viewport.1).unwrap());
         }
@@ -303,8 +439,39 @@ impl App {
         println!("selftest: emulation incl. bus p50 {e50:.3} ms, p99 {e99:.3} ms, max {emax:.3} ms");
         println!("selftest: bus waits (summed over drivers) p50 {b50:.3} ms, p99 {b99:.3} ms, max {bmax:.3} ms");
         println!("selftest: composition p50 {c50:.3} ms, p99 {c99:.3} ms, max {cmax:.3} ms");
+        {
+            let bus = self.bs.bus.borrow();
+            for (i, d) in bus.procs.iter().enumerate() {
+                let (a, b, c) = spread(&mut self.log.iter().map(|l| l.drivers.get(i).copied().unwrap_or(0.0)).collect::<Vec<_>>());
+                if c > 0.0 {
+                    println!("selftest:   PRESENT to slots {:?} ({}) p50 {a:.3} ms, p99 {b:.3} ms, max {c:.3} ms", d.slots, d.info.name);
+                }
+            }
+        }
+        // The drivers draw at once: the core's own is what is left of the
+        // composition after the PRESENT round (sent to all, then collected).
+        let (o50, o99, omax) = col(|l| l.compose - l.profile.present_ns as f64 / 1e6);
+        let (r50, r99, rmax) = col(|l| l.profile.present_ns as f64 / 1e6);
+        println!("selftest:   the PRESENT round (all drivers) p50 {r50:.3} ms, p99 {r99:.3} ms, max {rmax:.3} ms");
+        println!("selftest:   the core's own composition p50 {o50:.3} ms, p99 {o99:.3} ms, max {omax:.3} ms");
+        for (what, f) in [
+            ("properties and styles", (|l: &FrameLog| l.profile.show_ns) as fn(&FrameLog) -> u64),
+            ("layers composed (or the tube)", |l| l.profile.layers_ns),
+            ("the frame put together", |l| l.profile.frame_ns),
+        ] {
+            let (a, b, c) = spread(&mut self.log.iter().map(|l| f(l) as f64 / 1e6).collect::<Vec<_>>());
+            println!("selftest:     {what} p50 {a:.3} ms, p99 {b:.3} ms, max {c:.3} ms");
+        }
         println!("selftest: present (copy) p50 {p50:.3} ms, p99 {p99:.3} ms, max {pmax:.3} ms");
+        let (w50, w99, wmax) = col(|l| l.buffer_wait);
+        println!("selftest:   waiting for the window system to release a buffer p50 {w50:.3} ms, p99 {w99:.3} ms, max {wmax:.3} ms");
         println!("selftest: present interval p50 {i50:.3} ms, p99 {i99:.3} ms, max {imax:.3} ms");
+        let (t50, t99, tmax) = col(|l| l.emulate + l.compose + l.present - l.buffer_wait.min(l.present));
+        println!("selftest: frame work (emulation + composition + present, less the window system's wait) p50 {t50:.3} ms, p99 {t99:.3} ms, max {tmax:.3} ms");
+        if let Some(m) = &self.bs.monitor {
+            println!("selftest: late frames {} (the record has who)", m.late);
+        }
+        println!("selftest: frame periods held while the window was resized {}", self.held);
         if let Some(f) = self.first_frame {
             println!("selftest: start-up to first frame {:.1} ms", f.as_secs_f64() * 1000.0);
         }
@@ -365,13 +532,42 @@ impl ApplicationHandler for App {
         }
         let now = Instant::now();
         if now >= self.next {
-            self.coalesced_input();
-            if self.bs.system.stopped().is_none()
-                && let Err(e) = self.frame()
+            while let Some(&(f, (w, h))) = self.resizes.front()
+                && f <= self.ticks
             {
-                self.error = Some(e);
-                event_loop.exit();
-                return;
+                self.resizes.pop_front();
+                // As a configure from the window system would: the surface
+                // takes the size (a tiling compositor sets it; a kiosk or
+                // fullscreen one shows a smaller buffer centred).
+                self.resize(PhysicalSize::new(w, h));
+            }
+            self.coalesced_input();
+            self.ticks += 1;
+            // R15, resizing: while the size changes the machines are held
+            // (bounded: MAX_HOLD in a row, then RUN_BETWEEN frames run).
+            let changing = self.resized_tick.is_some_and(|t| self.ticks - t <= SETTLE);
+            let hold = changing && self.held_run < MAX_HOLD && (self.held_run > 0 || self.since_hold >= RUN_BETWEEN);
+            if hold {
+                self.held_run += 1;
+                self.held += 1;
+                if let Err(e) = self.hold() {
+                    self.error = Some(e);
+                    event_loop.exit();
+                    return;
+                }
+            } else {
+                if self.held_run > 0 {
+                    self.held_run = 0;
+                    self.since_hold = 0;
+                }
+                self.since_hold += 1;
+                if self.bs.system.stopped().is_none()
+                    && let Err(e) = self.frame()
+                {
+                    self.error = Some(e);
+                    event_loop.exit();
+                    return;
+                }
             }
             if self.opts.selftest.is_some_and(|n| self.frames >= n) || (self.opts.selftest.is_some() && self.bs.system.stopped().is_some()) {
                 event_loop.exit();
@@ -421,8 +617,21 @@ pub fn run(bs: BusSystem, script: Script, native: (u32, u32), opts: Options) -> 
         first_frame: None,
         created: Instant::now(),
         governor: Default::default(),
+        presented: VecDeque::new(),
+        buffer_wait: 0.0,
+        shed_said: 0,
+        resizes: VecDeque::new(),
+        ticks: 0,
+        resized_tick: None,
+        held_run: 0,
+        since_hold: RUN_BETWEEN,
+        held: 0,
     };
+    app.resizes = app.opts.resizes.iter().copied().collect();
     event_loop.run_app(&mut app).map_err(|e| e.to_string())?;
+    for line in app.bs.own_late() {
+        eprintln!("{line}");
+    }
     if app.opts.selftest.is_some() {
         app.report();
         // The hashes, to compare with a headless run of the same script.
