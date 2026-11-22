@@ -39,7 +39,7 @@ fn main() {
 }
 ```
 
-The Rust runtime has no calls for an invented device, nor could it: nobody but its author knows them. So the program makes them itself with `call`, the runtime's raw device call, which takes the call's number, `(240 << 8) | function` here, and three arguments. It is `unsafe` because a call may read or write the memory its arguments point to; `seed` and `roll` take only numbers. `device(DICE)` is `None` when the host did not grant the device.
+The Rust runtime has no calls for an invented device, nor could it: nobody but its author knows them. So the program makes them itself with `call`, the runtime's raw device call, which takes the call's number, `(240 << 8) | function` here, and three arguments. It is `unsafe` because a call may read or write the memory its arguments point to; `seed` and `roll` take only numbers (`roll`, the number of sides). `device(DICE)` is `None` when the host did not grant the device.
 
 ## Build it and run it
 

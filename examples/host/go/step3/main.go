@@ -30,7 +30,7 @@ func main() {
 		m.RunFrame()
 		bus.End()
 	}
-	fmt.Print(screen(bus.State(2)))
+	fmt.Print(screen(bus.State(machine.Terminal)))
 	bus.Close()
 	if m.Fault != nil {
 		fmt.Fprintln(os.Stderr, m.Fault)
@@ -39,18 +39,26 @@ func main() {
 	os.Exit(int(m.ExitCode))
 }
 
+const (
+	columns      = 80
+	rows         = 30
+	cellSize     = 4
+	continuation = 0xffff
+)
+
 func screen(grid []byte) string {
 	code := func(cell int) rune {
-		return rune(binary.LittleEndian.Uint16(grid[4*cell:]))
+		at := cellSize * cell
+		return rune(binary.LittleEndian.Uint16(grid[at:]))
 	}
 	var text strings.Builder
-	for row := range 30 {
+	for row := range rows {
 		var line []rune
-		for col := range 80 {
-			cell := row*80 + col
-			rightHalf := col > 0 && code(cell-1) != 0xffff
+		for col := range columns {
+			cell := row*columns + col
+			rightHalf := col > 0 && code(cell-1) != continuation
 			switch {
-			case code(cell) != 0xffff:
+			case code(cell) != continuation:
 				line = append(line, code(cell))
 			case !rightHalf:
 				line = append(line, ' ')

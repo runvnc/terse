@@ -12,31 +12,52 @@ use reader::{article, relay};
 use std::collections::HashMap;
 use tungstenite::Message;
 
+const TYPE_SUBSCRIBE: u8 = 0x04;
+const TYPE_ENTRY: u8 = 0x90;
+const REQUEST_NUMBER: u32 = 2;
+const AFTER: u32 = 0;
+const STATUS_AT: usize = 5;
+const STATUS_DONE: u8 = 1;
+const HIGHEST_AT: usize = 6;
+const HIGHEST_END: usize = 10;
+const SEQ_AT: usize = 32;
+const SEQ_END: usize = 36;
+const KIND_ARTICLE: u8 = 1;
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
     let key = relay::hex32(&args[2])?;
     let (mut socket, _) = tungstenite::connect(&args[1])?;
-    let subscribe = [&[0x04, 2, 0, 0, 0][..], &key, &[0; 4]];
-    socket.send(Message::binary(subscribe.concat()))?;
+    let number = REQUEST_NUMBER.to_le_bytes();
+    let after = AFTER.to_le_bytes();
+    let request =
+        [&[TYPE_SUBSCRIBE][..], &number, &key, &after].concat();
+    socket.send(Message::binary(request))?;
     let reply = socket.read()?.into_data();
-    if reply.len() < 10 || reply[5] != 1 {
+    if reply.len() < HIGHEST_END
+        || reply[STATUS_AT] != STATUS_DONE
+    {
         return Err("the relay refused the subscription".into());
     }
-    let highest = u32::from_le_bytes(reply[6..10].try_into()?);
+    let highest = reply[HIGHEST_AT..HIGHEST_END].try_into()?;
+    let highest = u32::from_le_bytes(highest);
     let mut articles = HashMap::new();
-    let mut caught_up = highest == 0;
+    let mut caught_up = highest == AFTER;
     while !caught_up {
-        let message = socket.read()?.into_data();
-        if message.len() < 37 || message[0] != 0x90 {
+        let msg = socket.read()?.into_data();
+        let Some(entry) = msg.strip_prefix(&[TYPE_ENTRY]) else {
+            continue;
+        };
+        if entry.len() < SEQ_END {
             continue;
         }
-        let entry = &message[1..];
-        let seq = u32::from_le_bytes(entry[32..36].try_into()?);
+        let seq = entry[SEQ_AT..SEQ_END].try_into()?;
+        let seq = u32::from_le_bytes(seq);
         caught_up = seq >= highest;
         let Ok(e) = tersenet::verify_entry(entry) else {
             continue;
         };
-        if e.feed == key && e.kind == 1 {
+        if e.feed == key && e.kind == KIND_ARTICLE {
             println!("{seq}  {}", article::visible(e.title));
             articles.insert(seq, e.blob);
         }
@@ -52,13 +73,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-It is 43 lines; the whole program, with `lib.rs`, `article.rs` and `relay.rs`, is 142. The entries are checked by one call to the Tersenet SDK for Rust, `tersenet::verify_entry`, named in step 2's `Cargo.toml`.
+It is 64 lines; the whole program, with `lib.rs`, `article.rs` and `relay.rs`, is 179. The entries are checked by one call to the Tersenet SDK for Rust, `tersenet::verify_entry`, named in step 2's `Cargo.toml`.
 
 ## How it works
 
-`main` connects and sends a Subscribe: the byte `04h`, a request number (here 2), the feed's key, and 4 bytes `after`, the highest entry number you already hold: 0, so the relay sends everything it has. Its reply starts with `84h` and gives, after a status byte, `highest`: the highest entry number it holds.
+`main` connects and sends a Subscribe (numbers least significant byte first, as in step 2):
 
-Then the relay sends the feed's entries, oldest first, each in a message that starts with `90h`. The loop reads them until it has one numbered `highest` or more: then it has caught up. An entry is, in order: the feed's key (32 bytes), its number `seq` (4), a time (4), a kind (1: 1 for an article), the blob's size (3) and ID (32), a reply-to ID (32), the title's length (1), the title, and a 64-byte signature. So an entry with a title of n bytes is 173 + n bytes long.
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 1 | type: `04h`, Subscribe |
+| 1 | 4 | request number: 2 |
+| 5 | 32 | the feed's key |
+| 37 | 4 | `after`: the highest entry number you hold; 0 asks for all |
+
+The relay answers with a Subscribe reply:
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 1 | type: `84h`, Subscribe reply |
+| 1 | 4 | the request number |
+| 5 | 1 | status: `1` done, `3` or more refused |
+| 6 | 4 | `highest`: the highest entry number the relay holds |
+
+Then the relay sends the feed's entries, oldest first, each in an Entry message: the byte `90h`, then the entry. The loop reads them until it has one numbered `highest` or more: then it has caught up (`SEQ_AT` and `SEQ_END` say where an entry's number is). An entry is, in order: the feed's key (32 bytes), its number `seq` (4), a time (4), a kind (1: 1 for an article), the blob's size (3) and ID (32), a reply-to ID (32), the title's length (1), the title, and a 64-byte signature. So an entry with a title of n bytes is 173 + n bytes long.
 
 `tersenet::verify_entry` checks an entry by every rule the network sets and returns its fields, or the rule it breaks (`tersenet::Invalid`): the length, a title of at most 120 bytes and valid UTF-8, a `seq` from 1, a kind that is not reserved, a size from 1 byte to 1 MiB (4 KiB for a profile), a display name as a profile's or a program's title, and the signature. `main` keeps the valid entries of the feed asked for that are of kind 1, articles, and prints each one's number and title; any other entry is dropped, unseen.
 

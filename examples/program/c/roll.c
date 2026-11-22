@@ -12,7 +12,7 @@ int main(void)
         for (;;)
             terse_wait_frame();
     }
-    terse_random(&seed, 4);
+    terse_random(&seed, sizeof seed);
     terse_call(DICE_SEED, seed, 0, 0);
     for (;;) {
         for (int frame = 0; frame < 30; frame++)

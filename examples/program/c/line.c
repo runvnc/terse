@@ -18,8 +18,8 @@ int main(void)
                 return 0;
         }
         vec_begin(list, sizeof list);
-        vec_move(320 * 16, 400 * 16);
-        vec_line(x * 16, 80 * 16);
+        vec_move(320 * VEC_UNIT, 400 * VEC_UNIT);
+        vec_line(x * VEC_UNIT, 80 * VEC_UNIT);
         vec_end();
         vec_submit_list(list);
         terse_wait_frame();

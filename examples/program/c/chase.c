@@ -50,10 +50,10 @@ int main(void)
             goal_y = 40 + terse_random_byte() * 3 / 2;
         }
         vec_begin(list, sizeof list);
-        vec_move(x * 16, y * 16);
-        vec_disc(4 * 16);
-        vec_move(goal_x * 16, goal_y * 16);
-        vec_circle(10 * 16);
+        vec_move(x * VEC_UNIT, y * VEC_UNIT);
+        vec_disc(4 * VEC_UNIT);
+        vec_move(goal_x * VEC_UNIT, goal_y * VEC_UNIT);
+        vec_circle(10 * VEC_UNIT);
         vec_end();
         vec_submit_list(list);
         terse_wait_frame();

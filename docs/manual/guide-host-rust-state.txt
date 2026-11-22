@@ -9,6 +9,14 @@ Between frames, a machine's whole state is one string of bytes; its BLAKE3-256 h
 ```rust from examples/host/rust/src/state.rs
 use crate::frames::{Machine, Status};
 
+const STATE_TAG: &[u8] = b"terse-state-1";
+const EMPTY_SYSTEM: usize = 37;
+const ABSENT: u8 = 0;
+const PRESENT: u8 = 1;
+const RUNNING: u8 = 0;
+const EXITED: u8 = 1;
+const FAULTED: u8 = 2;
+
 impl Machine {
     pub fn state(
         &self,
@@ -16,7 +24,7 @@ impl Machine {
         grants: &[u8],
         terminal: Option<&[u8]>,
     ) -> Vec<u8> {
-        let mut state = b"terse-state-1".to_vec();
+        let mut state = STATE_TAG.to_vec();
         state.extend(id);
         state.extend(self.cpu.pc.to_le_bytes());
         for x in &self.cpu.x[1..] {
@@ -24,9 +32,9 @@ impl Machine {
         }
         state.extend(self.frame.to_le_bytes());
         let (stopped, code, fault) = match self.status {
-            Status::Running => (0, 0, None),
-            Status::Exited(code) => (1, code, None),
-            Status::Faulted(fault) => (2, 0, Some(fault)),
+            Status::Running => (RUNNING, 0, None),
+            Status::Exited(code) => (EXITED, code, None),
+            Status::Faulted(fault) => (FAULTED, 0, Some(fault)),
         };
         let kind = fault.map_or(0, |f| f.kind as u8);
         state.extend([stopped, code, kind]);
@@ -41,27 +49,28 @@ impl Machine {
         }
         state.extend(&self.cpu.ram);
         state.extend(grants);
-        state.extend([0; 37]);
+        state.extend([0; EMPTY_SYSTEM]);
         match terminal {
             Some(section) => {
-                state.push(1);
+                state.push(PRESENT);
                 state.extend(section);
             }
-            None => state.push(0),
+            None => state.push(ABSENT),
         }
-        state.extend([0, 0, 0]);
+        state.extend([ABSENT, ABSENT, ABSENT]);
         state
     }
 }
 ```
 
-In order: `terse-state-1` and the image ID; `pc` and the registers `x1` to `x31`; the frame counter, how the machine stopped (0 running, 1 exited, 2 faulted), the exit code, and a fault's kind, encoding, `pc` and address; the budget carried into the next frame; the RAM; one byte per optional device, 1 if granted. Then the System device: 37 zero bytes here (the time, 0 in a test; an empty event queue; four controllers, none connected). Then each device's section in a fixed order, from its driver's STATE: the terminal's with a byte 1 before it, or a 0 for a machine without one; then a 0 each for the vector display, content and the page, which this host never has.
+In order: `terse-state-1` and the image ID; `pc` and the registers `x1` to `x31`; the frame counter, how the machine stopped (0 running, 1 exited, 2 faulted), the exit code, and a fault's kind, encoding, `pc` and address; the budget carried into the next frame; the RAM; one byte per optional device, 1 if granted. Then the System device, `EMPTY_SYSTEM`: 37 zero bytes here (the time, 4 bytes, 0 in a test; an event count of 0, 1 byte; four controllers of 8 bytes, none connected). Then each device's section in a fixed order, from its driver's STATE: the terminal's after `PRESENT` (1), or `ABSENT` (0) for a machine without one; then a 0 each for the vector display, content and the page, which this host never has.
 
 ## The program
 
 ```rust from examples/host/rust/src/bin/step4.rs
-use host::bus::Bus;
-use host::frames::{Machine, Status};
+use host::bus::{Bus, TERMINAL};
+use host::cpu::UNKNOWN_CALL;
+use host::frames::{BASE_CHARGE, Machine, Status};
 use host::image::load;
 use std::error::Error;
 use std::process::exit;
@@ -80,7 +89,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         m.run_frame(|cpu, budget, slot, function| {
             let Some(bus) = &mut bus else {
-                return (u32::MAX, 4);
+                return (UNKNOWN_CALL, BASE_CHARGE);
             };
             bus.call(cpu, budget, slot, function)
         });
@@ -90,7 +99,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     let (grants, terminal) = match bus {
         Some(mut bus) => {
-            let terminal = bus.state(2);
+            let terminal = bus.state(TERMINAL);
             let grants = std::mem::take(&mut bus.grants);
             bus.close();
             (grants, Some(terminal))
@@ -167,7 +176,7 @@ This host runs `hello` and proves it, nothing more. The rest of a complete host,
 
 ## What you have now
 
-A host that runs Terse32 programs exactly as the reference does, and proves it: `state.rs`, 46 lines, `bin/step4.rs`, 50; 940 lines in all. Next, write a device as a separate program: [Make a device](terse:{guide-device}).
+A host that runs Terse32 programs exactly as the reference does, and proves it: `state.rs`, 54 lines, `bin/step4.rs`, 51; 1,060 lines in all. Next, write a device as a separate program: [Make a device](terse:{guide-device}).
 
 - The same step in Go: "Make a host in Go, step 4: prove it exact", the page before this one.
 - The rules: [State, replay and conformance](terse:{state}), sections "The state serialization", "The hash", "Snapshots" and "The conformance image"; the input in [Events and input](terse:{events}).
