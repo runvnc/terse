@@ -327,8 +327,12 @@ fn a_starved_machine_is_not_blamed() {
     let err = text(&out.stderr);
     assert!(out.status.success(), "{err}");
     let lines = record_lines(dir.path());
-    let tripped: Vec<&Line> = lines.iter().filter(|l| matches!(l, Line::Warn { .. } | Line::Stop { .. } | Line::Late { verdict: Verdict::Blamed, .. }) || l.as_fail().is_some()).collect();
-    assert!(tripped.is_empty(), "{tripped:?}\n{lines:?}");
+    // The machine is never blamed, and the rule never acts. (A frame of
+    // the host's own blocked on something of its own, a page read back
+    // from swap on a computer short of memory, is that part's and no
+    // concern of this test unless the rule acts on it.)
+    let tripped: Vec<&Line> = lines.iter().filter(|l| matches!(l, Line::Warn { .. } | Line::Stop { .. }) || l.as_fail().is_some()).collect();
+    assert!(tripped.is_empty() && blamed_machine(&lines, None).is_empty(), "{tripped:?}\n{lines:?}");
     let starved = lines.iter().filter(|l| matches!(l, Line::Late { verdict: Verdict::Starved, .. })).count();
     assert!(starved >= 10, "the hog made the frames late: {lines:?}");
 }
