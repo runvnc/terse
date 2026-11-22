@@ -528,7 +528,7 @@ with these defaults (each can be given on its own, and changed):
 | Bytes put per address | 32 MiB an hour | `--upload-bytes-per-hour` |
 | Entries of feeds new to the relay, per address and in all | 3 and 60 an hour | `--new-feeds-per-hour`, `--new-feeds-per-hour-total` |
 | Finds and lookups per address (and 4 a second per connection) | 60 a minute | `--finds-per-minute` |
-| Connections per address, and in all | 32, 1000 | `--connections-per-address`, `--max-connections` |
+| Connections per address, and in all | 32, 150 | `--connections-per-address`, `--max-connections` (or `--memory`) |
 | A status line on stderr | every 10 minutes | `--status-every`, `--status-file` |
 
 An address is an IPv4 address or an IPv6 /64. A refusal tells the client why, and for
@@ -544,7 +544,56 @@ are taken from anyone into the room for blobs no entry names; an address that no
 the listed feeds has published from in the last day has 1 MiB of it (one article) and
 such addresses have half the room in all. Since those blobs are not served and go after
 an hour, the list leaves nothing to host for free. Entries a peer sends are held to the
-list too.
+list too. A list of writers closes publishing; to keep it open to everyone, use the
+limits above and a deny list instead.
+
+**Removing what does not belong.** `--deny <file>` is the operator's list of what this
+relay refuses (NETWORK.md 5.3, "Its own policy"), one item a line with a reason that
+stays on the server, `#` comments:
+
+    feed 3fa9…c21e07 spam, reported 2026-11-22
+    blob 8d01…5a2f   notice received 2026-11-23
+    address 198.51.100.0/24 flood
+
+A denied feed's entries are refused (status 3) and its subscriptions end (a client's
+next subscribe is refused); its stored entries, and the blobs only it names, are removed
+in batches of 64, with requests answered between batches. A denied blob is never
+stored or served (a get is "not found"), removed if present, and an entry naming it is
+refused. A connection from a denied address is refused at the handshake (HTTP 403;
+behind Cloudflare it is the client's address from `--trust-proxy`), and an open one is
+closed. The file is read again within 2 s of a change or at once on SIGHUP; a file with
+a bad line is not taken (the relay says so and keeps the list it has); the denial holds
+over a restart, and what was left on disk is removed at start. Peers do not pass
+denials on: each operator decides for their own relay, and a mirror's refusal of what a
+peer sends is not sent again.
+
+To look before deciding, and to deny, on the server (read-only views of the store's
+files: no network, safe while the relay runs):
+
+    terse-relay feeds /var/lib/terse-relay/store --by size --limit 20    # or --by arrival
+    terse-relay feed /var/lib/terse-relay/store <key>      # its entries: seq, time, kind, size, title
+    sudo -u terse-relay terse-relay deny /etc/terse-relay/deny feed <key> spam, reported by mail
+    sudo -u terse-relay terse-relay allow /etc/terse-relay/deny feed <key>
+    terse-relay deny /etc/terse-relay/deny                 # the list
+
+`deny` and `allow` check the file and write it through a new file renamed over the old,
+so a running relay never reads half a file; the relay applies it within 2 s. `allow`
+does not bring back what was removed. The status line counts the denied items, what
+was removed, and the refusals (`denied-feed`, `denied-blob`, `denied-address`).
+
+**What the limits do and do not protect against.** Cloudflare absorbs floods of
+connections and traffic before they reach the server, and hides its address. The
+relay's limits bound what one address can do: how much it stores, how fast it publishes
+and searches, how many feeds it starts, how many connections it holds; blobs no entry
+names are not served and go after an hour, so the relay is no free file host. What they
+do not do: keys cost nothing, so a person who wants to publish abuse makes new feeds;
+the per-address rate of new feeds (3 an hour) and the deny list by address (a range,
+for someone who changes addresses) are the tools against that, and an operator who sees
+it often can close publishing with `--writers`. Nothing reads what is published: the
+operator learns of abuse from the status line (feeds, entries, refusals), `terse-relay
+feeds --by arrival`, and reports. Many addresses together (a botnet) can still use up
+the totals (`--new-feeds-per-hour-total`, `--unreferenced-bytes`, `--max-connections`):
+the relay then refuses everyone for a while, but stays up and keeps what it holds.
 
 **Over TLS.** People reach a public relay with `wss://` (WebSocket over TLS), so that
 no one on the way can see which feeds and articles they read. (Nothing could be forged
@@ -566,12 +615,12 @@ Never trust a range anyone else can connect from: the header is easy to forge. T
 relay pings a silent connection every 30 s, inside Cloudflare's 100 s idle limit.
 
 For the first public relay, `wss://relay.tersenet.org` (Ubuntu, 1 CPU, 949 MB of
-memory, 16 GB of disk free), with a list of writers, the relay listens on loopback only
-and a [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/)
+memory, 16 GB of disk free), open to everyone with a deny list, the relay listens on
+loopback only and a [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/)
 (`cloudflared`) carries `wss://relay.tersenet.org` to it:
 
     terse-relay --public --listen 127.0.0.1:7878 --store /var/lib/terse-relay/store \
-        --max-store-bytes 12G --max-connections 256 --writers /etc/terse-relay/writers \
+        --max-store-bytes 12G --memory 512M --deny /etc/terse-relay/deny \
         --trust-proxy 127.0.0.1,::1 --status-file /run/terse-relay/status
 
 Why a tunnel: `cloudflared` connects out to Cloudflare, so the server opens no port at
@@ -587,11 +636,15 @@ current. `cloudflared` takes about 30–50 MB of memory.
 
 Why these numbers: 12 GB of blobs leaves the system, the logs, the entry files (one
 small file each) and a backup's staging room on a 16 GB disk. Memory is what bounds the
-connections: each is a thread, and while it receives a large put it holds up to about
-2 MiB, so 256 connections stay under 600 MB in the worst case (the unit's `MemoryMax`);
-idle ones cost far less. The relay's index of what it holds takes about 100 bytes per
-entry, and with a list of writers the entries are only the writers' (at most 1024 per
-feed), so it stays small; an open relay should watch the status line's entry count.
+connections: each is a thread, and while it receives the largest put it holds up to
+2 MiB, with its queue of entries to send and its stack about 3 MiB at worst; idle ones
+cost far less. `--memory 512M` allows (512 − 64) / 3 = 149 connections, so the
+connections and the program take at most about 511 MiB, under the unit's `MemoryMax`
+of 600 MB with room for the index of what the relay holds (about 200 bytes per entry:
+88 MiB is some 450,000 entries). The status line says the worst case with the index as
+it is ("memory at worst ... MiB"); an open relay should watch it and the entry count.
+`--public` alone allows 150 connections (about 514 MiB at worst before the index): safe
+on a 1 GB server; `--max-connections` or `--memory` changes it.
 Every connection comes through `cloudflared` on loopback, hence `--trust-proxy
 127.0.0.1,::1`: Cloudflare's edge sets `CF-Connecting-IP`, and only the tunnel can
 connect from there.
@@ -612,21 +665,22 @@ install it. Then:
      client is redirected (and told to use `wss://`) instead of talking in plain text;
      Network, WebSockets on (it is by default).
   5. Check from anywhere: `echo hello > /tmp/hello.txt; terse put /tmp/hello.txt --relay wss://relay.tersenet.org`
-     prints "taken by 1 of 1 relays" (a put needs no writer: it goes to the room for
-     blobs no entry names), or why the relay could not be connected.
+     prints "taken by 1 of 1 relays" (it goes to the room for blobs no entry names),
+     or why the relay could not be connected.
 - **Firewall**: no rule to add; the server keeps denying every incoming connection but
   SSH. `cloudflared` connects out on port 7844 (UDP, or TCP if UDP is blocked), which
   ufw's default (outgoing allowed) permits.
 - **What it is doing**: `journalctl -u terse-relay | grep status` (every 10 minutes) or
   `cat /run/terse-relay/status`: bytes stored, feeds, entries, blobs waiting for an
-  entry, connections, blobs collected, entries dropped, and refusals by reason. Logs
+  entry, connections, blobs collected, entries dropped, what is denied and was removed,
+  the memory at worst, and refusals by reason. Logs
   name a client by its /24 (IPv4) or /48 (IPv6) only. `systemctl status cloudflared`
   for the tunnel.
 - **Backups**: the store directory is all there is (`<store>/feeds` holds the entries).
   A blob or entry file is never changed once written, so copying it while the relay
   runs is safe: `rsync -a --exclude '.*.tmp' /var/lib/terse-relay/store/ backup:`. A
   restored relay rebuilds its index at start; blobs no entry names wait from their
-  file times. The writers file is in `/etc/terse-relay`.
+  file times. The deny list (and a writers file, if any) is in `/etc/terse-relay`.
 - **Stopping**: SIGTERM (`systemctl stop`) closes every connection with a close frame;
   what was acknowledged is on disk already.
 

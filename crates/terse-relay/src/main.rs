@@ -10,6 +10,13 @@ use terse_relay::limits::{Cidr, Rate};
 use terse_relay::{GIB, KIB, MIB, MIN_FEED_CAP, Policy, Relay};
 
 const USAGE: &str = "usage: terse-relay [--listen <addr:port>] --store <dir> [options]
+       terse-relay deny <file> [feed <key> | blob <id> | address <addr[/bits]>] [reason...]
+       terse-relay allow <file> feed <key> | blob <id> | address <addr[/bits]>
+       terse-relay feeds <store dir> [--by size|arrival] [--limit <n>]
+       terse-relay feed <store dir> <key>
+  (deny: adds a line to the deny list, or lists it; allow: removes the item's lines. A
+  running relay reads the file again within 2 s. feeds, feed: what the store holds, read
+  from its files: no network, safe beside a running relay. README \"Running a public relay\")
   --listen <addr:port>      default 127.0.0.1:7878 (loopback only)
   --peer <ws(s)://host:port>  another relay to mirror (NETWORK.md section 5); repeatable
   --tls-cert <pem> --tls-key <pem>
@@ -24,7 +31,8 @@ Limits for a public relay (README \"Running a public relay\"); all off unless gi
                             --uploads-per-minute 120 --upload-bytes-per-hour 32M
                             --new-feeds-per-hour 3 --new-feeds-per-hour-total 60
                             --finds-per-minute 60 --connections-per-address 32
-                            --max-connections 1000 --status-every 10m
+                            --max-connections 150 --status-every 10m (memory at
+                            worst about 514 MiB: the status line says)
   --feed-bytes <size|none>  bytes of the blobs one feed's entries name, at most;
                             older entries are dropped to make room
   --unreferenced-time <time|forever>
@@ -39,6 +47,11 @@ Limits for a public relay (README \"Running a public relay\"); all off unless gi
   --finds-per-minute <n>    finds and lookups per address
   --no-rate-limits          none of the five above
   --connections-per-address <n|none>, --max-connections <n|none>
+  --memory <size>           the most memory to take at worst: sets --max-connections
+                            (3 MiB each, 64 MiB besides, and the index of what is held)
+  --deny <file>             the operator's deny list (feed <key>, blob <id>,
+                            address <addr[/bits]>, each with a reason; # comments):
+                            refused and removed; read again when it changes or on SIGHUP
   --writers <file>          take entries only from the feeds listed (one key per
                             line, # comments); read again when it changes or on SIGHUP
   --trust-proxy <addr[/bits]>[,...]   connections from these addresses are a proxy's:
@@ -97,10 +110,86 @@ fn optional<T>(s: &str, words: &[&str], parse: impl Fn(&str) -> Option<T>) -> Op
     if words.contains(&s) { Some(None) } else { parse(s).map(Some) }
 }
 
+/// `terse-relay deny|allow|feeds|feed ...`: the operator's commands.
+fn admin(command: &str, args: &[String]) -> Result<(), String> {
+    use terse_relay::{admin, deny};
+    match (command, args) {
+        ("deny", [file]) => {
+            let text = std::fs::read_to_string(file).map_err(|e| format!("{file}: {e}"))?;
+            for l in deny::parse(&text).map_err(|e| format!("{file}: {e}"))? {
+                println!("{}{}{}", l.item.text(), if l.reason.is_empty() { "" } else { "  " }, l.reason);
+            }
+        }
+        ("deny", [file, kind, value, reason @ ..]) => {
+            let item = deny::Item::parse(kind, value)?;
+            if deny::add(std::path::Path::new(file), item, &reason.join(" "))? {
+                eprintln!("terse-relay: {file}: {} denied (a running relay applies it within 2 s)", item.text());
+            } else {
+                eprintln!("terse-relay: {file}: {} was denied already", item.text());
+            }
+        }
+        ("allow", [file, kind, value]) => {
+            let item = deny::Item::parse(kind, value)?;
+            match deny::remove(std::path::Path::new(file), item)? {
+                0 => return Err(format!("{file}: {} is not denied there", item.text())),
+                _ => eprintln!("terse-relay: {file}: {} allowed again (what was removed is not restored)", item.text()),
+            }
+        }
+        ("feeds", [dir, rest @ ..]) => {
+            let (mut order, mut limit) = (admin::Order::Size, usize::MAX);
+            let mut it = rest.iter();
+            while let Some(a) = it.next() {
+                let v = it.next().ok_or(format!("{a} needs a value"))?;
+                match a.as_str() {
+                    "--by" if v == "size" => order = admin::Order::Size,
+                    "--by" if v == "arrival" => order = admin::Order::Arrival,
+                    "--limit" => limit = v.parse().map_err(|_| format!("--limit {v}: not a number"))?,
+                    _ => return Err(USAGE.into()),
+                }
+            }
+            println!("feed key                                                          entries      bytes     stored  name");
+            for f in admin::feeds(std::path::Path::new(dir), order)?.into_iter().take(limit) {
+                println!(
+                    "{} {:>7} {:>10} {:>10}  {}",
+                    terse_net::blob::to_hex(&f.key),
+                    f.entries,
+                    f.bytes,
+                    f.stored,
+                    admin::printable(f.name.as_deref().unwrap_or("-"))
+                );
+            }
+        }
+        ("feed", [dir, key]) => {
+            let key = terse_net::blob::parse_hex(&key.to_ascii_lowercase()).ok_or(format!("not a feed key: {key}"))?;
+            println!("seq        time (UTC, as claimed)  kind        size  stored  blob / title");
+            for e in admin::entries(std::path::Path::new(dir), &key)? {
+                let when = admin::utc(e.time);
+                println!(
+                    "{:<10} {:<23} {:<8} {:>8}  {:<6}  {}\n{:>60}{}",
+                    e.seq,
+                    when,
+                    e.kind,
+                    e.size,
+                    if e.stored { "yes" } else { "no" },
+                    e.blob,
+                    "",
+                    admin::printable(&e.title)
+                );
+            }
+        }
+        _ => return Err(USAGE.into()),
+    }
+    Ok(())
+}
+
 fn run(args: Vec<String>) -> Result<(), String> {
+    if let Some(command) = args.first().filter(|a| ["deny", "allow", "feeds", "feed"].contains(&a.as_str())) {
+        return admin(command, &args[1..]);
+    }
     let default_listen = terse_net::local::local_addr(terse_net::local::DEFAULT_PORT).to_string();
     let (mut listen, mut store, mut limit) = (default_listen, None, None);
     let mut peers = Vec::new();
+    let mut memory = None;
     let (mut tls_cert, mut tls_key) = (None, None);
     // Options are applied in order over the base policy, so `--public`
     // comes first whatever its place.
@@ -197,6 +286,11 @@ fn run(args: Vec<String>) -> Result<(), String> {
                 policy.max_connections = optional(&v, &["none"], |s| s.parse().ok().filter(|&n| n > 0)).ok_or(bad(&v))?;
             }
             "--writers" => policy.writers = Some(value()?.into()),
+            "--deny" => policy.deny = Some(value()?.into()),
+            "--memory" => {
+                let v = value()?;
+                memory = Some(parse_size(&v).ok_or(bad(&v))?);
+            }
             "--trust-proxy" => {
                 // `@<file>`: the ranges in a file, one per line (# comments).
                 let v = value()?;
@@ -240,6 +334,16 @@ fn run(args: Vec<String>) -> Result<(), String> {
         eprintln!("terse-relay: limits per address count each TCP peer; behind a proxy, give --trust-proxy");
     }
     let started = Instant::now();
+    if let Some(m) = memory {
+        // The index is not known yet: the connections get what the
+        // program and its buffers leave; the status line then says the
+        // worst case with the index.
+        let n = Policy::connections_for_memory(m, 0);
+        if n == 0 {
+            return Err(format!("--memory {m}: too little for one connection"));
+        }
+        policy.max_connections = Some(policy.max_connections.map_or(n, |c| c.min(n)));
+    }
     let relay = Arc::new(Relay::with_policy(store, policy)?);
     let scheme = if tls_config.is_some() { "wss" } else { "ws" };
     relay.set_tls(tls_config);
@@ -257,6 +361,7 @@ fn run(args: Vec<String>) -> Result<(), String> {
         }
         if signals::take_reload() {
             relay.reload_writers(true);
+            relay.reload_deny(true);
             // A renewed certificate: a file that cannot be read now
             // leaves the one in use.
             if let Some(files) = &tls {

@@ -78,6 +78,14 @@ impl Cidr {
     }
 }
 
+/// `addr/bits`, or the address alone for a single one.
+impl std::fmt::Display for Cidr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let max = if self.addr.is_ipv4() { 32 } else { 128 };
+        if self.bits == max { write!(f, "{}", self.addr) } else { write!(f, "{}/{}", self.addr, self.bits) }
+    }
+}
+
 /// The client's address for a connection from `peer`: the proxy's header
 /// if `peer` is a trusted proxy and the header names one, else `peer`.
 /// `CF-Connecting-IP` is preferred; else the right-most address of

@@ -141,6 +141,8 @@ fn handshake_failure(url: &str, e: tungstenite::Error, sniffed: Option<u8>, tls:
             let words = match r.status().as_u16() {
                 429 => "too many connections from this address; try again later".to_string(),
                 503 => "the relay has too many connections; try again later".into(),
+                // NETWORK 5.3: the relay's own policy, not a fault of this client's data.
+                403 => "the relay does not accept connections from this address (its operator's policy)".into(),
                 _ => format!("WebSocket handshake refused (HTTP {})", r.status()),
             };
             io::Error::new(io::ErrorKind::ConnectionRefused, format!("{url}: {words}"))

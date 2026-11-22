@@ -205,6 +205,10 @@ func DialStop(rawurl, addr string, timeout time.Duration, stop <-chan struct{}) 
 		!strings.EqualFold(resp.Header.Get("Upgrade"), "websocket") ||
 		resp.Header.Get("Sec-WebSocket-Accept") != acceptKey(key) {
 		c.Close()
+		if resp.StatusCode == http.StatusForbidden {
+			// NETWORK.md 5.3: the relay's own policy.
+			return nil, errors.New("the relay does not accept connections from this address (its operator's policy)")
+		}
 		return nil, fmt.Errorf("ws: handshake refused (%s)", resp.Status)
 	}
 	if !keep() {

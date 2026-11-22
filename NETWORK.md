@@ -163,9 +163,10 @@ receipt.
   proxy that closes idle connections should, every 30 s or more often);
   a client need not send any.
 - A relay may refuse a connection at the handshake with HTTP status 429
-  (too many connections from the client's address) or 503 (too many
-  connections in all): the client treats it as a failed connection and
-  tries again as section 5.1 says.
+  (too many connections from the client's address), 503 (too many
+  connections in all) or 403 (it does not accept the client's address,
+  section 5.3): the client treats it as a failed connection and tries
+  again as section 5.1 says.
 - A client should support both. One that supports only `ws://` treats a
   `wss://` relay as a relay that cannot be reached (section 5.1).
 
@@ -821,6 +822,20 @@ users what happened (section 3.1).
   an address that none of its listed feeds has published from lately a
   smaller allowance.
 - **The whole store** (status `5`), as section 3 says.
+- **Its own policy.** A relay's operator may refuse a feed, a blob or a
+  client's address, and remove what the relay held of them. A publish
+  of an entry of a refused feed, or of an entry naming a refused blob, is
+  refused with status `3`, and so is a subscribe to a refused feed (a
+  client already subscribed simply receives no more of it); a put of a
+  refused blob is refused with status `3` and a get of it is answered
+  "not found" (status `2`); finds and lookups leave the feed out; a
+  connection from a refused address is refused at the handshake (HTTP
+  403, section 3). A client must not take any of these as a sign that
+  the feed, the entry or the blob is invalid, nor tell its user so: it
+  is one relay's decision, and the client may find the same on its other
+  relays (section 5.1). Refusals are each relay's own: a relay does not
+  take them over from a relay it mirrors (section 5.2), and a mirror's
+  refusal of what a peer sent is not sent again.
 
 
 ## 6. What a reading client must and may do
@@ -937,7 +952,8 @@ This section concerns only clients that run the Terse machine
 
 - Verified range requests (so a range can be delivered without fetching the
   whole blob).
-- Finding replies to an article, ranking, moderation and spam limits.
+- Finding replies to an article, ranking, and moderation and spam
+  limits beyond a relay's own refusals (section 5.3).
 - Key rotation and several feeds per identity.
 - What `ARTICLE.md` section 10 lists for articles (more inline markup,
   images not drawn from paths, arcs in figure paths, numbered and nested
@@ -954,4 +970,5 @@ This section concerns only clients that run the Terse machine
   lines of profiles and the hints of feed addresses (section 4.9).
 - Direct connections between clients.
 - Abuse limits beyond those of section 5.3; a list of writers that its
-  writers extend (vouching) instead of the relay's operator.
+  writers extend (vouching) instead of the relay's operator; lists of
+  refusals shared between operators.
