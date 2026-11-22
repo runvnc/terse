@@ -18,8 +18,8 @@ trap 'rm -rf "$T"' EXIT INT TERM
 # The tcore tested is built here from the current sources, into this run's
 # directory: not native/core-c's own, which may be older than its sources
 # or being built again by another test (or a make there) as this one runs.
-mkdir -p "$T/tcore"
-nice -n 15 make -s -j4 -C "$T/tcore" -f "$here/Makefile" VPATH="$here" || { echo "FAIL building tcore"; exit 1; }
+mkdir -p "$T/tcore" && cp "$here"/*.c "$here"/*.h "$here/Makefile" "$T/tcore/" \
+    && (cd "$T/tcore" && nice -n 15 make -s -j4) || { echo "FAIL building tcore"; exit 1; }
 TC=$T/tcore/tcore
 mkdir -p "$T/store" "$T/config" "$T/data" "$T/home"
 export HOME="$T/home" XDG_CONFIG_HOME="$T/home/config" XDG_CACHE_HOME="$T/home/cache" XDG_DATA_HOME="$T/home/data"

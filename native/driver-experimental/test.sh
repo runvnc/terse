@@ -84,7 +84,8 @@ b=$(bus "$P" --frames 30 --hash --driver "example.dice=$X" --without 240 2> /dev
 # tcore built here, into this run's directory: not native/core-c's own,
 # which another test (or a make there) may be building at the same time.
 mkdir -p "$T/tcore"
-if nice -n 15 make -s -j4 -C "$T/tcore" -f "$root/native/core-c/Makefile" VPATH="$root/native/core-c" > /dev/null 2>&1; then
+if cp "$root"/native/core-c/*.c "$root"/native/core-c/*.h "$root/native/core-c/Makefile" "$T/tcore/" \
+    && (cd "$T/tcore" && nice -n 15 make -s -j4 > /dev/null 2>&1); then
     c=$("$T/tcore/tcore" "$P" --frames 30 --hash --drivers "$D" 2> /dev/null)
     [ "$c" = "$h" ] && ok "tcore (no experimental devices, DEVICES.md 12): the same hash" || no "tcore: '$c'"
 fi

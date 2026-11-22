@@ -27,8 +27,8 @@ ${CC:-cc} -std=c11 -O2 -Wall -Wextra -Werror -o "$X" "$here/terminal.c" || { ech
 ok "built with no warnings ($(wc -l < "$here/terminal.c") lines)"
 # tcore built here, into this run's directory: not native/core-c's own,
 # which another test (or a make there) may be building at the same time.
-mkdir -p "$T/tcore"
-nice -n 15 make -s -j4 -C "$T/tcore" -f "$root/native/core-c/Makefile" VPATH="$root/native/core-c" || { echo "FAIL building tcore"; exit 1; }
+mkdir -p "$T/tcore" && cp "$root"/native/core-c/*.c "$root"/native/core-c/*.h "$root/native/core-c/Makefile" "$T/tcore/" \
+    && (cd "$T/tcore" && nice -n 15 make -s -j4) || { echo "FAIL building tcore"; exit 1; }
 TC=$T/tcore/tcore
 
 # check <name> <args...>: the reference driver under terse-bus, then the
