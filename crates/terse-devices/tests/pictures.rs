@@ -23,7 +23,7 @@ use terse_core::worst::{Layout, combined_image, system_scenarios, system_shell};
 use terse_core::{CONTROLLERS, Controller, Driver, Event, FrameInput, Image, Machine, ProgramId, System, Who};
 use terse_net::BlobStore;
 
-/// The directory of the driver programs (and of terse-bus).
+/// The directory of the driver programs.
 fn bin_dir() -> PathBuf {
     Path::new(env!("CARGO_BIN_EXE_terse-dev-terminal")).parent().unwrap().to_path_buf()
 }
@@ -153,18 +153,19 @@ fn assert_close(a: &Path, b: &Path) -> f64 {
     same as f64 / n
 }
 
-/// Whether the fonts the reference pictures assume are here, and the
-/// terse-bus program is there (not when only this package's tests ran).
+/// Whether the fonts the reference pictures assume are here.
 fn can_draw() -> bool {
     let ok = terse_host::page::Typesetter::new(&Default::default()).is_ok();
     if !ok {
-        eprintln!("skipped: no fonts for pictures");
+        terse_testkit::skip!("fonts", "no fonts for pictures");
     }
-    let there = bin_dir().join(format!("terse-bus{}", std::env::consts::EXE_SUFFIX)).exists();
-    if !there {
-        eprintln!("skipped: no terse-bus program beside the drivers");
-    }
-    ok && there
+    ok
+}
+
+/// terse-bus (another package's program), built from the current sources,
+/// beside this package's drivers.
+fn terse_bus() -> PathBuf {
+    terse_testkit::program("terse-bus")
 }
 
 /// A temporary directory for pictures, kept (and its path printed) if
@@ -201,7 +202,7 @@ pub fn host_and_bus(tmp: &Path, name: &str, args: &[String]) -> f64 {
     let mut bus = args.to_vec();
     bus.extend(["--screenshot".into(), b.display().to_string(), "--relay".into(), "none".into()]);
     bus.extend(dirs(&tmp.join(format!("{name}-bus"))));
-    let out = Command::new(bin_dir().join(format!("terse-bus{}", std::env::consts::EXE_SUFFIX))).args(&bus).output().unwrap();
+    let out = Command::new(terse_bus()).args(&bus).output().unwrap();
     assert!(out.status.success(), "terse-bus {bus:?}: {}", String::from_utf8_lossy(&out.stderr));
     let same = assert_close(&a, &b);
     eprintln!("{name}: {:.2} % of the pixels the same", same * 100.0);

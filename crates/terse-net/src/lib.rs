@@ -53,7 +53,7 @@ pub use blob::{BlobId, blob_id, parse_hex, to_hex};
 pub use entry::{Entry, SignedEntry};
 pub use feeds::{FeedStore, Subscriptions};
 pub use identity::{FeedKey, Identity};
-pub use node::{Article, Done, Draft, FeedEvent, Node};
+pub use node::{Article, Delivery, Done, Draft, FeedEvent, Node};
 pub use records::{Owner, Records};
 pub use service::{Asked, Consent, ContentService, FeedCommand, HeadlessSystem, Prompt};
 pub use snapshots::Snapshots;

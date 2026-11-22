@@ -20,5 +20,5 @@ mod snapshots;
 #[cfg(not(unix))]
 #[test]
 fn the_c_terminal_driver_is_posix() {
-    eprintln!("skipped: c/terminal.c is a POSIX driver (poll.h, sys/socket.h); it is not built on Windows");
+    terse_testkit::skip!("os", "c/terminal.c is a POSIX driver (poll.h, sys/socket.h); it is not built on Windows");
 }

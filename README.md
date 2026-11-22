@@ -144,7 +144,9 @@ whose profile names relays (NETWORK.md section 4.6), the host also follows
 it on up to two of those, unless `--no-feed-relays`. The `terse` commands
 that use relays (`put`, `get`, `info`, `feed publish`, `feed sync`, `feed
 read`, `profile set`, `find`, `manual publish`) look for them the same way, but never start
-one.
+one. Those that put or publish wait until every relay is connected (or has failed to
+connect) and every one has answered, then say on stderr which relays took it and warn
+about each that did not; they succeed when one did (NETWORK.md section 5.1).
 
 **Sharing with someone else.** One of you runs a relay that the other can
 reach, listening on all interfaces (it listens on loopback only by default),
@@ -242,7 +244,16 @@ Then:
 Building the programs needs clang with the riscv32 target, ld.lld and
 llvm-objcopy (see [Writing programs](#writing-programs)), and the Rust example
 rustc with the riscv32imc-unknown-none-elf target; the tests that need
-them are skipped, with a message, when they are missing. The checked-in
+them are skipped when they are missing. A skip is never silent: it prints a
+`SKIPPED` line even without `--nocapture`, goes into `target/test-skips.log`,
+and `scripts/cargo test` lists them all at the end (`scripts/test-skips.py`);
+`TERSE_TEST_NO_SKIP=1` makes every skip a failure. A test that runs another
+package's program (terse-devices' tests run `terse-bus` and `terse`) has it
+built from the current sources first (crates/terse-testkit), so
+`cargo test --workspace` needs no build before it. The tests outside cargo
+(`native/*/test.sh`, the Go reader's) use `target/release`: build it first
+with `cargo build --release --workspace --bins`; they refuse programs older
+than their sources. The checked-in
 images were built with clang and LLD 23.1.4.
 
 `terse` commands:

@@ -256,7 +256,7 @@ fn displays() -> Vec<Box<dyn crate::display::Display>> {
         let glyphs = crate::glyphs::TermGlyphs::new(crate::FONT_PX, &looks.term_fonts).unwrap();
         match crate::gpu_display(glyphs, false) {
             Ok(d) => out.push(d),
-            Err(e) => eprintln!("no GPU ({e}): the GPU renderer is not compared"),
+            Err(e) => terse_testkit::skip!("gpu", "no GPU ({e}): the GPU renderer is not compared"),
         }
     }
     out

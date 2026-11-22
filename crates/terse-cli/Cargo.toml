@@ -22,6 +22,7 @@ terse-relay.workspace = true
 libc = "0.2"
 
 [dev-dependencies]
+terse-testkit.workspace = true
 terse-net.workspace = true
 terse-relay.workspace = true
 terse-bus.workspace = true

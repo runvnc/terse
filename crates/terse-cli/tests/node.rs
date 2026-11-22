@@ -855,7 +855,7 @@ fn one_node_per_socket() {
 /// so, when Go is not installed.
 fn build_go_reader(dir: &Path, thin: bool) -> Option<PathBuf> {
     if !Command::new("go").arg("version").output().is_ok_and(|o| o.status.success()) {
-        eprintln!("skipped: needs Go (`go` not found) to build native/reader-go");
+        terse_testkit::skip!("go", "needs Go (`go` not found) to build native/reader-go");
         return None;
     }
     let out = dir.join(if thin { "tersereader-thin" } else { "tersereader" });

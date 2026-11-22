@@ -10,4 +10,5 @@ license.workspace = true
 blake3 = { version = "1.8", default-features = false }
 
 [dev-dependencies]
+terse-testkit.workspace = true
 tempfile = "3"

@@ -73,7 +73,7 @@ fn have_tools(tmp: &Path) -> bool {
 fn conform_image_is_up_to_date() {
     let tmp = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
     if !have_tools(tmp.path()) {
-        eprintln!("skipped: clang (riscv32), ld.lld or llvm-objcopy not found");
+        terse_testkit::skip!("clang", "clang (riscv32), ld.lld or llvm-objcopy not found");
         return;
     }
     let out = Command::new("sh")

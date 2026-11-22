@@ -18,10 +18,10 @@ pub fn rv_lib() -> PathBuf {
 }
 
 /// Whether clang (with the riscv32 target), ld.lld, llvm-objcopy and llvm-mc
-/// all work. Printed once when they do not.
+/// all work; a skip for the calling test when they do not.
 pub fn have_tools() -> bool {
     static OK: OnceLock<bool> = OnceLock::new();
-    *OK.get_or_init(|| {
+    let ok = *OK.get_or_init(|| {
         let dir = tempfile::tempdir().unwrap();
         let src = dir.path().join("t.c");
         std::fs::write(&src, "int f(int a) { return a * 3; }\n").unwrap();
@@ -35,11 +35,12 @@ pub fn have_tools() -> bool {
             && ["ld.lld", "llvm-objcopy", "llvm-mc"]
                 .iter()
                 .all(|t| Command::new(t).arg("--version").output().is_ok_and(|o| o.status.success()));
-        if !ok {
-            eprintln!("skipped: needs clang with the riscv32 target, ld.lld, llvm-objcopy and llvm-mc");
-        }
         ok
-    })
+    });
+    if !ok {
+        terse_testkit::skip!("clang", "needs clang with the riscv32 target, ld.lld, llvm-objcopy and llvm-mc");
+    }
+    ok
 }
 
 fn run(cmd: &mut Command) {

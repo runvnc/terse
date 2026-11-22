@@ -21,6 +21,7 @@ wgpu = "30"
 pollster = "0.4"
 
 [dev-dependencies]
+terse-testkit.workspace = true
 naga = { version = "30", features = ["wgsl-in"] }
 tempfile = "3"
 png = "0.18"

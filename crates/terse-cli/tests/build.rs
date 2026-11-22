@@ -15,11 +15,11 @@ use terse_core::Image;
 
 const TARGET: &str = "riscv32imc-unknown-none-elf";
 
-/// Whether rustc has the RISC-V target (rustup target add ...). Prints
-/// why not, once.
+/// Whether rustc has the RISC-V target (rustup target add ...); a skip for
+/// the calling test when it has not.
 fn have_rust() -> bool {
     static OK: OnceLock<bool> = OnceLock::new();
-    *OK.get_or_init(|| {
+    let ok = *OK.get_or_init(|| {
         let dir = std::process::Command::new("rustc")
             .args(["--print", "target-libdir", "--target", TARGET])
             .output()
@@ -29,11 +29,12 @@ fn have_rust() -> bool {
         let ok = dir.is_some_and(|d| {
             std::fs::read_dir(d).is_ok_and(|mut d| d.any(|e| e.is_ok_and(|e| e.file_name().to_string_lossy().starts_with("libcore-"))))
         });
-        if !ok {
-            eprintln!("skipped: needs rustc with the {TARGET} target (rustup target add {TARGET})");
-        }
         ok
-    })
+    });
+    if !ok {
+        terse_testkit::skip!("rust-target", "needs rustc with the {TARGET} target (rustup target add {TARGET})");
+    }
+    ok
 }
 
 fn terse_in(dir: &Path, args: &[&str]) -> Output {

@@ -99,6 +99,27 @@ pub enum Done {
     Failed,
 }
 
+/// What one relay did with a put or an entry: see [`Node::take_delivery`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Delivery {
+    Accepted,
+    Refused,
+    /// No answer, a connection error or an unexpected reply.
+    Failed,
+    /// Not connected when it was sent, so not sent there.
+    NotConnected,
+}
+
+impl Delivery {
+    fn of(accepted: bool, reply: &RelayReply) -> Self {
+        match reply {
+            _ if accepted => Delivery::Accepted,
+            RelayReply::Refused => Delivery::Refused,
+            _ => Delivery::Failed,
+        }
+    }
+}
+
 /// An article to publish.
 #[derive(Clone, Debug)]
 pub struct Draft {
@@ -178,12 +199,15 @@ enum GetFor {
 enum Op {
     /// Relays still to ask, in order; at most [`GET_FANOUT`] asked at once.
     Get { purpose: GetFor, id: BlobId, queue: VecDeque<u64>, in_flight: usize, not_found: bool },
-    /// Done at the first relay that accepts.
-    Put { token: Token, id: BlobId, in_flight: usize },
+    /// Done at the first relay that accepts; kept until every relay asked
+    /// has answered (`reported`: the token has had its answer), for
+    /// [`Node::take_delivery`].
+    Put { token: Token, id: BlobId, in_flight: usize, reported: bool, outcomes: Vec<(u64, Delivery)> },
     /// An article's (or profile's) blob on its way; its entry (`seq` not yet
     /// assigned) is published once a relay has it.
     PublishBlob { token: Token, entry: Entry, in_flight: usize },
-    Entry { token: Token, signed: SignedEntry, in_flight: usize, refused: bool },
+    /// Done at the first relay that accepts, kept like `Put`.
+    Entry { token: Token, signed: SignedEntry, in_flight: usize, refused: bool, reported: bool, outcomes: Vec<(u64, Delivery)> },
     /// The verified results of each relay that answered, by link.
     Find { token: Token, scope: u8, query: Vec<u8>, in_flight: usize, refused: bool, found: BTreeMap<u64, Vec<SignedEntry>> },
     /// The highest `seq` of the valid answers so far.
@@ -278,6 +302,11 @@ pub struct Node {
     records: Option<crate::records::Records>,
     /// Snapshots of a shell's machines (SPEC §machines.snapshots), if the host keeps them.
     snapshots: Option<crate::snapshots::Snapshots>,
+    /// What each relay did with the last put or entry every relay has
+    /// answered.
+    delivery: Vec<(String, Delivery)>,
+    /// See [`Node::set_deliver_to_all`].
+    deliver_to_all: bool,
     /// Operations waiting for a relay to be connected, and since when.
     deferred: Vec<Deferred>,
     deferred_since: Option<Instant>,
@@ -328,6 +357,8 @@ impl Node {
             next_link: 0,
             waiting: HashMap::new(),
             ops: HashMap::new(),
+            delivery: Vec::new(),
+            deliver_to_all: false,
             next_op: 0,
             ready: Vec::new(),
             subscriptions: Subscriptions::default(),
@@ -722,7 +753,7 @@ impl Node {
         if self.defer(move |n| n.start_put(token, &copy)) {
             return;
         }
-        let op = self.new_op(Op::Put { token, id, in_flight: 0 });
+        let op = self.new_op(Op::Put { token, id, in_flight: 0, reported: false, outcomes: Vec::new() });
         self.send_put(op, data);
     }
 
@@ -855,7 +886,14 @@ impl Node {
         if targets.is_empty() {
             return self.ready.push((token, Done::Failed));
         }
-        let op = self.new_op(Op::Entry { token, signed: signed.clone(), in_flight: targets.len(), refused: false });
+        let op = self.new_op(Op::Entry {
+            token,
+            signed: signed.clone(),
+            in_flight: targets.len(),
+            refused: false,
+            reported: false,
+            outcomes: Vec::new(),
+        });
         for lid in targets {
             let req = self.links.get_mut(&lid).unwrap().client.publish(&signed.bytes);
             self.waiting.insert((lid, req), Waiting::Op(op));
@@ -1588,16 +1626,20 @@ impl Node {
                 }
                 self.advance_get(op_id);
             }
-            Op::Put { token, id, in_flight } => {
+            Op::Put { token, id, in_flight, reported, outcomes } => {
                 *in_flight -= 1;
-                if reply == RelayReply::Put(*id) {
-                    let done = (*token, Done::Put(*id));
-                    self.ops.remove(&op_id);
-                    self.ready.push(done);
-                } else if *in_flight == 0 {
-                    let done = (*token, Done::Failed);
-                    self.ops.remove(&op_id);
-                    self.ready.push(done);
+                let accepted = reply == RelayReply::Put(*id);
+                outcomes.push((lid, Delivery::of(accepted, &reply)));
+                if accepted && !*reported {
+                    *reported = true;
+                    self.ready.push((*token, Done::Put(*id)));
+                }
+                if *in_flight == 0 {
+                    let Some(Op::Put { token, reported, outcomes, .. }) = self.ops.remove(&op_id) else { unreachable!() };
+                    if !reported {
+                        self.ready.push((token, Done::Failed));
+                    }
+                    self.delivered(outcomes);
                 }
             }
             Op::PublishBlob { entry, in_flight, .. } => {
@@ -1612,15 +1654,22 @@ impl Node {
                     }
                 }
             }
-            Op::Entry { in_flight, refused, .. } => {
+            Op::Entry { token, signed, in_flight, refused, reported, outcomes } => {
                 *in_flight -= 1;
                 *refused |= reply == RelayReply::Refused;
-                if reply == RelayReply::Done || *in_flight == 0 {
-                    let Some(Op::Entry { token, signed, refused, .. }) = self.ops.remove(&op_id) else { unreachable!() };
-                    match reply {
-                        RelayReply::Done => self.store_own_entry(token, &signed),
-                        _ => self.ready.push((token, if refused { Done::Refused } else { Done::Failed })),
+                let accepted = reply == RelayReply::Done;
+                outcomes.push((lid, Delivery::of(accepted, &reply)));
+                if accepted && !*reported {
+                    *reported = true;
+                    let (token, signed) = (*token, signed.clone());
+                    self.store_own_entry(token, &signed);
+                }
+                if let Some(Op::Entry { in_flight: 0, .. }) = self.ops.get(&op_id) {
+                    let Some(Op::Entry { token, refused, reported, outcomes, .. }) = self.ops.remove(&op_id) else { unreachable!() };
+                    if !reported {
+                        self.ready.push((token, if refused { Done::Refused } else { Done::Failed }));
                     }
+                    self.delivered(outcomes);
                 }
             }
             Op::Lookup { feed, name, in_flight, refused, not_found, best, .. } => {
@@ -1752,6 +1801,69 @@ impl Node {
         }
     }
 
+    /// Records what each relay did with a put or entry once all have
+    /// answered: those sent to, then the others as not connected.
+    fn delivered(&mut self, outcomes: Vec<(u64, Delivery)>) {
+        let mut delivery: Vec<(String, Delivery)> =
+            outcomes.iter().filter_map(|(lid, d)| Some((self.links.get(lid)?.url.clone(), *d))).collect();
+        for (lid, link) in &self.links {
+            if !outcomes.iter().any(|(l, _)| l == lid) {
+                delivery.push((link.url.clone(), Delivery::NotConnected));
+            }
+        }
+        self.delivery = delivery;
+    }
+
+    /// What each relay did with the last put or entry sent to the relays,
+    /// once every relay it was sent to has answered (or failed): for a
+    /// blocking publish, which waits for that, the relays that took it and
+    /// those that did not (NETWORK 5.1: a publish goes to every connected
+    /// relay and succeeds when one accepts). Empty without relays.
+    pub fn take_delivery(&mut self) -> Vec<(String, Delivery)> {
+        std::mem::take(&mut self.delivery)
+    }
+
+    /// Makes the blocking puts and publishes deliver to every relay: for a
+    /// program that exits after one (the `terse` commands). They then wait
+    /// until no relay is still being connected, and after the first
+    /// acceptance until every relay sent to has answered or failed (at
+    /// most the relay timeout), so that what is sent goes to every relay
+    /// that can be reached and none is cut off by the exit; see
+    /// [`Self::take_delivery`]. Off by default: a host that keeps running
+    /// is not held up by a relay that does not answer (NETWORK 5).
+    pub fn set_deliver_to_all(&mut self, on: bool) {
+        self.deliver_to_all = on;
+    }
+
+    /// With [`Self::set_deliver_to_all`], before a blocking call sends:
+    /// waits until no relay is still being connected (each is connected,
+    /// or has failed to connect).
+    fn connect_all(&mut self) {
+        if !self.deliver_to_all {
+            return;
+        }
+        loop {
+            let done = self.poll();
+            self.ready.extend(done);
+            if !self.connecting() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+
+    /// `wait_for`; then, with [`Self::set_deliver_to_all`], waits until
+    /// every relay the put or entry went to has answered (or failed).
+    fn wait_for_all(&mut self, token: Token) -> Done {
+        let done = self.wait_for(token);
+        while self.deliver_to_all
+            && self.ops.values().any(|op| matches!(op, Op::Put { .. } | Op::PublishBlob { .. } | Op::Entry { .. })) {
+            let more = self.poll();
+            self.ready.extend(more);
+        }
+        done
+    }
+
     /// Fetches a whole blob, blocking.
     pub fn fetch(&mut self, id: BlobId) -> Done {
         self.start_get(0, id);
@@ -1767,21 +1879,27 @@ impl Node {
         }
     }
 
-    /// Publishes a blob, blocking.
+    /// Publishes a blob, blocking, to every relay that can be reached; see
+    /// [`Self::take_delivery`].
     pub fn publish(&mut self, data: &[u8]) -> Done {
+        self.connect_all();
         self.start_put(0, data);
-        self.wait_for(0)
+        self.wait_for_all(0)
     }
 
-    /// Publishes an article, blocking.
+    /// Publishes an article, blocking, to every relay that can be reached;
+    /// see [`Self::take_delivery`].
     pub fn publish_article(&mut self, draft: &Draft) -> Done {
+        self.connect_all();
         self.start_publish_article(0, draft);
-        self.wait_for(0)
+        self.wait_for_all(0)
     }
 
-    /// Publishes a profile, blocking; `description` `None` keeps that of the
-    /// profile in force.
+    /// Publishes a profile, blocking, to every relay that can be reached
+    /// (see [`Self::take_delivery`]); `description` `None` keeps that of
+    /// the profile in force.
     pub fn publish_profile(&mut self, name: &str, listed: bool, description: Option<String>, time: u32) -> Done {
+        self.connect_all();
         match description {
             None => self.start_publish_profile(0, name, listed, time),
             Some(d) => {
@@ -1789,19 +1907,21 @@ impl Node {
                 self.start_publish_profile_with(0, name, listed, d, time);
             }
         }
-        self.wait_for(0)
+        self.wait_for_all(0)
     }
 
-    /// Publishes a document (kind 4), blocking.
+    /// Publishes a document (kind 4), blocking, like `publish_article`.
     pub fn publish_document(&mut self, data: &[u8], title: &str, time: u32) -> Done {
+        self.connect_all();
         self.start_publish_document(0, data, title, time);
-        self.wait_for(0)
+        self.wait_for_all(0)
     }
 
-    /// Publishes a program, blocking.
+    /// Publishes a program, blocking, like `publish_article`.
     pub fn publish_program(&mut self, image: &[u8], name: &str, time: u32) -> Done {
+        self.connect_all();
         self.start_publish_program(0, image, name, time);
-        self.wait_for(0)
+        self.wait_for_all(0)
     }
 
     /// Searches, blocking.

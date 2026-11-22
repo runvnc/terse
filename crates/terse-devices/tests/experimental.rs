@@ -15,8 +15,10 @@ fn workspace() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap()
 }
 
+/// terse or terse-bus (other packages' programs), built from the current
+/// sources, beside this package's drivers.
 fn bin(name: &str) -> PathBuf {
-    Path::new(env!("CARGO_BIN_EXE_terse-dev-terminal")).parent().unwrap().join(name)
+    terse_testkit::program(name)
 }
 
 struct Home {
@@ -51,14 +53,9 @@ impl Home {
     }
 }
 
-/// terse, terse-bus and the dice driver built, or a line saying what is missing.
+/// terse, terse-bus and the dice driver built, or a skip saying what is missing.
 fn ready() -> Option<(Home, String)> {
-    for b in ["terse", "terse-bus"] {
-        if !bin(b).exists() {
-            eprintln!("skipped: {b} is not built (scripts/cargo build -p terse-cli -p terse-bus)");
-            return None;
-        }
-    }
+    terse_testkit::programs(&["terse", "terse-bus"]);
     let home = Home { tmp: tempfile::tempdir().unwrap() };
     let dice = home.path("dice");
     let built = Command::new(std::env::var("CC").unwrap_or_else(|_| "cc".into()))
@@ -67,7 +64,7 @@ fn ready() -> Option<(Home, String)> {
         .status()
         .is_ok_and(|s| s.success());
     if !built {
-        eprintln!("skipped: no C compiler for native/driver-experimental");
+        terse_testkit::skip!("cc", "no C compiler for native/driver-experimental");
         return None;
     }
     Some((home, dice))

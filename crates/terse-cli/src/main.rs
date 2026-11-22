@@ -14,7 +14,7 @@ use std::process::ExitCode;
 
 use terse_core::{DeviceReq, Image, Machine, Script, Stopped, System};
 use terse_net::relay::DEFAULT_TIMEOUT;
-use terse_net::{Consent, ContentService, Done, HeadlessSystem, Node, blob_id, builtin, local, parse_hex, to_hex};
+use terse_net::{Consent, ContentService, Delivery, Done, HeadlessSystem, Node, blob_id, builtin, local, parse_hex, to_hex};
 
 /// Frames `run` executes when neither `--frames` nor an exit stops it (10 minutes).
 const DEFAULT_FRAME_CAP: u64 = 60 * 60 * 10;
@@ -377,9 +377,31 @@ pub(crate) fn relay_urls(args: &Args, find: bool) -> Result<Vec<String>, String>
 
 /// A node on `--store` and `relays`, with feed relays unless
 /// `--no-feed-relays`.
+/// After a put or publish: which relays took it, and a warning for each
+/// that did not (it succeeds when one does, NETWORK 5.1; README: puts and
+/// publishes go to each relay).
+pub(crate) fn say_delivery(node: &mut Node) {
+    let delivery = node.take_delivery();
+    let taken: Vec<&str> = delivery.iter().filter(|(_, d)| *d == Delivery::Accepted).map(|(u, _)| u.as_str()).collect();
+    if !taken.is_empty() {
+        eprintln!("terse: taken by {} of {} relays: {}", taken.len(), delivery.len(), taken.join(", "));
+    }
+    for (url, d) in &delivery {
+        let why = match d {
+            Delivery::Accepted => continue,
+            Delivery::Refused => "refused it",
+            Delivery::Failed => "did not answer (connection lost or timed out)",
+            Delivery::NotConnected => "could not be connected",
+        };
+        eprintln!("terse: warning: not on {url}: it {why}");
+    }
+}
+
 pub(crate) fn open_node(args: &Args, relays: &[String]) -> Result<Node, String> {
     let mut node = Node::open(args.get("--store").map(PathBuf::from), relays, DEFAULT_TIMEOUT)?;
     node.set_feed_relays(!args.has("--no-feed-relays"));
+    // A command exits after its put or publish: every relay gets it first.
+    node.set_deliver_to_all(true);
     Ok(node)
 }
 
@@ -981,7 +1003,10 @@ fn put(args: &[String]) -> Result<ExitCode, String> {
         return Err(format!("a blob is 1 to {} bytes; this is {}", terse_net::blob::MAX_BLOB, data.len()));
     }
     let mut net = Net { args: &args, node: None, find: true };
-    match net.node()?.publish(&data) {
+    let node = net.node()?;
+    let done = node.publish(&data);
+    say_delivery(node);
+    match done {
         Done::Put(id) => {
             println!("{}", to_hex(&id));
             Ok(ExitCode::SUCCESS)

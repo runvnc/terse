@@ -153,3 +153,81 @@ fn profiles_nicknames_and_search() {
     reader.fails(&["feed", "nickname", &key]);
     assert!(reader.ok(&["feed", "subscriptions"]).contains(&format!("{key}  Ana W.  3 entries")));
 }
+
+/// A TCP proxy to `upstream` that holds every chunk `delay` before passing
+/// it on, both ways: a relay that is slow to connect and slow to answer
+/// (a busy machine). Its URL.
+fn slow_proxy(upstream: &str, delay: std::time::Duration) -> String {
+    use std::io::{Read, Write};
+    use std::net::{Shutdown, TcpStream};
+    let upstream = upstream.trim_start_matches("ws://").to_string();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("ws://{}", listener.local_addr().unwrap());
+    std::thread::spawn(move || {
+        for client in listener.incoming() {
+            let Ok(client) = client else { return };
+            let Ok(server) = TcpStream::connect(&upstream) else { continue };
+            let pump = move |mut from: TcpStream, mut to: TcpStream| {
+                let mut buf = [0u8; 65536];
+                while let Ok(n @ 1..) = from.read(&mut buf) {
+                    std::thread::sleep(delay);
+                    if to.write_all(&buf[..n]).is_err() {
+                        break;
+                    }
+                }
+                let _ = to.shutdown(Shutdown::Write);
+            };
+            let (c2, s2) = (client.try_clone().unwrap(), server.try_clone().unwrap());
+            std::thread::spawn(move || pump(client, server));
+            std::thread::spawn(move || pump(s2, c2));
+        }
+    });
+    url
+}
+
+/// NETWORK 5.1, README: a put or publish goes to every relay, and the
+/// command says which took it. A relay slow to connect and to answer still
+/// has the entry when the command returns (it used to get nothing when the
+/// other relay connected first, or to be cut off when the other answered
+/// first and the command exited); one that cannot be reached is named in a
+/// warning, and the command still succeeds since another took it.
+#[test]
+fn publishing_reaches_every_relay() {
+    let (da, db) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let a = start_relay(da.path());
+    let b = slow_proxy(&start_relay(db.path()), std::time::Duration::from_millis(300));
+    let dead = format!("ws://{}", TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap());
+    let author = User::new();
+    author.ok(&["key", "new"]);
+    author.ok(&["relay", "add", &a]);
+    author.ok(&["relay", "add", &b]);
+    let feed = Identity::load(&author.config.path().join("identity.key")).unwrap().feed_key();
+    let held = |d: &tempfile::TempDir| FeedStore::beside_blobs(d.path()).seqs(&feed).unwrap();
+
+    let out = terse(&author.args(&["profile", "set", "--name", "Ana"]));
+    assert!(out.status.success(), "{out:?}");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert_eq!((held(&da), held(&db)), (vec![1], vec![1]), "{err}");
+    assert!(err.contains(&format!("terse: taken by 2 of 2 relays: {a}, {b}")), "{err}");
+
+    let file = author.store.path().join("post.txt");
+    std::fs::write(&file, "On both relays.\n").unwrap();
+    author.ok(&["feed", "publish", file.to_str().unwrap(), "--title", "Both"]);
+    assert_eq!((held(&da), held(&db)), (vec![1, 2], vec![1, 2]));
+
+    let blob = author.store.path().join("blob.txt");
+    std::fs::write(&blob, "a blob for both").unwrap();
+    let id = author.ok(&["put", blob.to_str().unwrap()]).trim().to_string();
+    assert!(da.path().join(&id).exists() && db.path().join(&id).exists());
+
+    // A relay that cannot be reached: a warning naming it, and success.
+    author.ok(&["relay", "add", &dead]);
+    let out = terse(&author.args(&["feed", "publish", file.to_str().unwrap(), "--title", "Again"]));
+    assert!(out.status.success(), "{out:?}");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("taken by 2 of 3 relays") && err.contains(&format!("warning: not on {dead}: it could not be connected")),
+        "{err}"
+    );
+    assert_eq!((held(&da), held(&db)), (vec![1, 2, 3], vec![1, 2, 3]));
+}

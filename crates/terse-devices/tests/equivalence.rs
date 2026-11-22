@@ -34,7 +34,8 @@ fn hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
 }
 
-/// The directory of the driver programs (and of terse and terse-bus).
+/// The directory of the driver programs (and of terse and terse-bus, see
+/// `terse_bus`).
 fn bin_dir() -> PathBuf {
     Path::new(env!("CARGO_BIN_EXE_terse-dev-terminal")).parent().unwrap().to_path_buf()
 }
@@ -139,14 +140,14 @@ fn image(path: &Path) -> Image {
 /// The C terminal driver, built into `dir`, if clang is there.
 fn c_terminal(dir: &Path) -> Option<String> {
     if cfg!(windows) {
-        eprintln!("skipped: c/terminal.c is a POSIX driver (poll.h, sys/socket.h); it is not built on Windows");
+        terse_testkit::skip!("os", "c/terminal.c is a POSIX driver (poll.h, sys/socket.h); it is not built on Windows");
         return None;
     }
     let out = dir.join("terse-dev-terminal-c");
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("c/terminal.c");
     let ok = Command::new("clang").args(["-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", "-o"]).arg(&out).arg(&src).status().is_ok_and(|s| s.success());
     if !ok {
-        eprintln!("skipped: the C terminal driver needs clang");
+        terse_testkit::skip!("clang", "the C terminal driver needs clang");
         return None;
     }
     Some(out.display().to_string())
@@ -154,11 +155,11 @@ fn c_terminal(dir: &Path) -> Option<String> {
 
 fn python_vector() -> Option<Vec<String>> {
     if cfg!(windows) {
-        eprintln!("skipped: the Python vector driver needs socket.AF_UNIX, which Python does not offer on Windows");
+        terse_testkit::skip!("os", "the Python vector driver needs socket.AF_UNIX, which Python does not offer on Windows");
         return None;
     }
     if !Command::new("python3").arg("--version").output().is_ok_and(|o| o.status.success()) {
-        eprintln!("skipped: the Python vector driver needs python3");
+        terse_testkit::skip!("python3", "the Python vector driver needs python3");
         return None;
     }
     let py = Path::new(env!("CARGO_MANIFEST_DIR")).join("python/vector.py");
@@ -323,10 +324,6 @@ fn optional_devices_on_the_bus() {
 /// one taken with content does not restore in terse-bus without content.
 #[test]
 fn optional_snapshots_cross_hosts() {
-    if !terse().exists() || !terse_bus().exists() {
-        eprintln!("skipped: terse and terse-bus are not built");
-        return;
-    }
     let tmp = tempfile::tempdir().unwrap();
     let p = |n: &str| tmp.path().join(n).display().to_string();
     let dirs = Dirs::new();
@@ -477,12 +474,14 @@ fn state_restore() {
     assert_eq!(again.system.shell_mut().try_state().unwrap(), state);
 }
 
+/// terse and terse-bus (other packages' programs), built from the current
+/// sources, beside this package's drivers.
 fn terse() -> PathBuf {
-    bin_dir().join(format!("terse{}", std::env::consts::EXE_SUFFIX))
+    terse_testkit::program("terse")
 }
 
 fn terse_bus() -> PathBuf {
-    bin_dir().join(format!("terse-bus{}", std::env::consts::EXE_SUFFIX))
+    terse_testkit::program("terse-bus")
 }
 
 fn stdout(cmd: &mut Command) -> String {
@@ -497,10 +496,6 @@ fn stdout(cmd: &mut Command) -> String {
 /// the same file for the same run.
 #[test]
 fn snapshots_cross_hosts() {
-    if !terse().exists() || !terse_bus().exists() {
-        eprintln!("skipped: terse and terse-bus are not built");
-        return;
-    }
     let tmp = tempfile::tempdir().unwrap();
     let p = |n: &str| tmp.path().join(n).display().to_string();
     let dirs = Dirs::new();
@@ -559,10 +554,6 @@ fn crash_driver(dir: &Path, name: &str) -> String {
 #[cfg(target_os = "linux")]
 #[test]
 fn driver_failures() {
-    if !terse_bus().exists() {
-        eprintln!("skipped: terse-bus is not built");
-        return;
-    }
     let tmp = tempfile::tempdir().unwrap();
     let hello = programs().join("hello/hello.terse").display().to_string();
     let cases = [("crash-exit", "TERSE_CRASH=exit TERSE_CRASH_AT=40", "--driver-timeout", "5"), ("crash-hang", "TERSE_CRASH=hang TERSE_CRASH_AT=40", "--driver-timeout", "2")];
@@ -606,10 +597,6 @@ fn bus_output<const N: usize>(args: [&str; N]) -> std::process::Output {
 #[cfg(target_os = "linux")]
 #[test]
 fn signals_end_a_run_cleanly() {
-    if !terse_bus().exists() {
-        eprintln!("skipped: terse-bus is not built");
-        return;
-    }
     let tmp = tempfile::tempdir().unwrap();
     let sparks = programs().join("sparks/sparks.terse").display().to_string();
     for (sig, name) in [(libc_sigterm(), "term"), (libc_sigint(), "int")] {
@@ -706,7 +693,7 @@ fn assert_close(a: &Path, b: &Path) {
 fn have_fonts() -> bool {
     let ok = terse_host::page::Typesetter::new(&Default::default()).is_ok();
     if !ok {
-        eprintln!("skipped: no fonts for pictures");
+        terse_testkit::skip!("fonts", "no fonts for pictures");
     }
     ok
 }

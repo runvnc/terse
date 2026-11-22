@@ -23,11 +23,11 @@ pub fn lib() -> PathBuf {
     programs().join("lib")
 }
 
-/// Whether clang (with the riscv32 target), ld.lld and llvm-objcopy work.
-/// Prints why not, once, when they do not.
+/// Whether clang (with the riscv32 target), ld.lld and llvm-objcopy work;
+/// a skip for the calling test when they do not.
 pub fn have_tools() -> bool {
     static OK: OnceLock<bool> = OnceLock::new();
-    *OK.get_or_init(|| {
+    let ok = *OK.get_or_init(|| {
         let dir = tempfile::tempdir().unwrap();
         let src = dir.path().join("t.c");
         std::fs::write(&src, "int f(int a) { return a * 3; }\n").unwrap();
@@ -41,11 +41,12 @@ pub fn have_tools() -> bool {
             && ["ld.lld", "llvm-objcopy"]
                 .iter()
                 .all(|t| Command::new(t).arg("--version").output().is_ok_and(|o| o.status.success()));
-        if !ok {
-            eprintln!("skipped: needs clang with the riscv32 target, ld.lld and llvm-objcopy");
-        }
         ok
-    })
+    });
+    if !ok {
+        terse_testkit::skip!("clang", "needs clang with the riscv32 target, ld.lld and llvm-objcopy");
+    }
+    ok
 }
 
 fn run(cmd: &mut Command) {
@@ -161,11 +162,8 @@ pub fn terse_command() -> Command {
         (tempfile::tempdir().unwrap(), port)
     });
     // Compiled into terse-devices' tests (common/twin.rs), the terse
-    // program is the one cargo built beside the drivers.
-    let exe = option_env!("CARGO_BIN_EXE_terse").map(PathBuf::from).unwrap_or_else(|| {
-        let driver = option_env!("CARGO_BIN_EXE_terse-dev-terminal").expect("built in terse-cli or terse-devices");
-        Path::new(driver).parent().unwrap().join(format!("terse{}", std::env::consts::EXE_SUFFIX))
-    });
+    // program is another package's, built from the current sources.
+    let exe = option_env!("CARGO_BIN_EXE_terse").map(PathBuf::from).unwrap_or_else(|| terse_testkit::program("terse"));
     let mut cmd = Command::new(exe);
     for var in ["XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME"] {
         cmd.env(var, home.path().join(var));

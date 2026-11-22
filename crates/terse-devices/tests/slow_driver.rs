@@ -22,8 +22,10 @@ fn workspace() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap()
 }
 
+/// terse-bus (another package's program), built from the current sources,
+/// beside this package's drivers.
 fn terse_bus() -> PathBuf {
-    Path::new(env!("CARGO_BIN_EXE_terse-dev-terminal")).parent().unwrap().join(format!("terse-bus{}", std::env::consts::EXE_SUFFIX))
+    terse_testkit::program("terse-bus")
 }
 
 fn hello() -> String {
@@ -72,19 +74,16 @@ fn record_lines(dir: &Path) -> Vec<Line> {
 static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn ready() -> Option<(tempfile::TempDir, String)> {
-    if !terse_bus().exists() {
-        eprintln!("skipped: terse-bus is not built");
-        return None;
-    }
+    terse_bus();
     if cfg!(windows) {
-        eprintln!("skipped: native/driver-example is a POSIX driver (sys/socket.h, sys/un.h); it is not built on Windows");
+        terse_testkit::skip!("os", "native/driver-example is a POSIX driver (sys/socket.h, sys/un.h); it is not built on Windows");
         return None;
     }
     let tmp = tempfile::tempdir().unwrap();
     match example(tmp.path()) {
         Some(x) => Some((tmp, x)),
         None => {
-            eprintln!("skipped: no C compiler for native/driver-example");
+            terse_testkit::skip!("cc", "no C compiler for native/driver-example");
             None
         }
     }
@@ -289,11 +288,11 @@ fn a_starved_driver_is_not_blamed() {
     let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
     let Some((tmp, x)) = ready() else { return };
     if terse_perflog::probe::disabled() {
-        eprintln!("skipped: TERSE_PERF_PROBE=none (starvation cannot be read, so it is blamed)");
+        terse_testkit::skip!("probe", "TERSE_PERF_PROBE=none (starvation cannot be read, so it is blamed)");
         return;
     }
     if !Path::new("/proc/self/schedstat").exists() {
-        eprintln!("skipped: no schedstat (the run-queue wait cannot be read)");
+        terse_testkit::skip!("schedstat", "no /proc/self/schedstat (the run-queue wait cannot be read)");
         return;
     }
     let Some(cpu) = a_cpu() else { return };

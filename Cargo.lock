@@ -2875,6 +2875,7 @@ dependencies = [
  "terse-net",
  "terse-perflog",
  "terse-relay",
+ "terse-testkit",
  "tungstenite",
 ]
 
@@ -2884,6 +2885,7 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "tempfile",
+ "terse-testkit",
 ]
 
 [[package]]
@@ -2899,6 +2901,7 @@ dependencies = [
  "terse-net",
  "terse-perflog",
  "terse-relay",
+ "terse-testkit",
 ]
 
 [[package]]
@@ -2922,6 +2925,7 @@ dependencies = [
  "terse-net",
  "terse-perflog",
  "terse-relay",
+ "terse-testkit",
  "tiny-skia",
  "unicode-script",
  "wgpu",
@@ -2940,6 +2944,7 @@ dependencies = [
  "terse-core",
  "terse-devices",
  "terse-host",
+ "terse-testkit",
  "wgpu",
 ]
 
@@ -2976,6 +2981,13 @@ dependencies = [
  "terse-core",
  "terse-net",
  "tungstenite",
+]
+
+[[package]]
+name = "terse-testkit"
+version = "0.1.0"
+dependencies = [
+ "tempfile",
 ]
 
 [[package]]

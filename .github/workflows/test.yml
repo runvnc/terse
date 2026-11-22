@@ -5,8 +5,12 @@
 # process timing (TERSE_BUS_WAKE=socket TERSE_PERF_PROBE=none: what Windows
 # always does, DEVICES.md 4.3), and with the drivers on the socket transport
 # only. Tests that need a GPU, a window, fonts or a tool the runner lacks skip
-# themselves as they do anywhere. Then the C core and example driver (POSIX:
-# Linux and macOS) and the Go reader's tests.
+# themselves as they do anywhere, each one recorded; the last step lists them
+# (scripts/test-skips.py). On Linux every tool is installed and the main test
+# step runs with TERSE_TEST_NO_SKIP=1: a skip there fails, except a missing
+# graphics adapter. Then the C core and example driver (POSIX: Linux and
+# macOS) and the Go reader's tests, on release programs they check are not
+# older than their sources.
 name: test
 
 on:
@@ -53,13 +57,39 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          # udev (game controllers) and ALSA for the host's window and sound.
-          sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev pkg-config
+          # udev (game controllers) and ALSA for the host's window and sound;
+          # fonts (the pictures, CJK coverage) and lavapipe (a software GPU
+          # adapter for wgpu) so that those tests run instead of skipping.
+          sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev pkg-config \
+            fonts-dejavu-core fonts-noto-cjk mesa-vulkan-drivers
+          # The RISC-V tools at the version the checked-in images were built
+          # with (README: clang and LLD 23), first on the PATH.
+          wget -q https://apt.llvm.org/llvm.sh
+          sudo bash llvm.sh 23
+          sudo apt-get install -y --no-install-recommends lld-23 llvm-23
+          echo /usr/lib/llvm-23/bin >> "$GITHUB_PATH"
+          rustup target add riscv32imc-unknown-none-elf
+
+      # Before the workspace's tests: terse-cli's node tests build the Go
+      # reader.
+      - uses: actions/setup-go@v5
+        if: runner.os != 'Windows'
+        with:
+          go-version-file: native/reader-go/go.mod
+          cache: false
+
+      - name: Skip log
+        run: python3 scripts/test-skips.py --clear || python scripts/test-skips.py --clear
 
       - name: Build
         run: cargo build --locked --workspace --all-targets
 
+      # The tests build any other package's program they run themselves
+      # (crates/terse-testkit): they do not depend on the step above.
       - name: Test the workspace
+        env:
+          TERSE_TEST_NO_SKIP: ${{ runner.os == 'Linux' && '1' || '' }}
+          TERSE_TEST_ALLOW_SKIP: gpu
         run: cargo test --locked --workspace --no-fail-fast -- --test-threads 4
 
       - name: Bus tests, every end sleeping on the socket, no process timing
@@ -77,7 +107,7 @@ jobs:
 
       - name: Release programs for the native tests
         if: ${{ !cancelled() && runner.os != 'Windows' }}
-        run: cargo build --locked --release -p terse-bus -p terse-devices -p terse-cli -p terse-relay --bins
+        run: cargo build --locked --release --workspace --bins
 
       - name: C core (native/core-c)
         if: ${{ !cancelled() && runner.os != 'Windows' }}
@@ -90,16 +120,15 @@ jobs:
         if: ${{ !cancelled() && runner.os != 'Windows' }}
         run: native/driver-example/test.sh
 
-      - uses: actions/setup-go@v5
-        if: ${{ !cancelled() && runner.os != 'Windows' }}
-        with:
-          go-version-file: native/reader-go/go.mod
-          cache: false
-
       - name: Go reader (native/reader-go)
         if: ${{ !cancelled() && runner.os != 'Windows' }}
         env:
           TERSE_BIN_DIR: ${{ github.workspace }}/target/release
+          TERSE_TEST_NO_SKIP: ${{ runner.os == 'Linux' && '1' || '' }}
         run: |
           cd native/reader-go
           go test ./...
+
+      - name: Skipped tests
+        if: always()
+        run: python3 scripts/test-skips.py || python scripts/test-skips.py

@@ -1,0 +1,10 @@
+[package]
+name = "terse-testkit"
+description = "What the workspace's tests share: the workspace's programs, built from the sources being tested, and skips that are seen."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
