@@ -7,10 +7,12 @@ websites like Reddit. Secondly, and completely optionally, it can be
 used to share very lightweight programs, at most 1 MiB of memory each,
 that run on tiny isolated virtual machines. That machine is called Terse32.
 
-**New here?** [Write your own Tersenet reader](docs/manual/guide-reader.txt):
-it starts with a text file and a few rules. Everything else is in the
-manual's [contents](docs/manual/contents.txt): a step-by-step guide (a reader,
-a program, a host, a device, a shell, and using Tersenet), then the complete
+**New here?** [Install and try Tersenet](docs/manual/guide-install.txt), or
+[write your own Tersenet reader](docs/manual/guide-reader.txt): it starts with
+a text file and a few rules. Everything else is in the manual's
+[contents](docs/manual/contents.txt): a user guide (install, run, your profile,
+writing and publishing, reading, subscribing, games), an implementation guide
+(a reader, a program, a host, a device, a shell), then the complete
 reference. The same pages are the website, <https://tersenet.org>, and, once
 installed, the reader's manual (press M).
 
@@ -21,7 +23,22 @@ keep the short name.
 
 ## Install
 
-Download the file for your system from the
+On Linux or macOS, one command installs the latest release for you alone
+(no `sudo`) into `~/.local/bin`:
+
+    curl -fsSL https://tersenet.org/install.sh | sh
+
+It picks the download for your system and processor, checks it against the
+release's `SHA256SUMS.txt`, copies `terse-host`, `terse` and `terse-relay`, and
+prints the `PATH` line for bash, zsh or fish if `~/.local/bin` is not on your
+`PATH` (it edits no shell profile). `TERSE_PREFIX=<dir>` installs into
+`<dir>/bin`, `TERSE_VERSION=0.1.0` a given release; `sh -s uninstall` removes
+the programs again. Its source is
+[`docs/manual/site-files/install.sh`](docs/manual/site-files/install.sh), copied
+to the website by `terse manual site`. Until a release is published it says
+that it found none and stops.
+
+Or download the file for your system from the
 [latest release](https://github.com/runvnc/terse/releases/latest), unpack it
 and run `terse-host`: the window opens on the launcher. Choose **reader**,
 press **Enter**, then **M**: that is the Tersenet manual. Nothing else needs to be
@@ -50,7 +67,15 @@ To check a download, compare it with `SHA256SUMS.txt` from the same release:
 `shasum -a 256 -c --ignore-missing SHA256SUMS.txt` (macOS), or
 `Get-FileHash <file>` in PowerShell (Windows), compared by eye.
 
-To build from source instead, see [Getting started](#getting-started) and
+To build from source instead, with a Rust toolchain (on Linux, the ALSA and
+udev headers too: `libasound2-dev libudev-dev pkg-config` on Debian and
+Ubuntu), install the three programs into `~/.cargo/bin`:
+
+    cargo install --locked --path crates/terse-host --features audio
+    cargo install --locked --path crates/terse-cli
+    cargo install --locked --path crates/terse-relay
+
+or see [Getting started](#getting-started) and
 [Build, run, test](#build-run-test). `RELEASING.md` says how the downloads are
 made.
 
