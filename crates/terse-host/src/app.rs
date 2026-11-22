@@ -190,6 +190,8 @@ pub fn run(
         next_frame: Instant::now(),
         presented_at: None,
         occluded: false,
+        ticks: 0,
+        hold: crate::hold::ResizeHold::default(),
         selftest,
         refresh_hz: None,
         trace: std::env::var_os("TERSE_PAGE_TRACE").is_some(),
@@ -430,6 +432,40 @@ impl Gfx {
             #[cfg(feature = "gpu")]
             Presenter::Gpu { config, .. } => (config.width, config.height),
             Presenter::Soft { size, .. } => *size,
+        }
+    }
+
+    /// A held frame period's picture (hold.rs): the software renderer's last
+    /// frame scaled to the window (nearest pixel), nothing drawn again; the
+    /// GPU draws the screens as they are at the window's size (the machines
+    /// held).
+    fn draw_held(&mut self, capture: bool) -> Option<(Duration, Duration, Option<crate::drive::Raw>)> {
+        match &mut self.presenter {
+            #[cfg(feature = "gpu")]
+            Presenter::Gpu { .. } => self.draw(capture),
+            Presenter::Soft { surface, display, size, history } => {
+                if size.0 == 0 || size.1 == 0 {
+                    return None;
+                }
+                let start = Instant::now();
+                let frame = display.frame();
+                let (fw, fh) = (frame.area.width(), frame.area.height());
+                let mut buffer = surface.buffer_mut().ok()?;
+                let acquired = Instant::now();
+                let (w, h) = (size.0 as usize, size.1 as usize);
+                if buffer.len() < w * h {
+                    return None;
+                }
+                crate::hold::scale_nearest(&frame.data, (fw, fh), &mut buffer[..w * h], (w, h));
+                let picture = capture.then(|| crate::drive::Raw::Packed(buffer[..w * h].to_vec()));
+                // The next frame drawn is copied whole.
+                history.clear();
+                self.window.pre_present_notify();
+                if let Err(e) = buffer.present() {
+                    eprintln!("terse-host: softbuffer: {e}");
+                }
+                Some((acquired - start, acquired.elapsed(), picture))
+            }
         }
     }
 
@@ -737,6 +773,10 @@ struct App {
     presented_at: Option<Instant>,
     /// The window is hidden (another workspace, minimised): nothing is drawn.
     occluded: bool,
+    /// Frame periods so far, run or held, and the hold while the window's
+    /// size changes (PERFORMANCE.md R15, "Resizing"; `hold`, as terse-bus).
+    ticks: u64,
+    hold: crate::hold::ResizeHold,
     selftest: Option<SelfTest>,
     refresh_hz: Option<f64>,
     /// `TERSE_PAGE_TRACE`: print when page layouts are asked for and arrive.
@@ -772,6 +812,22 @@ impl App {
     /// host's), not a single machine.
     fn is_system(&self) -> bool {
         self.system.is_system()
+    }
+
+    /// A frame period held while the window's size changes: no machine
+    /// runs; the script's actions (`--drive`) go on; the last picture is
+    /// shown at the window's size when it is drawn (`Gfx::draw`).
+    fn held(&mut self, event_loop: &ActiveEventLoop) {
+        if let Some(mut d) = self.drive.take() {
+            let actions = d.before_frame(self.system.shell().frame());
+            for a in actions {
+                self.drive_action(a, event_loop);
+            }
+            self.drive = Some(d);
+        }
+        if let Some(gfx) = &self.gfx {
+            gfx.window.request_redraw();
+        }
     }
 
     /// Runs one system frame with the input gathered since the last one.
@@ -1390,6 +1446,7 @@ impl ApplicationHandler for App {
                     // A real change of the surface's size: the next frames
                     // are excused (PERFORMANCE.md R15).
                     if size.width > 0 && size.height > 0 && gfx.viewport() != (size.width, size.height) {
+                        self.hold.resized(self.ticks);
                         self.watch.resized();
                         self.watch.add(terse_perflog::Line::Resize { frame: self.watch.frame, width: size.width, height: size.height });
                     }
@@ -1419,10 +1476,19 @@ impl ApplicationHandler for App {
                     _ => Duration::ZERO,
                 };
                 let capture = self.drive.as_ref().is_some_and(crate::drive::Drive::wants_picture);
+                let holding = self.hold.holding();
                 if !self.occluded
                     && let Some(gfx) = &mut self.gfx
-                    && let Some((acquire, render, picture)) = gfx.draw(capture)
+                    && let Some((acquire, render, picture)) = if holding { gfx.draw_held(capture) } else { gfx.draw(capture) }
                 {
+                    if holding {
+                        // Not a frame: nothing is judged, nothing sheds.
+                        if let Some(mut d) = self.drive.take() {
+                            d.presented(self.system.shell().frame(), picture, &*self);
+                            self.drive = Some(d);
+                        }
+                        return;
+                    }
                     let render = render + slept;
                     self.presented_at = Some(Instant::now());
                     if self.trace {
@@ -1486,7 +1552,14 @@ impl ApplicationHandler for App {
         }
         let now = Instant::now();
         if now >= self.next_frame {
-            self.step(event_loop);
+            self.ticks += 1;
+            // While the size changes the machines are held and the last
+            // picture is shown scaled (hold.rs), as terse-bus does.
+            if self.hold.step(self.ticks) {
+                self.held(event_loop);
+            } else {
+                self.step(event_loop);
+            }
             // SPEC §frames: at most one frame per tick; if the host fell behind,
             // virtual time lags instead of catching up.
             self.next_frame += FRAME;

@@ -613,6 +613,17 @@ impl SoftScreen {
         self.style.0 && (!self.has_tube() || !self.drawn.valid)
     }
 
+    /// How a scene over this screen draws its lines: by the beam in the
+    /// phosphor style's MAME model (`SceneImage::set_beam`), else flat.
+    pub fn beam_settings(&self) -> Option<super::mame::Settings> {
+        (self.style.0 && self.look.model == crate::phosphor::Model::Mame).then(|| super::mame::Settings {
+            params: self.look.mame_params(self.no_trails),
+            vignette: 0.0,
+            tint: self.look.preset.tint(),
+            ..super::mame::Settings::default()
+        })
+    }
+
     /// Whether the look's tube exists.
     fn has_tube(&self) -> bool {
         match self.look.model {

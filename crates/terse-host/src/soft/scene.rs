@@ -32,11 +32,31 @@ pub struct SceneImage {
     own: Option<(Pyramid, IRect)>,
     /// Whatever it was made from changed.
     pub stale: bool,
+    /// In the phosphor style's MAME model, the lines are the beam's light
+    /// added over the panels (`soft::mame`): the look, the tube and the
+    /// picture it makes, the screen's size.
+    beam: Option<BeamLines>,
+}
+
+/// The scene's lines drawn by the beam.
+struct BeamLines {
+    settings: super::mame::Settings,
+    tube: Option<super::mame::Tube>,
+    picture: Vec<u32>,
 }
 
 impl SceneImage {
     pub fn new(layers: SceneLayers) -> Self {
-        SceneImage { layers, image: Pixels::default(), own: None, stale: true }
+        SceneImage { layers, image: Pixels::default(), own: None, stale: true, beam: None }
+    }
+
+    /// Draws the lines by the beam with this look (the screen is in the
+    /// phosphor style's MAME model), or flat (`None`).
+    pub fn set_beam(&mut self, settings: Option<super::mame::Settings>) {
+        if self.beam.as_ref().map(|b| b.settings) != settings {
+            self.beam = settings.map(|settings| BeamLines { settings, tube: None, picture: Vec::new() });
+            self.stale = true;
+        }
     }
 
     /// Takes the scene as it is now (none: the slot is emptied); true if it
@@ -118,7 +138,7 @@ fn compose(
     pool: &Pool,
     top: Option<&dyn Top>,
 ) {
-    let SceneImage { layers, image, own, .. } = scene;
+    let SceneImage { layers, image, own, beam, .. } = scene;
     if image.area != base.area {
         *image = Pixels::new(base.area);
     }
@@ -155,7 +175,12 @@ fn compose(
         })
         .collect();
     let geom = Geom::for_rect(rect);
-    let shapes: Vec<Shape> = layers.lines.iter().map(|p| Shape::new(p, 0)).collect();
+    // By the beam: the lines' light, the screen's size, added over the panels.
+    let lit: Option<(&[u32], IRect)> = match beam {
+        Some(b) if top.is_none() => Some(beam_lines(b, &layers.lines, rect, pool)),
+        _ => None,
+    };
+    let shapes: Vec<Shape> = if lit.is_some() { Vec::new() } else { layers.lines.iter().map(|p| Shape::new(p, 0)).collect() };
     let clip_all = IRect::covering(rect).intersect(&area);
     let bands = tile_rows(&mut image.data, stride, area);
     pool.each(bands, |(y0, band)| {
@@ -168,6 +193,23 @@ fn compose(
         if let Some(t) = top {
             t.draw(band, area, y0, clip);
             return;
+        }
+        if let Some((pic, at)) = lit {
+            // Light adds (each channel up to white).
+            let r = at.intersect(&clip);
+            let w = at.width();
+            for y in r.y0..r.y1 {
+                let src = &pic[(y - at.y0) as usize * w..][..w];
+                let dst = &mut band[(y - y0) as usize * stride..][..stride];
+                for x in r.x0..r.x1 {
+                    let s = src[(x - at.x0) as usize];
+                    if s != 0 {
+                        let d = &mut dst[(x - area.x0) as usize];
+                        let add = |sh: u32| ((*d >> sh & 255) + (s >> sh & 255)).min(255) << sh;
+                        *d = add(16) | add(8) | add(0);
+                    }
+                }
+            }
         }
         for s in &shapes {
             let [r, g, b, a] = s.rgba();
@@ -183,3 +225,28 @@ fn compose(
     });
 }
 
+
+/// The scene's lines drawn by the beam into `b`'s tube (the screen `rect`'s
+/// size), its picture brought up to date; the picture and where it lies.
+fn beam_lines<'a>(b: &'a mut BeamLines, lines: &[terse_core::Primitive], rect: (f32, f32, f32, f32), pool: &Pool) -> (&'a [u32], IRect) {
+    use crate::mame::beams::{Screen, instances};
+    let size = ((rect.2.ceil() as usize).max(1), (rect.3.ceil() as usize).max(1));
+    if b.tube.as_ref().is_none_or(|t| t.out != size) {
+        b.tube = Some(super::mame::Tube::new(size, b.settings));
+        b.picture = vec![0; size.0 * size.1];
+    }
+    let t = b.tube.as_mut().expect("made above");
+    let screen = Screen { size: (t.size.0 as u32, t.size.1 as u32) };
+    let mut ls = Vec::new();
+    screen.lines(lines, &mut ls);
+    let beams = instances(&ls, b.settings.params.beam_width);
+    let none = super::phosphor::LightLayers { layers: Vec::new(), width: size.0, height: size.1, origin: (0, 0), extents: Vec::new() };
+    let text = super::phosphor::Text::Layers(&none);
+    let lin = super::phosphor::linear_table();
+    let light = super::mame::Light { beams: &beams, text: &text, text_key: Some(0), lin: &lin, dt: crate::phosphor::FRAME_SECONDS as f64, excluded: &[] };
+    if t.frame(&light, pool) {
+        t.composite(&mut b.picture, size.0, 0, 0, 0..size.1, pool);
+    }
+    let (x0, y0) = (rect.0.floor() as i32, rect.1.floor() as i32);
+    (&b.picture, IRect::new(x0, y0, x0 + size.0 as i32, y0 + size.1 as i32))
+}

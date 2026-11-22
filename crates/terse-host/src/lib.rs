@@ -45,6 +45,8 @@ pub mod page;
 #[cfg(feature = "gpu")]
 mod halo;
 #[cfg(feature = "gpu")]
+mod beamlines;
+#[cfg(feature = "gpu")]
 mod panels;
 pub mod phosphor;
 #[cfg(test)]
@@ -61,6 +63,7 @@ pub mod soft;
 mod vectors;
 pub mod hwcheck;
 pub mod halt;
+pub mod hold;
 pub mod rule;
 pub mod watch;
 

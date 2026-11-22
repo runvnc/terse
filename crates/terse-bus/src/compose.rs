@@ -596,6 +596,12 @@ impl Screen {
 
     /// The 3D layer, to go over a scene's panels (not in the phosphor
     /// style: its scene's lines are the core's).
+    /// How a scene over this screen draws its 3D lines (by the beam in the
+    /// phosphor style's MAME model).
+    fn beam_settings(&self) -> Option<terse_host::soft::mame::Settings> {
+        self.tube.as_ref().and_then(|t| t.screen.beam_settings())
+    }
+
     fn top(&self) -> Option<LayerTop<'_>> {
         if self.phosphor() {
             return None;
@@ -1046,6 +1052,7 @@ impl Compositor {
                     scene.stale = true;
                 }
                 let top = s.top();
+                scene.set_beam(s.beam_settings());
                 changed = scene.refresh(s.image(), changed, &none, s.screen_rect(native, size), eye, mode, &self.pool, top.as_ref().map(|t| t as &dyn Top));
             }
             if changed || panel.is_none() {
@@ -1065,6 +1072,7 @@ impl Compositor {
                     scene.stale = true;
                 }
                 let top = self.shell.top();
+                scene.set_beam(self.shell.beam_settings());
                 if scene.refresh(self.shell.image(), !shell_damage.is_empty(), &pyramids, rect, eye, mode, &self.pool, top.as_ref().map(|t| t as &dyn Top)) {
                     self.damage.add(scene.image.area);
                 }
@@ -1086,6 +1094,7 @@ impl Compositor {
                         scene.stale = true;
                     }
                     let top = s.top();
+                    scene.set_beam(s.beam_settings());
                     if scene.refresh(s.image(), !d.is_empty(), &none, s.screen_rect(native, viewport), eye, mode, &self.pool, top.as_ref().map(|t| t as &dyn Top)) {
                         self.damage.add(scene.image.area);
                     }

@@ -30,14 +30,10 @@ use winit::window::{Window, WindowId};
 const FRAME: Duration = Duration::from_micros(16_667);
 
 /// While the window's surface is changing size, the machines are held (no
-/// frame runs, nothing is drawn; the last picture is shown scaled) until
-/// the size has kept still for this many frame periods (PERFORMANCE.md
-/// R15, "Resizing")...
-pub const SETTLE: u64 = 6;
-/// ...for at most this many frame periods in a row...
-pub const MAX_HOLD: u64 = 60;
-/// ...and not again until this many frames have run since.
-pub const RUN_BETWEEN: u64 = 60;
+/// frame runs, nothing is drawn; the last picture is shown scaled), as
+/// terse-host holds them (`terse_host::hold`, PERFORMANCE.md R15,
+/// "Resizing").
+// (`SETTLE`, `MAX_HOLD`, `RUN_BETWEEN` there.)
 
 pub struct Options {
     pub size: Option<(u32, u32)>,
@@ -111,13 +107,8 @@ struct App {
     resizes: VecDeque<(u64, (u32, u32))>,
     /// Frame periods so far (run or held).
     ticks: u64,
-    /// The frame period in which the surface last changed size.
-    resized_tick: Option<u64>,
-    /// Frame periods held in a row, and frames run since the last hold.
-    held_run: u64,
-    since_hold: u64,
-    /// Frame periods held in all.
-    held: u64,
+    /// Holding the machines while the surface changes size.
+    hold: terse_host::hold::ResizeHold,
     /// The sound (SPEC §sound.presentation), played as terse-host plays it.
     audio: terse_host::audio::Audio,
     /// Why sound cannot be heard, shown until this frame.
@@ -302,18 +293,7 @@ impl App {
         if buffer.len() < w * h {
             return Ok(());
         }
-        if fw == 0 || fh == 0 {
-            buffer[..w * h].fill(0);
-        } else {
-            let xs: Vec<usize> = (0..w).map(|x| x * fw / w).collect();
-            for y in 0..h {
-                let src = &frame.data[(y * fh / h) * fw..][..fw];
-                let out = &mut buffer[y * w..(y + 1) * w];
-                for (o, &sx) in out.iter_mut().zip(&xs) {
-                    *o = src[sx];
-                }
-            }
-        }
+        terse_host::hold::scale_nearest(&frame.data, (fw, fh), &mut buffer[..w * h], (w, h));
         // The next frame drawn is copied whole.
         self.presented.clear();
         buffer.present().map_err(|e| e.to_string())
@@ -322,7 +302,7 @@ impl App {
     fn resize(&mut self, size: PhysicalSize<u32>) {
         let size_now = (size.width.max(1), size.height.max(1));
         if size_now != self.viewport && self.frames > 0 {
-            self.resized_tick = Some(self.ticks);
+            self.hold.resized(self.ticks);
         }
         self.viewport = size_now;
         if let Some(s) = &mut self.surface {
@@ -497,7 +477,7 @@ impl App {
         if let Some(m) = &self.bs.monitor {
             println!("selftest: late frames {} (the record has who)", m.late);
         }
-        println!("selftest: frame periods held while the window was resized {}", self.held);
+        println!("selftest: frame periods held while the window was resized {}", self.hold.held);
         if let Some(f) = self.first_frame {
             println!("selftest: start-up to first frame {:.1} ms", f.as_secs_f64() * 1000.0);
         }
@@ -571,22 +551,13 @@ impl ApplicationHandler for App {
             self.ticks += 1;
             // R15, resizing: while the size changes the machines are held
             // (bounded: MAX_HOLD in a row, then RUN_BETWEEN frames run).
-            let changing = self.resized_tick.is_some_and(|t| self.ticks - t <= SETTLE);
-            let hold = changing && self.held_run < MAX_HOLD && (self.held_run > 0 || self.since_hold >= RUN_BETWEEN);
-            if hold {
-                self.held_run += 1;
-                self.held += 1;
+            if self.hold.step(self.ticks) {
                 if let Err(e) = self.hold() {
                     self.error = Some(e);
                     event_loop.exit();
                     return;
                 }
             } else {
-                if self.held_run > 0 {
-                    self.held_run = 0;
-                    self.since_hold = 0;
-                }
-                self.since_hold += 1;
                 if self.bs.system.stopped().is_none()
                     && let Err(e) = self.frame()
                 {
@@ -649,10 +620,7 @@ pub fn run(bs: BusSystem, script: Script, native: (u32, u32), opts: Options) -> 
         shed_said: 0,
         resizes: VecDeque::new(),
         ticks: 0,
-        resized_tick: None,
-        held_run: 0,
-        since_hold: RUN_BETWEEN,
-        held: 0,
+        hold: terse_host::hold::ResizeHold::default(),
         audio: terse_host::audio::Audio::new(terse_host::audio::Choice::from_env(opts_selftest)),
         sound_notice: None,
     };

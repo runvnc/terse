@@ -791,6 +791,12 @@ impl Renderer {
         self.force_phosphor = force;
     }
 
+    /// The MAME model's sliders when this screen is drawn with it (the
+    /// phosphor style): a scene over it draws its lines by the beam.
+    pub fn beam_params(&self) -> Option<crate::mame::Params> {
+        (self.style.0 && self.look.model == phosphor::Model::Mame).then(|| self.look.mame_params(self.no_trails))
+    }
+
     /// Whether the phosphor presentation is in use.
     pub fn phosphor(&self) -> bool {
         self.style.0
