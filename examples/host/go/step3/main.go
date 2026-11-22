@@ -46,11 +46,13 @@ func screen(grid []byte) string {
 	var text strings.Builder
 	for row := range 30 {
 		var line []rune
-		for cell := row * 80; cell < row*80+80; cell++ {
+		for col := range 80 {
+			cell := row*80 + col
+			rightHalf := col > 0 && code(cell-1) != 0xffff
 			switch {
 			case code(cell) != 0xffff:
 				line = append(line, code(cell))
-			case cell%80 == 0 || code(cell-1) == 0xffff:
+			case !rightHalf:
 				line = append(line, ' ')
 			}
 		}
