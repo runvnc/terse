@@ -28,7 +28,7 @@ use crate::{Args, USAGE, read, relay_urls};
 pub const SYNC_DEADLINE: Duration = Duration::from_secs(60);
 
 /// Every `key` and `feed` command accepts these, used or not.
-const OPTIONS: [&str; 4] = ["--config", "--relay", "--store", "--no-feed-relays"];
+const OPTIONS: [&str; 5] = ["--config", "--relay", "--relay-authority", "--store", "--no-feed-relays"];
 
 fn known(args: &Args, extra: &[&str]) -> Result<(), String> {
     args.check_known(&[&OPTIONS[..], extra].concat())
@@ -200,10 +200,24 @@ pub fn relay(args: &[String]) -> Result<ExitCode, String> {
     let (command, rest) = args.split_first().ok_or(USAGE)?;
     let args = Args::parse(rest, &[])?;
     known(&args, &[])?;
+    if command == "fingerprint" {
+        // The fingerprints a pin= takes (README "Private authorities and pins").
+        let [file] = args.positional.as_slice() else { return Err(USAGE.into()) };
+        for cert in terse_net::tls::read_certs(std::path::Path::new(file)).map_err(|e| e.to_string())? {
+            let (whole, key) = terse_net::trust::fingerprints(&cert);
+            if let Some(key) = key {
+                println!("pin={}  (its public key: stays the same if the certificate is renewed with the same key)", terse_net::trust::fingerprint_text(&key));
+            }
+            println!("pin={}  (this certificate)", terse_net::trust::fingerprint_text(&whole));
+        }
+        return Ok(ExitCode::SUCCESS);
+    }
     let config = config_dir(&args)?;
-    let mut list = terse_net::local::read_relays(&config)?.map(|(l, _)| l).unwrap_or_default();
-    let save = |list: &[String]| -> Result<(), String> {
-        let path = terse_net::local::write_relays(&config, list)?;
+    // The list as written: each relay's URL and its line (with options).
+    let mut list = terse_net::local::read_relay_lines(&config)?.map(|(l, _)| l).unwrap_or_default();
+    let save = |list: &[(String, String)]| -> Result<(), String> {
+        let lines: Vec<String> = list.iter().map(|(_, l)| l.clone()).collect();
+        let path = terse_net::local::write_relays(&config, &lines)?;
         eprintln!("terse: relays saved in {}", path.display());
         Ok(())
     };
@@ -219,25 +233,33 @@ pub fn relay(args: &[String]) -> Result<ExitCode, String> {
         }
         Ok(url)
     };
-    let positional: Vec<String> = match command.as_str() {
-        "set" | "add" | "remove" => args.positional.iter().map(typed).collect::<Result<_, _>>()?,
+    // The relay, then its options as given (authority=, only-authority=,
+    // pin=: checked when saved).
+    let positional: Vec<String> = match (command.as_str(), args.positional.split_first()) {
+        ("set" | "add" | "remove", Some((relay, options))) => {
+            let mut v = vec![typed(relay)?];
+            v.extend(options.iter().cloned());
+            v
+        }
         _ => args.positional.clone(),
     };
+    let line = |p: &[String]| (p[0].clone(), p.join(" "));
     match (command.as_str(), positional.as_slice()) {
-        ("set", [url]) => {
-            save(std::slice::from_ref(url))?;
-            println!("{url}");
+        ("set", [_, ..]) => {
+            let one = [line(&positional)];
+            save(&one)?;
+            println!("{}", one[0].1);
         }
-        ("add", [url]) => {
-            if list.contains(url) {
-                return Err(format!("{url} is already in the list"));
+        ("add", [url, ..]) => {
+            if list.iter().any(|(u, _)| u == url) {
+                return Err(format!("{url} is already in the list (remove it first to change its options)"));
             }
-            list.push(url.clone());
+            list.push(line(&positional));
             save(&list)?;
         }
         ("remove", [url]) => {
             let before = list.len();
-            list.retain(|u| u != url);
+            list.retain(|(u, _)| u != url);
             if list.len() == before {
                 return Err(format!("{url} is not in the list"));
             }
@@ -253,8 +275,8 @@ pub fn relay(args: &[String]) -> Result<ExitCode, String> {
             return Ok(ExitCode::from(1));
         }
         ("list" | "show", []) => {
-            for url in &list {
-                println!("{url}");
+            for (_, line) in &list {
+                println!("{line}");
             }
         }
         _ => return Err(USAGE.into()),

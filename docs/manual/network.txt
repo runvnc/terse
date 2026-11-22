@@ -14,7 +14,7 @@ A blob reached without an entry (by a link) tells what it is by its first four b
 
 ## Relay protocol
 
-Relay URLs are `ws://` or `wss://` (TLS; `TERSE_RELAY_CA` adds a private CA). All messages are binary WebSocket messages; multi-byte integers are little-endian. `req` is a 32-bit number chosen by the client and echoed in the reply; replies may come in any order.
+Relay URLs are `wss://` (TLS) or `ws://` (plain): [Relays: encryption and trust](terse:{relay-settings}) says when each is used. All messages are binary WebSocket messages; multi-byte integers are little-endian. `req` is a 32-bit number chosen by the client and echoed in the reply; replies may come in any order.
 
 | Message | Direction | Layout |
 |---|---|---|

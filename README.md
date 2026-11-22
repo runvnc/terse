@@ -644,11 +644,46 @@ checked as a browser checks a web site's: it must come from a known certificate
 authority and be for the relay's name. `terse`, `terse-host` and `terse node` carry the
 usual authorities built in (Mozilla's list, the same on every system; a release
 updates it), and `tersereader` uses the system's. Nothing turns the check off. For a
-self-hosted relay with a certificate from a private CA, name the CA's PEM file in
-`TERSE_RELAY_CA` (all four programs read it, and `terse-relay` for its `--peer`s). When
-a relay cannot be used, the programs say why: "the relay's certificate is not trusted",
-"the relay's certificate is for another name", "has expired", "this relay requires TLS
-(try wss://)", "this relay does not speak TLS (try ws://)".
+relay whose certificate comes from a private authority, see "Private authorities and
+pins" below. When a relay cannot be used, the programs say why: "the relay's certificate
+is not trusted", "the relay's certificate is for another name", "has expired", "does not
+match the key pinned for it", "is not from the authority pinned for it", "this relay
+requires TLS (try wss://)", "this relay does not speak TLS (try ws://)".
+
+**Private authorities and pins.** A person or an organisation can run relays that the
+public authorities do not vouch for, and tell the programs, in their own settings only
+(NETWORK.md 3: nothing received from the network can do it), what to trust:
+
+- **An authority for every relay**: put its certificate (PEM) in
+  `<config>/authorities/` (`<config>` is `terse`'s config folder, README "Feeds";
+  `tersereader`'s is its `--dir`). Every `*.pem` file there is trusted, besides the
+  public authorities. `TERSE_RELAY_CA=<file>` does the same for one run (all four
+  programs read it, and `terse-relay` for its `--peer`s), and so does
+  `--relay-authority <file>` (`terse`, `terse-host`, `terse node`, `tersereader`).
+- **For one relay only**, options after it on its line of the relay list
+  (`<config>/relays`), or in a `--relay` value (quoted, one argument):
+  - `authority=<file>`: trust this authority for this host too;
+  - `only-authority=<file>`: trust only this authority for this host;
+  - `pin=sha256:<64 hex digits>`: accept for this host only the certificate, or the
+    public key, with this fingerprint. `terse relay fingerprint <cert.pem>` prints
+    both; the key's stays the same when a certificate is renewed with the same key.
+
+  With `only-authority` or `pin`, nothing else is accepted for that host, a public
+  authority's certificate included; both may be given, and several pins (for a key
+  change). A file is relative to `<config>`; do not put a one-host authority in
+  `authorities/`, where it would be trusted for every relay. An option applies to the
+  host it is written with, whatever relay or hint later names that host, and to no
+  other. A plain relay (`ws://`) takes no options: it has no certificate.
+
+      # <config>/relays
+      wss://relay.tersenet.org
+      wss://relay.corp.example only-authority=corp-ca.pem
+      wss://203.0.113.7:7443 pin=sha256:3b0c…(64 digits)
+      ws://192.168.1.20:7878
+
+  `terse relay add wss://relay.corp.example only-authority=corp-ca.pem` writes such a
+  line (the options are checked first); `terse relay list` shows the lines. There is no
+  setting that accepts any certificate.
 
 **Encrypted unless written otherwise** (NETWORK.md 3). A relay written without
 `ws://` or `wss://`, on the command line (`--relay`), in the relay list or as a feed

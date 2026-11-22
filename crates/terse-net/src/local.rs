@@ -74,37 +74,81 @@ fn read_optional(path: &Path) -> Result<Option<String>, String> {
     }
 }
 
-/// The configured relay list and the file it came from: `<config>/relays`
-/// (possibly empty), else `<config>/relay`, else `None`. Blank lines and
-/// repeated URLs are skipped.
-pub fn read_relays(config: &Path) -> Result<Option<(Vec<String>, PathBuf)>, String> {
+/// A relay line (of the list, or a `--relay` value): its relay as a URL
+/// and the line with that URL, then its options ([`crate::trust`]).
+/// `Ok(None)` for a blank line or a `#` comment.
+pub fn relay_line(line: &str) -> Result<Option<(String, String)>, String> {
+    let Some(l) = crate::trust::split_line(line) else { return Ok(None) };
+    let url = typed_url(l.relay).ok_or(format!("not a relay (a wss:// or ws:// URL, or a host): {}", l.relay))?;
+    let mut text = url.clone();
+    for o in &l.options {
+        text.push(' ');
+        text.push_str(o);
+    }
+    Ok(Some((url, text)))
+}
+
+/// The configured relay list as written, a line per relay with its
+/// options, and the file it came from: `<config>/relays` (possibly empty),
+/// else `<config>/relay`, else `None`. Blank lines, `#` comments and
+/// repeated relays are skipped.
+pub fn read_relay_lines(config: &Path) -> Result<Option<(Vec<(String, String)>, PathBuf)>, String> {
     for name in [RELAYS_FILE, RELAY_FILE] {
         let path = config.join(name);
         let Some(text) = read_optional(&path)? else { continue };
-        let mut urls: Vec<String> = Vec::new();
-        for (i, line) in text.lines().map(str::trim).enumerate().filter(|(_, l)| !l.is_empty()) {
-            let Some(url) = typed_url(line) else {
-                return Err(format!("{}:{}: not a relay (a wss:// or ws:// URL, or a host): {line}", path.display(), i + 1));
-            };
-            if !urls.contains(&url) {
-                urls.push(url);
+        let mut lines: Vec<(String, String)> = Vec::new();
+        for (i, line) in text.lines().enumerate() {
+            let Some((url, line)) = relay_line(line).map_err(|e| format!("{}:{}: {e}", path.display(), i + 1))? else { continue };
+            if !lines.iter().any(|(u, _)| *u == url) {
+                lines.push((url, line));
             }
         }
-        return Ok(Some((urls, path)));
+        return Ok(Some((lines, path)));
     }
     Ok(None)
 }
 
-/// Writes the relay list to `<config>/relays`.
-pub fn write_relays(config: &Path, urls: &[String]) -> Result<PathBuf, String> {
-    if let Some(bad) = urls.iter().find(|u| !valid_url(u)) {
-        return Err(format!("not a ws:// or wss:// URL: {bad}"));
+/// The configured relay list, as URLs ([`read_relay_lines`]).
+pub fn read_relays(config: &Path) -> Result<Option<(Vec<String>, PathBuf)>, String> {
+    Ok(read_relay_lines(config)?.map(|(l, p)| (l.into_iter().map(|(u, _)| u).collect(), p)))
+}
+
+/// Writes the relay list to `<config>/relays`: relay lines, each a relay
+/// and maybe its options (checked: [`crate::trust::line_options`]).
+pub fn write_relays(config: &Path, lines: &[String]) -> Result<PathBuf, String> {
+    let mut text = String::new();
+    for line in lines {
+        let (url, line) = relay_line(line)?.ok_or("an empty relay line")?;
+        let l = crate::trust::split_line(&line).unwrap();
+        crate::trust::line_options(&url, &l.options, Some(config)).map_err(|e| e.to_string())?;
+        text.push_str(&line);
+        text.push('\n');
     }
     std::fs::create_dir_all(config).map_err(|e| format!("{}: {e}", config.display()))?;
     let path = config.join(RELAYS_FILE);
-    let text: String = urls.iter().map(|u| format!("{u}\n")).collect();
     std::fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))?;
     Ok(path)
+}
+
+/// Authorities given on the command line (`--relay-authority`), trusted
+/// for every relay by [`find_relays`].
+static RELAY_AUTHORITIES: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
+
+/// Trusts the authorities of a PEM file for every relay
+/// (`--relay-authority`), from the next [`find_relays`] on.
+pub fn add_relay_authority(path: &Path) {
+    RELAY_AUTHORITIES.lock().unwrap().push(path.to_path_buf());
+}
+
+/// Trusts what the user's settings say for `wss://` relays (README
+/// "Private authorities and pins"): `config`'s authorities folder and the
+/// options of its relay list, those of `given`, `--relay-authority` and
+/// `TERSE_RELAY_CA`. Never anything from the network.
+pub fn apply_trust(given: &[String], config: Option<&Path>) -> Result<(), String> {
+    let authorities = RELAY_AUTHORITIES.lock().unwrap().clone();
+    let trust = crate::trust::Trust::load(config, given, &authorities).map_err(|e| e.to_string())?;
+    crate::tls::set_trust(trust);
+    Ok(())
 }
 
 /// Whether something accepts a TCP connection on 127.0.0.1:`port`.
@@ -157,7 +201,11 @@ impl Found {
 /// The relays to use: `given` (`--relay`, repeatable; `none` alone disables
 /// the network), else the list in `config` if it is not empty, else a relay
 /// accepting connections on 127.0.0.1:`port`.
+/// The settings of `config` and `given` for `wss://` relays are applied
+/// first ([`apply_trust`]).
 pub fn find_relays(given: &[String], config: Option<&Path>, port: u16) -> Result<Found, String> {
+    let lines: Vec<String> = given.iter().filter(|g| *g != "none").cloned().collect();
+    apply_trust(&lines, config)?;
     match given {
         [] => {}
         [none] if none == "none" => return Ok(Found::Disabled),
@@ -165,7 +213,7 @@ pub fn find_relays(given: &[String], config: Option<&Path>, port: u16) -> Result
         _ => {
             let mut urls = Vec::new();
             for text in given {
-                let url = typed_url(text).ok_or(format!("--relay {text}: not a relay (a wss:// or ws:// URL, or a host)"))?;
+                let (url, _) = relay_line(text)?.ok_or(format!("--relay {text}: not a relay (a wss:// or ws:// URL, or a host)"))?;
                 if !urls.contains(&url) {
                     urls.push(url);
                 }

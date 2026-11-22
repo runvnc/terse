@@ -23,6 +23,7 @@ import (
 	"tersereader/internal/nodeapi"
 	"tersereader/internal/render"
 	"tersereader/internal/terse"
+	"tersereader/internal/ws"
 )
 
 const usage = `tersereader: a native Terse reader (no virtual machine)
@@ -39,6 +40,7 @@ usage:
   tersereader show <key> <seq>           the article of a feed's entry
   tersereader --dump <blob-id|file>      an article as text (from the store, the relays or a file)
   tersereader relay add|remove <wss://host | ws://host:port | host> | relay list
+                                         (add takes options: authority=, only-authority=, pin=)
   tersereader nickname <key> [<name>]    name a feed for yourself (no name: clear it)
   tersereader node                       run only the network node, serving the local
                                          socket (LOCAL.md) until interrupted
@@ -47,7 +49,11 @@ usage:
 options:
   --dir <dir>          the reader's store (default $XDG_DATA_HOME/tersereader,
                        or ~/.local/share/tersereader; also $TERSEREADER_DIR)
-  --relay <ws://...>   a relay for this run instead of the configured ones (repeatable)
+  --relay <relay>      a relay for this run instead of the configured ones (repeatable):
+                       wss://host[:port], ws://host:port, or host[:port], which means
+                       wss:// (encrypted) unless the host is localhost or loopback;
+                       options may follow, as in the relay list: "wss://h pin=sha256:..."
+  --relay-authority <file>  a PEM file of authorities trusted for every relay (repeatable)
   --width <n>          the text column for show and --dump (default: the terminal, at most 80)
   --plain              text for screen readers and pipes: no box drawing, figures as their text
   --tokens             --dump only: the parsed blocks in the test vectors' dump format
@@ -70,6 +76,7 @@ u unsubscribes, F shows an entry's feed, f lists feeds, q quits, ? helps.
 type config struct {
 	dir         string
 	relays      []string
+	authorities []string
 	width       int
 	plain       bool
 	tokens      bool
@@ -147,10 +154,18 @@ func parseArgs(args []string) (*config, error) {
 			c.dir, err = val()
 		case "--relay":
 			v, err = val()
-			if err == nil && !strings.HasPrefix(v, "ws://") && !strings.HasPrefix(v, "wss://") {
-				err = fmt.Errorf("a relay is a ws:// or wss:// URL: %s", v)
+			if err == nil {
+				r, opts, ok := ws.SplitLine(v)
+				if u := terse.TypedRelay(r); ok && u != "" {
+					v = strings.Join(append([]string{u}, opts...), " ")
+				} else {
+					err = fmt.Errorf("not a relay (a wss:// or ws:// URL, or a host): %s", v)
+				}
 			}
 			c.relays = append(c.relays, v)
+		case "--relay-authority":
+			v, err = val()
+			c.authorities = append(c.authorities, v)
 		case "--width":
 			v, err = val()
 			c.width, _ = strconv.Atoi(v)
@@ -367,40 +382,30 @@ func cmdRelay(n nodeapi.Node, args []string) error {
 		}
 		return nil
 	}
-	if len(args) != 2 || (args[0] != "add" && args[0] != "remove") {
-		return errors.New("usage: tersereader relay add|remove <wss://host | ws://host:port | host>")
+	if len(args) < 2 || (args[0] != "add" && args[0] != "remove") || (args[0] == "remove" && len(args) != 2) {
+		return errors.New("usage: tersereader relay add <wss://host | ws://host:port | host> [authority=<pem> | only-authority=<pem> | pin=sha256:<hex>]... | relay remove <relay>")
 	}
-	url := typedRelay(args[1])
+	url := terse.TypedRelay(args[1])
 	if url == "" {
 		return fmt.Errorf("not a relay: %s (a ws:// or wss:// URL, or a host name)", args[1])
 	}
 	if url != args[1] {
-		fmt.Fprintf(os.Stderr, "tersereader: taken as %s (over TLS; for a plain relay give ws://%s)\n", url, args[1])
+		if strings.HasPrefix(url, "ws://") {
+			fmt.Fprintf(os.Stderr, "tersereader: taken as %s (plain: a relay on this machine; for TLS give wss://%s)\n", url, args[1])
+		} else {
+			fmt.Fprintf(os.Stderr, "tersereader: taken as %s (encrypted; for a plain relay give ws://%s)\n", url, args[1])
+		}
 	}
 	var out []string
 	for _, x := range n.ConfiguredRelays() {
-		if x != url {
+		if r, _, ok := ws.SplitLine(x); ok && terse.TypedRelay(r) != url {
 			out = append(out, x)
 		}
 	}
 	if args[0] == "add" {
-		out = append(out, url)
+		out = append(out, strings.Join(append([]string{url}, args[2:]...), " "))
 	}
 	return n.SetRelays(out)
-}
-
-// typedRelay is a relay as a person types it: a ws:// or wss:// URL as
-// it is, or a host and maybe a port without a scheme, taken as wss://
-// (over TLS, as public relays are reached). Empty if it is neither.
-func typedRelay(s string) string {
-	s = strings.TrimSpace(s)
-	if strings.HasPrefix(s, "ws://") || strings.HasPrefix(s, "wss://") {
-		return s
-	}
-	if s == "" || strings.Contains(s, "://") || strings.ContainsAny(s, "/ \t") {
-		return ""
-	}
-	return "wss://" + s
 }
 
 func when(t uint32) string { return time.Unix(int64(t), 0).UTC().Format("2006-01-02 15:04") }

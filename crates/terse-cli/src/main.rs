@@ -72,7 +72,9 @@ const USAGE: &str = "usage:
              (a node for readers on a local socket, LOCAL.md: it follows your subscriptions on your relays
              and serves them until stopped; Unix only)
   terse relay add|remove|set <wss://host | ws://host:port | host>   (a host alone: wss://host; localhost: ws://)
+        add and set take options for the relay: authority=<pem> only-authority=<pem> pin=sha256:<hex>
   terse relay list|show
+  terse relay fingerprint <cert.pem>   (the pin= values of a certificate and of its key)
   terse fonts list | add <file> | remove <file> | set mono|sans|bold <file>|default
   terse drivers list | add <file> [--slot <n>] [--name <name>] | remove <name> | use <slot> <name>|default
   terse --version
@@ -91,7 +93,9 @@ if there is no list), else a relay running on this machine (ws://127.0.0.1:7878)
 (sync then fails). A relay written without a scheme is wss:// (encrypted) whatever its port, but
 localhost or a loopback address is ws://; relays others name (profile relay lines, hints) are used
 only over wss://. A wss:// relay's certificate must be trusted: the usual authorities are
-built in; for a private CA, name its PEM file in TERSE_RELAY_CA. Puts and publishes go to every relay; gets ask them in turn. Feeds
+built in; a private authority is trusted from <config>/authorities/*.pem, TERSE_RELAY_CA or
+--relay-authority <pem> (every relay), or by a relay's options in <config>/relays or in a --relay
+value (authority=, only-authority=, pin=; README \"Private authorities and pins\"). Puts and publishes go to every relay; gets ask them in turn. Feeds
 whose profile names relays are also followed there, unless --no-feed-relays. `run` uses
 relays only with --relay.
 
@@ -184,7 +188,7 @@ its height and scroll, then the lines in view (y, height, x, the first span's fo
 tell a fault from any exit code (a shell's $status shows 143).";
 
 /// Options for commands that use the blob store and relay.
-const NET_OPTIONS: [&str; 4] = ["--relay", "--store", "--config", "--no-feed-relays"];
+const NET_OPTIONS: [&str; 5] = ["--relay", "--relay-authority", "--store", "--config", "--no-feed-relays"];
 
 /// The command line as UTF-8. An argument that is not is refused with the
 /// option it belongs to (an image title, SPEC §image, is UTF-8).
@@ -367,11 +371,19 @@ fn write(path: &str, bytes: &[u8]) -> Result<(), String> {
 /// else one running on this machine (README, "Getting started").
 pub(crate) fn relay_urls(args: &Args, find: bool) -> Result<Vec<String>, String> {
     let given: Vec<String> = args.all("--relay").map(str::to_string).collect();
-    if !find {
-        // Without a list to fall back on, no --relay means no relay.
-        return if given.is_empty() { Ok(Vec::new()) } else { Ok(local::find_relays(&given, None, 0)?.urls()) };
+    for a in args.all("--relay-authority") {
+        local::add_relay_authority(std::path::Path::new(a));
     }
     let config = args.get("--config").map(PathBuf::from).or_else(terse_net::default_config_dir);
+    if !find {
+        // Without a list to fall back on, no --relay means no relay; the
+        // settings for wss:// relays still apply.
+        if given.is_empty() {
+            local::apply_trust(&[], config.as_deref())?;
+            return Ok(Vec::new());
+        }
+        return Ok(local::find_relays(&given, config.as_deref(), 0)?.urls());
+    }
     let found = local::find_relays(&given, config.as_deref(), local::local_port())?;
     if matches!(found, local::Found::ConfigFile(..) | local::Found::Local(_)) {
         eprintln!("terse: {}", found.describe());
@@ -491,6 +503,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         "--dump-page",
         "--events",
         "--relay",
+        "--relay-authority",
         "--store",
         "--config",
         "--consent",
@@ -1036,7 +1049,7 @@ fn put(args: &[String]) -> Result<ExitCode, String> {
 
 fn get(args: &[String]) -> Result<ExitCode, String> {
     let args = Args::parse(args, &[])?;
-    args.check_known(&["-o", "--relay", "--store", "--config", "--no-feed-relays"])?;
+    args.check_known(&["-o", "--relay", "--relay-authority", "--store", "--config", "--no-feed-relays"])?;
     let arg = args.one_positional()?;
     let id = terse_net::link::blob_arg(arg).ok_or(format!("{arg} is not a blob ID (64 hex digits, or terse: and them)"))?;
     let bytes = Net { args: &args, node: None, find: true }.fetch(id)?;

@@ -81,10 +81,16 @@ on it shows. Strokes are thickened to at least one dot.
 - Relays: WebSocket (RFC 6455, implemented here; `ws://` and `wss://`),
   get, subscribe with `after` the highest seq held, unsubscribe, pushed
   entries; other reply types ignored. Several relays, reconnecting after
-  1 s doubling to 30 s, at most 16 connections.
+  1 s doubling to 30 s, at most 16 connections. A relay written without a
+  scheme is `wss://` (encrypted), but `localhost` or a loopback address is
+  `ws://` (NETWORK.md 3). Private authorities and pinned keys from your own
+  settings: `<dir>/authorities/*.pem`, options on a relay line
+  (`authority=`, `only-authority=`, `pin=sha256:...`), `TERSE_RELAY_CA`,
+  `--relay-authority` (the main README, "Private authorities and pins").
 - Feed relays: the `relay` lines of a feed's profile (up to two), and the
   hints of a feed address when none of your relays has the feed. Local
-  and private addresses are refused, names resolved once.
+  and private addresses are refused, names resolved once; a plain (`ws://`)
+  relay named by the network is never used.
 - Automatic download up to 16,384 bytes (articles, profiles, documents;
   not programs or undefined kinds) and prefetch of the first 8 linked
   articles. Larger articles are fetched when opened.

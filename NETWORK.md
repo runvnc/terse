@@ -125,11 +125,32 @@ receipt.
 - Over `wss://` the client checks the relay's certificate as a web
   browser does for `https://`: it must chain to a certificate authority
   the client trusts and be for the URL's host (RFC 6125). A client does
-  not connect when the check fails, and offers no way to skip it; it may
-  let its user add a certificate authority to trust (for a relay with a
-  certificate from a private one). TLS hides from the network which
-  feeds and blobs a client asks for; it adds nothing to their integrity,
-  which the signatures and hashes ensure (sections 1, 4.2).
+  not connect when the check fails, and offers no way to skip it: no
+  setting, option or variable makes it accept any certificate. TLS hides
+  from the network which feeds and blobs a client asks for; it adds
+  nothing to their integrity, which the signatures and hashes ensure
+  (sections 1, 4.2).
+- **Overrides come only from the user.** So that a person or an
+  organisation can run relays that the public authorities do not vouch
+  for, a client may let its user:
+  - trust more certificate authorities, for every relay or for named
+    hosts only;
+  - pin a host to one authority, or to one certificate or public key
+    (by its fingerprint): then nothing else is accepted for that host, a
+    certificate from a public authority included, and a client that
+    refuses one says that it does not match what is pinned;
+  - write a relay as plain (`ws://`), as above.
+
+  An override names the host it applies to, or, for an added authority,
+  applies to every relay; none turns the check off, and none applies to a
+  host it does not name. Overrides come only from the user's own
+  settings and command line. Nothing received from the network (a hint,
+  a `relay` line of a profile, a link, an entry, an article) carries an
+  override, adds a trusted authority or a plain connection, or makes a
+  client use one; a relay named by the network is checked with whatever
+  the user set for its host, like any other. How a client keeps these
+  settings is its own (README "Private authorities and pins" has the
+  reference's).
 - No subprotocol is used: a client sends no `Sec-WebSocket-Protocol`
   header, and a relay chooses none.
 - Every message of this protocol is one binary WebSocket message. A

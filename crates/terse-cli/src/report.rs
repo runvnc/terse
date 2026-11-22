@@ -190,7 +190,7 @@ pub fn report(args: &[String]) -> Result<ExitCode, String> {
     let args = Args::parse(args, &["--run", "--publish", "--yes"])?;
     args.check_known(&[
         "--days", "--to", "--host", "--data", "--record", "--run", "--runs", "--programs", "--out", "--publish", "--yes", "--check", "--relay", "--store",
-        "--config", "--no-feed-relays",
+        "--config", "--no-feed-relays", "--relay-authority",
     ])
     .map_err(|_| USAGE.to_string())?;
     if !args.positional.is_empty() {

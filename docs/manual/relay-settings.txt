@@ -1,0 +1,34 @@
+# Relays: encryption and trust
+
+Which relays a client reaches with encryption, and which certificates it accepts. The rules are in NETWORK.md section 3; the file names here are the reference's (`terse`, `terse-host`, `terse node`, `tersereader`), not requirements on other clients.
+
+## Encrypted unless written otherwise
+
+A relay written without a scheme is encrypted: `relay.example.org` means `wss://relay.example.org`, and `relay.example.org:9000` means `wss://relay.example.org:9000`. A port is only a port; it says nothing about encryption. This holds wherever a relay is written: on a command line (`--relay`), in the relay list, and in the hints of a feed address.
+
+A plain relay is written with its scheme, `ws://host:port` (in a hint, `ws:host:port`). Plain relays are for this machine, a private network and tests. The one exception: `localhost` or a loopback address without a scheme (`127.0.0.1:7878`, the local relay) is plain, since its traffic never leaves the machine. A client never takes such an address from the network.
+
+No downgrade: a client connects without encryption only to relays its user wrote as plain. A plain relay named by someone else, in a profile's `relay` line or a hint in a link, is not used, and a failed encrypted connection is never tried again in plain.
+
+## Certificates
+
+An encrypted relay's certificate must come from an authority the client trusts and be for the relay's name. Nothing turns this check off.
+
+For relays the public authorities do not vouch for, the user may set, in their own settings only:
+
+- an authority for every relay: a PEM file in `<config>/authorities/` (every `*.pem` there), `TERSE_RELAY_CA=<file>` or `--relay-authority <file>`;
+- options for one relay, after it on its line of `<config>/relays` or in a `--relay` value: `authority=<file>` trusts an authority for that host too; `only-authority=<file>` trusts only that authority; `pin=sha256:<64 hex digits>` accepts only the certificate, or the public key, with that fingerprint (`terse relay fingerprint <cert.pem>` prints both).
+
+With `only-authority` or `pin`, nothing else is accepted for that host, a certificate from a public authority included. An option applies only to the host it is written with. A plain relay takes no options.
+
+```
+# <config>/relays
+wss://relay.tersenet.org
+wss://relay.corp.example only-authority=corp-ca.pem
+wss://203.0.113.7:7443 pin=sha256:3b0c…
+ws://192.168.1.20:7878
+```
+
+Nothing received from the network (a hint, a profile, a link, an entry) can add an authority, a pin or a plain connection: those come only from the user.
+
+When a relay cannot be used, the programs say why: "the relay's certificate is not trusted", "is for another name", "does not match the key pinned for it", "is not from the authority pinned for it", "this relay requires TLS (try wss://)", "this relay does not speak TLS (try ws://)".
