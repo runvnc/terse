@@ -7,6 +7,8 @@ import (
 	"host/machine"
 )
 
+const exit = 0x106
+
 func main() {
 	file, err := os.ReadFile(os.Args[1])
 	if err != nil {
@@ -24,11 +26,11 @@ func main() {
 			fmt.Fprintln(os.Stderr, fault)
 			os.Exit(1)
 		}
-		if ecall && cpu.X[17] == 0x106 {
-			os.Exit(int(cpu.X[10] & 0xff))
+		if ecall && cpu.X[machine.A7] == exit {
+			os.Exit(int(byte(cpu.X[machine.A0])))
 		}
 		if ecall {
-			cpu.X[10] = 0xffffffff
+			cpu.X[machine.A0] = machine.UnknownCall
 		}
 	}
 }

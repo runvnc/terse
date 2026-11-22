@@ -36,32 +36,48 @@ use std::error::Error;
 use std::io::{Read, Write};
 use tungstenite::{Message, WebSocket};
 
+pub const ID_SIZE: usize = 32;
+pub type Id = [u8; ID_SIZE];
+
+const TYPE_GET: u8 = 0x01;
+const TYPE_GET_REPLY: u8 = 0x81;
+const REQUEST_NUMBER: u32 = 1;
+const STATUS_AT: usize = 5;
+const BLOB_AT: usize = 6;
+const STATUS_FOUND: u8 = 1;
+const STATUS_NOT_FOUND: u8 = 2;
+
 pub fn get(
     relay: &mut WebSocket<impl Read + Write>,
-    id: [u8; 32],
+    id: Id,
 ) -> Result<Vec<u8>, Box<dyn Error>> {
-    let request = [&[0x01, 1, 0, 0, 0][..], &id].concat();
+    let number = REQUEST_NUMBER.to_le_bytes();
+    let request = [&[TYPE_GET][..], &number, &id].concat();
     relay.send(Message::binary(request))?;
     loop {
         let reply = relay.read()?.into_data();
-        if reply.len() < 6 || reply[0] != 0x81 {
+        if reply.len() < BLOB_AT || reply[0] != TYPE_GET_REPLY {
             continue;
         }
-        if reply[5] != 1 {
-            return Err("the relay does not have it".into());
+        match reply[STATUS_AT] {
+            STATUS_FOUND => {}
+            STATUS_NOT_FOUND => {
+                return Err("the relay does not have it".into());
+            }
+            _ => return Err("the relay refused it".into()),
         }
-        if blake3::hash(&reply[6..]) != id {
+        if blake3::hash(&reply[BLOB_AT..]) != id {
             return Err("hash check failed".into());
         }
-        return Ok(reply[6..].to_vec());
+        return Ok(reply[BLOB_AT..].to_vec());
     }
 }
 
-pub fn hex32(hex: &str) -> Result<[u8; 32], Box<dyn Error>> {
-    if hex.len() != 64 || !hex.is_ascii() {
+pub fn hex32(hex: &str) -> Result<Id, Box<dyn Error>> {
+    if hex.len() != 2 * ID_SIZE || !hex.is_ascii() {
         return Err("not 64 hexadecimal digits".into());
     }
-    let mut bytes = [0; 32];
+    let mut bytes = [0; ID_SIZE];
     for (i, byte) in bytes.iter_mut().enumerate() {
         *byte = u8::from_str_radix(&hex[2 * i..2 * i + 2], 16)?;
     }
@@ -88,13 +104,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-They are 35 and 14 lines; the whole program, with step 1's `lib.rs` and `article.rs`, is 113.
+They are 51 and 14 lines; the whole program, with step 1's `lib.rs` and `article.rs`, is 129.
 
 ## How it works
 
-A relay is a WebSocket server, and every message is one binary WebSocket message. To ask for a blob, `get` sends a Get message: the byte `01h`, a request number of 4 bytes, least significant first (here always 1), and the blob's ID, 32 bytes.
+A relay is a WebSocket server, and every message is one binary WebSocket message; numbers in it are least significant byte first. To ask for a blob, `get` sends a Get:
 
-It then reads messages until the reply comes: one that starts with `81h`. Other messages are skipped; in step 3 the relay sends feed entries over the same connection. After the type and the request number comes a status byte: 1 found, followed by the blob's bytes; 2 not found; 3 refused.
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 1 | type: `01h`, Get |
+| 1 | 4 | request number: any; the reply repeats it |
+| 5 | 32 | the blob's ID |
+
+It then reads messages until the Get reply comes, skipping any other (in step 3 the relay sends feed entries over the same connection):
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 1 | type: `81h`, Get reply |
+| 1 | 4 | the request number |
+| 5 | 1 | status: `1` found, `2` not found, `3` or more refused |
+| 6 | the rest | the blob, if the status is `1` |
+
+The names in the `const` block are these offsets and values. A status other than `1` is an error, saying which.
 
 The hash check is the important line. Relays are not trusted, the hash is: if the BLAKE3 hash of the bytes is not the ID asked for, `get` returns an error and the bytes are never shown.
 
@@ -148,4 +179,4 @@ The program asks one relay and keeps nothing. A complete reader keeps every blob
 A reader that fetches an article by its ID and knows it is genuine.
 
 - Next: [Make a reader in Rust, step 3: follow a feed](terse:{guide-reader-feed-rust}).
-- Every relay message: [The network](terse:{network}).
+- Every relay message, and why a relay refuses: [The network](terse:{network}).

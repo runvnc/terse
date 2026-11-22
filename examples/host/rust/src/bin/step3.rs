@@ -1,4 +1,4 @@
-use host::bus::Bus;
+use host::bus::{Bus, TERMINAL};
 use host::frames::{Machine, Status};
 use host::image::load;
 use std::error::Error;
@@ -18,7 +18,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         });
         bus.end(m.frame, !m.running());
     }
-    print!("{}", screen(&bus.state(2)));
+    print!("{}", screen(&bus.state(TERMINAL)));
     bus.close();
     match m.status {
         Status::Faulted(fault) => {
@@ -30,20 +30,26 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 }
 
+const COLUMNS: usize = 80;
+const ROWS: usize = 30;
+const CELL_SIZE: usize = 4;
+const CONTINUATION: u16 = 0xffff;
+
 fn screen(grid: &[u8]) -> String {
     let code = |cell: usize| {
-        u16::from_le_bytes([grid[4 * cell], grid[4 * cell + 1]])
+        let at = CELL_SIZE * cell;
+        u16::from_le_bytes([grid[at], grid[at + 1]])
     };
     let mut text = String::new();
-    for row in 0..30 {
+    for row in 0..ROWS {
         let mut line = String::new();
-        for col in 0..80 {
-            let cell = row * 80 + col;
+        for col in 0..COLUMNS {
+            let cell = row * COLUMNS + col;
             let right_half =
-                col > 0 && code(cell - 1) != 0xffff;
+                col > 0 && code(cell - 1) != CONTINUATION;
             match code(cell) {
-                0xffff if right_half => {}
-                0xffff => line.push(' '),
+                CONTINUATION if right_half => {}
+                CONTINUATION => line.push(' '),
                 c => line += &String::from_utf16_lossy(&[c]),
             }
         }

@@ -1156,7 +1156,7 @@ impl App {
             if pressed {
                 swallow(&mut self.swallowed, usage);
                 let what = self.audio.change(k);
-                self.show_notice_for("sound", what, "Ctrl+Alt+minus and plus change it, Ctrl+Alt+M mutes; it is kept.", VOLUME_NOTICE_FRAMES);
+                self.show_notice_for("sound", what, "Ctrl+Alt+minus and plus change it, Ctrl+Alt+M mutes, for this run.", VOLUME_NOTICE_FRAMES);
             }
             return;
         }

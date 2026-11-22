@@ -1,5 +1,13 @@
 use crate::frames::{Machine, Status};
 
+const STATE_TAG: &[u8] = b"terse-state-1";
+const EMPTY_SYSTEM: usize = 37;
+const ABSENT: u8 = 0;
+const PRESENT: u8 = 1;
+const RUNNING: u8 = 0;
+const EXITED: u8 = 1;
+const FAULTED: u8 = 2;
+
 impl Machine {
     pub fn state(
         &self,
@@ -7,7 +15,7 @@ impl Machine {
         grants: &[u8],
         terminal: Option<&[u8]>,
     ) -> Vec<u8> {
-        let mut state = b"terse-state-1".to_vec();
+        let mut state = STATE_TAG.to_vec();
         state.extend(id);
         state.extend(self.cpu.pc.to_le_bytes());
         for x in &self.cpu.x[1..] {
@@ -15,9 +23,9 @@ impl Machine {
         }
         state.extend(self.frame.to_le_bytes());
         let (stopped, code, fault) = match self.status {
-            Status::Running => (0, 0, None),
-            Status::Exited(code) => (1, code, None),
-            Status::Faulted(fault) => (2, 0, Some(fault)),
+            Status::Running => (RUNNING, 0, None),
+            Status::Exited(code) => (EXITED, code, None),
+            Status::Faulted(fault) => (FAULTED, 0, Some(fault)),
         };
         let kind = fault.map_or(0, |f| f.kind as u8);
         state.extend([stopped, code, kind]);
@@ -32,15 +40,15 @@ impl Machine {
         }
         state.extend(&self.cpu.ram);
         state.extend(grants);
-        state.extend([0; 37]);
+        state.extend([0; EMPTY_SYSTEM]);
         match terminal {
             Some(section) => {
-                state.push(1);
+                state.push(PRESENT);
                 state.extend(section);
             }
-            None => state.push(0),
+            None => state.push(ABSENT),
         }
-        state.extend([0, 0, 0]);
+        state.extend([ABSENT, ABSENT, ABSENT]);
         state
     }
 }

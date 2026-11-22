@@ -2121,20 +2121,28 @@ again only if the cause changes; the machines run exactly as before (SPEC
 §sound.presentation). `terse-host --hardware-check` opens and closes the output and
 says what it plays through, or why not; `--version` says what the build can play
 through. `TERSE_AUDIO` chooses: `auto` (default), `off` (play nothing, say nothing),
-`none` (as if no output were found), `pulse`, `pulse:<server>`, `alsa`,
-`alsa:<pcm>`; `--selftest` plays only when it is set, so tests never make a sound.
-`TERSE_AUDIO_STATS=1` prints the output's latency and underruns when it closes.
+`none` (as if no output were found), `null` (an output with no device behind it,
+which takes the samples at a device's pace and plays nothing), `pulse`,
+`pulse:<server>`, `alsa`, `alsa:<pcm>`; `--selftest` plays only when it is set, so
+tests never make a sound. `TERSE_AUDIO_STATS=1` prints the output's latency, each
+frame's hand-over and the underruns when it closes.
 
 The volume is the host's, applied on the way out (never to the machines or an
 `--audio-out` file): Ctrl+Alt+minus and Ctrl+Alt+plus (`=`) turn it down and up a
 tenth, Ctrl+Alt+M mutes, and so do the keyboard's volume keys where the desktop
 lets them reach the window. These keys are the host's: no program receives them. A
-short notice shows the new volume, which is kept in `<config>/sound`; `--volume
-<0-100>` and `--mute` set it for one run.
+short notice shows the new volume. The volume starts full (or as `--volume <0-100>`
+and `--mute` say) and lasts until the host exits: it is not saved, and a
+`<config>/sound` file an earlier version wrote is ignored.
 
 A frame's sound reaches the sound server's sink about 27 ms after the frame (PERFORMANCE.md
 R18: at most 3 frames). `TERSE_AUDIO_TRACE=<file>` writes each frame's hand-over time,
-to measure that against a recording. Tests: `crates/terse-core/src/sound.rs` (the
+to measure that against a recording. The host's own part, from the frame's end to
+the audio interface having the frame's first pair (R19), it measures itself:
+`terse-host --sound-check <image>` runs the image headless at 60 frames a second
+into the null output and prints that hand-over's p50, p99 and max (`terse perf` row
+S1). Tests: `crates/terse-host/tests/sound.rs` (`--sound-check` with no audio
+device; the volume not saved), `crates/terse-core/src/sound.rs` (the
 synthesis, bit for bit), `crates/terse-cli/tests/tune.rs` (the golden samples, a
 snapshot in the middle of a note, `--audio-out`, the reading profile),
 `crates/terse-devices/tests/sound.rs` (the driver and the compiled-in device give the

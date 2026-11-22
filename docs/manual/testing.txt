@@ -1,0 +1,115 @@
+# Testing a program
+
+A program is tested in two ways. `terse run` runs it without a window, exactly: the same image and input give the same screen and the same state hash on every computer, so a test can compare them. `terse-host --drive` runs it in the real window, in real time, with input from a script, and checks what the window shows over time: the picture as drawn, the page laid out on its own thread, figures drawn late, keys as a keyboard sends them. Use the first for what the program computes and the second for what the user sees. Both read the same script.
+
+## Headless: terse run
+
+```
+terse run prog.terse --frames 60 --events keys.txt --dump
+```
+
+| Option | What it does |
+|---|---|
+| `--frames N` | runs at most N frames (default 36,000); the run ends earlier when the program exits or faults |
+| `--events <file>` | input from a script (below) |
+| `--dump` | after the last frame, prints the text grid: 30 lines, each row's 80 cells without the spaces at its end |
+| `--dump-vectors` | after the grid, the 2D display's list, one shape a line (`line 5120 6400 4800 1280 w 16 c ffffffff`) |
+| `--dump-page` | after the grid, the page as the reference layout lays it out |
+| `--hash` | after the last frame, the machine's state hash: 64 hexadecimal digits |
+| `--hash-every N` | after each frame whose number is a multiple of N, `<frame> <hash>` |
+| `--save-state <file>`, `--load-state <file>` | saves the machine's state after the last frame; starts from a saved state |
+| `--without <slot>` | runs without an optional device, as a host that lacks it |
+| `--shell` | runs the image as a shell, with the machines it starts; `--hash-all` hashes each |
+
+A headless run has no clock (the Unix time is 0), no random bytes (`random` gives zeros) and no controllers but the script's, and content requests complete at the start of the next frame: so it is reproducible. The hash covers the whole machine (CPU, RAM, devices); [State, replay and conformance](terse:{state}) says what it holds.
+
+| Exit status | When |
+|---|---|
+| the program's exit code | it exited; 0 also when it is still running after the last frame |
+| ended by SIGTERM (a shell shows 143) | it faulted; the fault is printed on standard error |
+| 2 | the run did not start: a bad command line or script, an image refused, a driver that did not start |
+| 3 | a driver failed while the machine ran |
+| 4 | the host stopped the machine: a device did not keep up |
+
+`terse-host prog.terse --screenshot out.png --frames 30` runs headless in the same way, with `--events` if given, and writes the picture of the last frame as PNG; `--size WxH` sets its size in pixels.
+
+## The script
+
+One line a step: a frame number, a command and its arguments (`5 press left`). The frame number may be left out: the line then belongs to the frame of the line before it (0 for the first). Blank lines, and everything from a `#` (except in `text`), are ignored.
+
+| Command | What it gives |
+|---|---|
+| `down <key> [shift] [ctrl] [alt] [meta]` | a key down, with those modifiers |
+| `up <key> [modifiers]` | a key up |
+| `press <key> [modifiers]` | a key down and its key up, in that frame |
+| `type <text>` | the rest of the line typed, a character a frame: key down, its text, key up (Shift for capitals; a newline is Enter); the next line comes after the last character |
+| `text <text>` | the rest of the line as text events, without keys (as a paste gives them) |
+| `pointer <x> <y> [buttons]` | the pointer at a screen unit (640 by 480), buttons 0 to 7 (1 the primary) |
+| `click <x> <y>` | the primary button pressed there, then released |
+| `wheel <down> [right]` | wheel steps, −127 to 127 |
+| `home` | the host's home key (F12), with a shell |
+| `pad <n> <buttons> <lx> <ly> [<rx> <ry>]`, `pad <n> off` | controller n's state from this frame on; or disconnected |
+| `feeds-updated` | a feeds-updated event |
+| `wait <n>` | the next line comes n frames later |
+
+A key is a name (`a` to `z`, `0` to `9`, `f1` to `f12`, `enter`, `esc`, `backspace`, `tab`, `space`, `up`, `down`, `left`, `right`, `home`, `end`, `pageup`, `pagedown`, `insert`, `delete`) or a USB HID usage (`40`, `0x28`). [Events and input](terse:{events}) has every event.
+
+A headless run reads the window's commands below and does nothing with them, saying how many it passed over: one script serves both.
+
+## In the window: terse-host --drive
+
+```
+terse-host prog.terse --drive script.txt --renderer software
+```
+
+runs the program alone (or, with `--shell` or no image, the shell) in its window at 60 frames a second, and carries out the script's lines in order, each in its frame. It prints what it sees on standard output.
+
+**It never opens a window on your desktop.** On Linux it starts a headless display of its own (the compositor weston, which must be installed) and runs inside it; on Windows and macOS, which have none, it refuses. Only `TERSE_DRIVE_DISPLAY=current` puts the window on the current display, where it shows: set it only on a computer whose desktop nobody uses, such as a CI machine. Sound is off.
+
+| Option | What it does |
+|---|---|
+| `--drive <file>` | the script; `-` reads standard input, and a FIFO is read line by line as each writer writes, for driving by hand (`echo 'press down' > ctl`) |
+| `--size WxH` | the window's inner size in pixels (default: the text grid at the font's size); the screen is letterboxed in it at 4:3 |
+| `--renderer gpu\|software\|auto` | how the picture is drawn (default auto: the GPU if there is one) |
+| `--store`, `--config`, `--data <dir>` | the directories to use; without them, scratch directories, removed afterwards |
+| `--relay <url>` | a relay to use; without it, none |
+| `--consent ask\|allow\|deny` | how a program's requests are answered; ask shows the prompt, answered with `press y` |
+
+`--events` and `--frames` are refused with `--drive`: the script is the input, and `quit` or its end ends the run.
+
+In the window, input enters where the window system's does: `press g ctrl` is Control down, G down, G up, Control up; a key that types a character also gives its text; `pointer` and `click` positions go through the window's mapping to pixels and back. These commands are the window's own:
+
+| Command | What it does |
+|---|---|
+| `pointer-px`, `click-px <x> <y> [buttons]` | as `pointer` and `click`, at a pixel of the window |
+| `drag`, `drag-px <x0> <y0> <x1> <y1>` | the primary button pressed at the first point, the pointer moved to the second over 8 frames, released in the 9th |
+| `hold <key> <frames> [modifiers]` | the key held down that many frames, repeating as a keyboard does (after 30 frames, every 2) |
+| `resize <w> <h>` | asks for the window's inner size in pixels; the next line waits 3 frames |
+| `sleep <ms>` | the next line waits that long in real time |
+| `say <text>` | prints the text |
+| `quit` | ends the run (so does the end of a script file) |
+
+A line that looks (`shot`, `dump`, `watch`, `settle`, `expect`, `perf`, `budget`) looks at the first picture presented after its frame, and the next line waits for it:
+
+| Command | What it does |
+|---|---|
+| `settle [max <n>] [still <k>]` | waits until k pictures in a row are the same (10), at most n frames (600) |
+| `shot <file>` | writes the picture presented, as PNG |
+| `dump terminal\|page\|vectors\|state [<machine>] [> <file>]` | prints the text grid, the page as this host laid it out (each line in view: top, height, x, text), the vector lists, or the frame, window and machines; to a file after `>` |
+| `watch <n> [every <k>] [save <dir>]` | reports, after n pictures, how many changed, where (a box of pixels), by how much, and blinks: parts that changed and came back within 2 pictures; `save` keeps the changed pictures (and every k-th) as PNG |
+| `perf` | the late frames and slow-frame notes so far |
+| `budget` | each machine's worst and last use of a frame's budget since the last `budget` |
+| `expect idle <n> [tolerance <pixels>]` | fails if a picture in the next n differs from the one before by more pixels than the tolerance (0), or blinks |
+| `expect terminal\|page\|vectors\|state contains\|lacks <text>` | fails unless that dump holds (lacks) the rest of the line |
+| `expect budget <percent>` | fails if a machine used more of a frame's budget in any frame so far |
+| `expect no-slow` | fails if a frame was late or the host acted on a slow one; this depends on how busy the computer is |
+
+Each report is a line starting with its frame: `frame 3-13: settle: 10 pictures, 0 changed, settled (10 unchanged)`, `frame 14: ok: vectors contains "line 5120 6400 5120 1280"`, `frame 14: shot start.png (880x660)`. A failed expectation prints `frame N: FAIL:` and what was there instead. The run ends with `drive: done, no expectation failed`, or the number that failed and each one.
+
+| Exit status | When |
+|---|---|
+| 1 | an expectation failed |
+| 2 | it did not start: a bad command line or script line (named, with its number), no weston, or Windows or macOS without `TERSE_DRIVE_DISPLAY=current` |
+| otherwise | as the window's: the program's exit code (0 if it was still running), SIGTERM after a fault, 4 if the host stopped it |
+
+`scripts/drive-shots.py <terse-host> <out dir>` in the Tersenet sources drives hello, sparks and the sheet with the scripts in `scripts/drive-shots/` and keeps their pictures and reports, for comparing one system's window with another's.

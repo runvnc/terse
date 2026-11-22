@@ -71,7 +71,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use terse_core::{Image, Machine, Script, System, Terminal};
 use terse_net::relay::DEFAULT_TIMEOUT;
@@ -111,6 +111,7 @@ const USAGE: &str = "usage:
              [--events <file>] [--renderer gpu|software] [--threads <n>] [--sweep-eye] [--consent allow|deny] [...]
   terse-host [<image|id> | --shell [<image|id>]] --drive <script|fifo|-> [--size <W>x<H>] [--renderer gpu|software]
              [--consent ask|allow|deny] [--relay ws://...] [--store <dir>] [--config <dir>] [--data <dir>] [...]
+  terse-host --sound-check <image|id> [--frames <N>] [--events <file>] [--store <dir>] [--config <dir>] [--data <dir>]
   terse-host --version | --hardware-check
   Every form takes --perf-log <dir>|off: where the performance record goes (RECORD.md; default: <data>/perf
   for a window, none otherwise; it never leaves this computer), and --perf-rule on|off: whether the rule
@@ -124,11 +125,15 @@ const USAGE: &str = "usage:
   Sound (device 6, SPEC §sound) plays in a window through PipeWire or PulseAudio, else ALSA (Linux;
   CoreAudio on macOS, WASAPI on Windows), opened when a program first makes a sound; if it cannot be
   heard, a notice and one line on stderr say why, once. TERSE_AUDIO=off plays nothing and says nothing;
-  TERSE_AUDIO=pulse[:<server>] or alsa[:<pcm>] chooses the output (none: as if none were found);
+  TERSE_AUDIO=pulse[:<server>] or alsa[:<pcm>] chooses the output (none: as if none were found; null:
+  an output with no device, which takes the samples at a device's pace and plays nothing);
   --selftest plays only when TERSE_AUDIO is set. The volume (on the way out; the machines never know)
-  is kept in <config>/sound; Ctrl+Alt+minus and Ctrl+Alt+plus turn it down and up a tenth, Ctrl+Alt+M
-  mutes (and the keyboard's volume keys, if the desktop lets them through): keys the host keeps, which
-  no program receives. --volume and --mute set it for this run.
+  starts full, or as --volume and --mute say; Ctrl+Alt+minus and Ctrl+Alt+plus turn it down and up a
+  tenth, Ctrl+Alt+M mutes (and the keyboard's volume keys, if the desktop lets them through): keys the
+  host keeps, which no program receives. The volume lasts until the host exits: it is not saved.
+  --sound-check runs the image headless at 60 frames a second, no picture, its sound handed to the null
+  output (never heard, whatever TERSE_AUDIO says), and prints each frame's hand-over to the output
+  (PERFORMANCE.md R19): p50, p99 and max (default 600 frames).
   3D vector display (device 9, SPEC §vector3d): in a window the eye follows the pointer (parallax): the
   pointer at the picture's centre is the reference eye, at an edge the eye is 160 units that way;
   over a machine whose image lists device 9 (alone, or its tile or panel) it rests instead, so the
@@ -232,6 +237,7 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
     let (mut selftest, mut csv, mut no_trails, mut force_phosphor) = (false, None, false, false);
     let mut version = false;
     let mut hardware_check = false;
+    let mut sound_check = false;
     let (mut volume, mut mute) = (None, false);
     let started = std::time::Instant::now();
     let mut perf_log: Option<Option<PathBuf>> = None;
@@ -296,6 +302,7 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
             "--demo" => demo = true,
             "--version" => version = true,
             "--hardware-check" => hardware_check = true,
+            "--sound-check" => sound_check = true,
             "--perf-log" => {
                 let v = it.next().ok_or(USAGE)?;
                 perf_log = Some(if v == "off" { None } else { Some(PathBuf::from(v)) });
@@ -395,6 +402,9 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
     if (bench && (selftest || screenshot.is_some() || frames.is_none())) || (sweep && !bench) {
         return Err(USAGE.into());
     }
+    if sound_check && (bench || selftest || screenshot.is_some() || drive_script.is_some() || demo || (image_path.is_none() && !shell_flag)) {
+        return Err(USAGE.into());
+    }
     let driving = drive_script.is_some();
     if driving && (bench || selftest || screenshot.is_some() || events.is_some() || frames.is_some() || demo) {
         return Err(USAGE.into());
@@ -421,7 +431,7 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
         }
         _ => None,
     };
-    let windowed = !selftest && !bench && screenshot.is_none() && !driving;
+    let windowed = !selftest && !bench && !sound_check && screenshot.is_none() && !driving;
     // The rule acts in a window; a self-test only records unless told.
     let rule = perf_rule.unwrap_or(windowed || driving);
     // No image: the built-in shell. --shell: the image named (if any) is
@@ -440,7 +450,7 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
         None => Consent::Deny,
     };
     let config = config.or_else(default_config_dir).ok_or("no config directory (use --config)")?;
-    audio::configure(Some(config.clone()), volume, mute);
+    audio::configure(volume, mute);
     // Every font is opened here, at start, and never again (SPEC
     // §responsiveness item 5).
     let term_fonts = fonts::TerminalFonts::load(Some(&config));
@@ -592,6 +602,13 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
     let identity = image_path.is_none().then(|| terse_core::ProgramId { publisher: [0; 32], name: image.title.clone() });
     let program = Program { image, shell, builtins, identity, data, argument: shell_argument };
 
+    if sound_check {
+        let script = match &events {
+            Some(p) => Script::parse(&std::fs::read_to_string(p).map_err(|e| format!("{p}: {e}"))?).map_err(|e| format!("{p}: {e}"))?,
+            None => Script::default(),
+        };
+        return run_sound_check(program, content, script, frames.unwrap_or(600));
+    }
     if selftest {
         if screenshot.is_some() {
             return Err(USAGE.into());
@@ -874,6 +891,50 @@ fn spread(mut values: Vec<f64>) -> (f64, f64, f64) {
     values.sort_by(f64::total_cmp);
     let at = |q: f64| values[((values.len() - 1) as f64 * q).round() as usize];
     (at(0.5), at(0.99), values[values.len() - 1])
+}
+
+/// `--sound-check` (PERFORMANCE.md R19): the frames run headless at 60 a
+/// second, no picture drawn, and each frame's samples go the way a
+/// window's do (`audio::Audio`, the host's volume, its queue and output
+/// thread) to the null output, a device's buffer with no device behind
+/// it: nothing is opened and nothing heard. Prints each frame's hand-over.
+fn run_sound_check(program: Program, content: Option<ContentService>, script: Script, frames: u64) -> Result<ExitCode, String> {
+    let mut system = System::new(&program.image, program.shell, program.builtins);
+    system.set_shell_identity(program.identity);
+    system.shell_mut().set_argument(program.argument);
+    let mut headless = HeadlessSystem::new(content, script);
+    let mut audio = audio::Audio::new(audio::Choice::Null);
+    let frame_time = Duration::from_secs_f64(1.0 / 60.0);
+    let mut next = Instant::now();
+    let mut sounding = 0u64;
+    for _ in 0..frames {
+        headless.frame(&mut system);
+        let mut samples = [0i16; 2 * terse_core::sound::FRAME_SAMPLES];
+        let any = system.take_audio(&mut samples);
+        if let Some(s) = audio.frame(any.then_some(&samples[..])) {
+            return Err(s.line());
+        }
+        sounding += u64::from(audio.playing().is_some());
+        if system.stopped().is_some() {
+            break;
+        }
+        next += frame_time;
+        std::thread::sleep(next.saturating_duration_since(Instant::now()));
+    }
+    let buffer_ms = audio::buffer() as f64 * 1000.0 / audio::RATE as f64;
+    let start_ms = audio::start() as f64 * 1000.0 / audio::RATE as f64;
+    match audio.close() {
+        None => println!("sound-check: no sound in {frames} frames: nothing handed over"),
+        Some(r) => println!(
+            "sound-check: {} frames handed over to {} ({sounding} frames with the output open): hand-over {}; pairs dropped {}; underruns {}; output buffer {buffer_ms:.1} ms, playing from {start_ms:.1} ms",
+            r.handover.frames,
+            r.name,
+            r.handover.describe(),
+            r.dropped,
+            r.underruns.map_or("unknown".into(), |u| u.to_string()),
+        ),
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 /// Runs the frames headless, exactly as `terse run` does (scripted events,
