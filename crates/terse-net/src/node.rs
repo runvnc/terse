@@ -1926,10 +1926,16 @@ impl Node {
 
     /// `fetch`, with failures as messages.
     pub fn fetch_bytes(&mut self, id: BlobId) -> Result<Vec<u8>, String> {
-        match self.fetch(id) {
+        let done = self.fetch(id);
+        // Relays that could not be connected, and why (an untrusted
+        // certificate, say), since they were not asked.
+        let unreached: Vec<String> =
+            self.links.values().filter_map(|l| l.failure().map(|why| format!("{}: {why}", l.url))).collect();
+        let note = if unreached.is_empty() { String::new() } else { format!(" (not connected: {})", unreached.join("; ")) };
+        match done {
             Done::Got(bytes) => Ok(bytes),
-            Done::NotFound => Err(format!("blob {} not found", to_hex(&id))),
-            _ => Err(format!("fetching blob {} failed", to_hex(&id))),
+            Done::NotFound => Err(format!("blob {} not found{note}", to_hex(&id))),
+            _ => Err(format!("fetching blob {} failed{note}", to_hex(&id))),
         }
     }
 
