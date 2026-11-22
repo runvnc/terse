@@ -16,7 +16,10 @@ Each archive also has `LICENSE` and a `README.txt` from `packaging/<system>/`;
 the `terse-host` archives also have `FONTS-LICENSE.txt`, the licence of the
 DejaVu fonts built into `terse-host` (`crates/terse-host/fonts/`).
 `terse-host` is built with the GPU renderer (the software one is the
-fallback, `--renderer auto`) and with sound (`--features audio`).
+fallback, `--renderer auto`) and with sound (the `audio` feature, on by
+default: on Linux it loads libpulse-simple or libasound at run time, so the
+Linux build needs no ALSA headers and links no audio library; cpal on macOS
+and Windows).
 
 **The device bus** (`bus/`: `terse-bus` and the drivers `terse-dev-terminal`,
 `-vector`, `-content`, `-sound` and `-page`, for people who build or swap a
@@ -153,3 +156,15 @@ Nothing is signed by a certificate authority:
 The checksums prove a download is the file the workflow built, not who built
 it. Anyone who trusts GitHub's account security can compare them with the
 draft's.
+
+## The public relay
+
+A public relay runs the Linux `terse-relay` from a release (static, so it
+runs on any Linux server) with the limits of README "Running a public
+relay". `packaging/linux/terse-relay.service` is its systemd unit; it is in
+the source, not in the archives. To update the relay: copy the new
+`terse-relay` over `/usr/local/bin/terse-relay` and `systemctl restart
+terse-relay` (SIGTERM closes connections cleanly; clients reconnect within
+seconds, and the index of what the store holds is rebuilt at start). A
+release that changes how the relay limits or refuses says so in its notes,
+since it changes what publishers on the public relay see.

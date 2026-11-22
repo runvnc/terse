@@ -2918,6 +2918,7 @@ dependencies = [
  "fontdue",
  "getrandom 0.4.3",
  "gilrs",
+ "libloading",
  "memmap2",
  "png",
  "pollster",
@@ -2982,6 +2983,7 @@ dependencies = [
 name = "terse-relay"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "tempfile",
  "terse-core",
  "terse-net",

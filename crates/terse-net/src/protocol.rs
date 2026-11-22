@@ -25,10 +25,97 @@ pub const LOOKUP_REPLY: u8 = 0x88;
 pub const ENTRY: u8 = 0x90;
 
 pub mod status {
+    use std::time::Duration;
+
     pub const DONE: u8 = 1;
     pub const NOT_FOUND: u8 = 2;
-    /// Too large, empty, store full, or malformed request.
+    /// Refused without a reason given (too large, empty, malformed, an
+    /// invalid entry, a different entry with the same `seq`...).
     pub const REFUSED: u8 = 3;
+    /// Refused: the feed has reached this relay's limit (NETWORK 3.1).
+    pub const FEED_FULL: u8 = 4;
+    /// Refused: the relay is full (NETWORK 3.1).
+    pub const RELAY_FULL: u8 = 5;
+    /// Refused: the feed is not on this relay's list of writers (NETWORK
+    /// 3.1).
+    pub const NOT_WRITER: u8 = 6;
+    /// The first "try again later" status (NETWORK 3.1).
+    pub const RETRY_FIRST: u8 = 64;
+    /// The first "try again later" status counted in minutes.
+    const RETRY_MINUTES: u8 = 184;
+
+    /// The "try again later" status for a wait of `wait` (rounded up to
+    /// what the status can say, at most 74 minutes).
+    pub fn retry(wait: Duration) -> u8 {
+        let secs = wait.as_secs() + u64::from(wait.subsec_nanos() > 0);
+        match secs {
+            0..=120 => RETRY_FIRST + secs.max(1) as u8 - 1,
+            _ => RETRY_MINUTES + (secs.div_ceil(60).min(74) as u8 - 3),
+        }
+    }
+
+    /// The wait a "try again later" status asks for, or `None` for any
+    /// other status.
+    pub fn retry_after(status: u8) -> Option<Duration> {
+        match status {
+            RETRY_FIRST..RETRY_MINUTES => Some(Duration::from_secs(u64::from(status - RETRY_FIRST) + 1)),
+            RETRY_MINUTES.. => Some(Duration::from_secs((u64::from(status - RETRY_MINUTES) + 3) * 60)),
+            _ => None,
+        }
+    }
+}
+
+/// Why a relay refused a request (NETWORK 3.1), read from the status of a
+/// reply that is not "done" or "not found".
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Refusal {
+    /// Status 3, or a status this revision does not define.
+    Unspecified,
+    /// The feed has reached the relay's limit (status 4).
+    FeedFull,
+    /// The relay is full (status 5).
+    RelayFull,
+    /// The feed is not on the relay's list of writers (status 6).
+    NotWriter,
+    /// Too many requests from this address: try again after this wait
+    /// (statuses 64 to 255).
+    TryLater(std::time::Duration),
+}
+
+impl Refusal {
+    pub fn of_status(s: u8) -> Self {
+        match s {
+            status::FEED_FULL => Refusal::FeedFull,
+            status::RELAY_FULL => Refusal::RelayFull,
+            status::NOT_WRITER => Refusal::NotWriter,
+            _ => status::retry_after(s).map_or(Refusal::Unspecified, Refusal::TryLater),
+        }
+    }
+
+    pub fn status(self) -> u8 {
+        match self {
+            Refusal::Unspecified => status::REFUSED,
+            Refusal::FeedFull => status::FEED_FULL,
+            Refusal::RelayFull => status::RELAY_FULL,
+            Refusal::NotWriter => status::NOT_WRITER,
+            Refusal::TryLater(wait) => status::retry(wait),
+        }
+    }
+
+    /// The reason in plain words, to follow "it refused it: ".
+    pub fn describe(self) -> String {
+        match self {
+            Refusal::Unspecified => "no reason given".into(),
+            Refusal::FeedFull => "this feed is over the relay's limit".into(),
+            Refusal::RelayFull => "the relay is full".into(),
+            Refusal::NotWriter => "this feed is not on the relay's list of writers".into(),
+            Refusal::TryLater(wait) => {
+                let s = wait.as_secs();
+                let when = if s < 120 { format!("{s} s") } else { format!("{} min", s.div_ceil(60)) };
+                format!("too many requests from this address; try again in {when}")
+            }
+        }
+    }
 }
 
 /// A client message as the relay sees it.
@@ -381,6 +468,43 @@ mod tests {
         assert_eq!(refused, [FIND_REPLY, 7, 0, 0, 0, 3, 0]);
         assert_eq!(decode_reply(&refused), Some(Reply::Found { req: 7, status: 3, entries: Vec::new() }));
         assert_eq!(encode_peer(), [PEER]);
+    }
+
+    /// NETWORK 3.1: the refusal statuses and the waits they carry.
+    #[test]
+    fn refusals() {
+        use std::time::Duration;
+        let secs = Duration::from_secs;
+        assert_eq!(status::retry(Duration::ZERO), 64);
+        assert_eq!(status::retry(Duration::from_millis(1)), 64, "rounded up to 1 s");
+        assert_eq!(status::retry(secs(1)), 64);
+        assert_eq!(status::retry(Duration::from_millis(1500)), 65);
+        assert_eq!(status::retry(secs(120)), 183);
+        assert_eq!(status::retry(secs(121)), 184, "3 minutes");
+        assert_eq!(status::retry(secs(180)), 184);
+        assert_eq!(status::retry(secs(181)), 185);
+        assert_eq!(status::retry(secs(74 * 60)), 255);
+        assert_eq!(status::retry(secs(86_400)), 255, "at most 74 minutes");
+        for s in 0..=255u8 {
+            let r = Refusal::of_status(s);
+            match s {
+                0..=3 | 7..=63 => assert_eq!(r, Refusal::Unspecified, "{s}"),
+                4..=6 => assert_eq!(r.status(), s),
+                _ => {
+                    let Refusal::TryLater(wait) = r else { panic!("{s}") };
+                    assert_eq!(status::retry(wait), s, "the wait of {s} gives it back");
+                }
+            }
+        }
+        assert_eq!(status::retry_after(64), Some(secs(1)));
+        assert_eq!(status::retry_after(183), Some(secs(120)));
+        assert_eq!(status::retry_after(184), Some(secs(180)));
+        assert_eq!(status::retry_after(255), Some(secs(74 * 60)));
+        assert_eq!(Refusal::TryLater(secs(30)).describe(), "too many requests from this address; try again in 30 s");
+        assert_eq!(Refusal::TryLater(secs(600)).describe(), "too many requests from this address; try again in 10 min");
+        // Older clients read any refusal as one: the layouts do not change.
+        assert_eq!(decode_reply(&encode_put_reply(1, status::FEED_FULL, &[0; 32])), Some(Reply::Put { req: 1, status: 4, id: None }));
+        assert_eq!(decode_reply(&encode_find_reply::<&[u8]>(1, 70, &[])), Some(Reply::Found { req: 1, status: 70, entries: Vec::new() }));
     }
 
     #[test]

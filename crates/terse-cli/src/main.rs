@@ -389,9 +389,14 @@ pub(crate) fn say_delivery(node: &mut Node) {
     for (url, d) in &delivery {
         let why = match d {
             Delivery::Accepted => continue,
-            Delivery::Refused => "refused it",
-            Delivery::Failed => "did not answer (connection lost or timed out)",
-            Delivery::NotConnected => "could not be connected",
+            // NETWORK 3.1: the relay's reason, in words.
+            Delivery::Refused(why) => format!("refused it: {}", why.describe()),
+            Delivery::BlobRefused(why) => {
+                eprintln!("terse: warning: {url} took the entry but refused its blob: {}", why.describe());
+                continue;
+            }
+            Delivery::Failed => "did not answer (connection lost or timed out)".into(),
+            Delivery::NotConnected => "could not be connected".into(),
         };
         eprintln!("terse: warning: not on {url}: it {why}");
     }

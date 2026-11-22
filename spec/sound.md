@@ -252,6 +252,24 @@ state advances as above, and nothing is heard), as a headless host has a
 terminal nobody sees. `terse run --audio-out` and `terse-bus --audio-out`
 write the mixed samples to a WAV file instead of playing them.
 
+Whether a host has the device is a property of the host, never of the
+audio hardware it finds: an image that lists device 6 is granted it (or,
+requiring it, run) the same on a computer with no speakers, no sound
+server or a failed output, so `device` (§system), the state and its hash
+never depend on them. A program cannot tell whether it is heard.
+
+The user can. A host that plays sound and cannot (it was built without
+an output, finds none, cannot open it, or the output stops) tells the
+user so, briefly and where they are looking, with the reason: when a
+machine first gives a frame that is not silent (a stopped output: when
+it stops), once, and again only when the reason changes. The reference
+hosts (`terse-host`, `terse-bus` in a window) show a notice and write
+one line on standard error; `terse-host --hardware-check` says what the
+output is, or why there is none. A muted or silent system is not the
+host's to report. A volume and a mute of the host's own apply to the
+mixed samples on their way out and to nothing else. A host plays a
+frame's samples promptly (`PERFORMANCE.md` R18).
+
 ## §sound.determinism Determinism
 
 The device's state is every voice's registers, the wavetables and the

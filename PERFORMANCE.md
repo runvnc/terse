@@ -85,6 +85,7 @@ spread, from `terse perf` on a release build.
 | Machine host | R14 | The host attributes each late frame to one of its components, by that component's own time (its time less the time it waited for a CPU), and keeps a record of it (`RECORD.md`) that is bounded, written off the frame loop and never sent | frames; bytes | `cargo test -p terse-perflog` (the judge, the format, `vectors/perf-record.txt`); `cargo test -p terse-devices --test slow_driver` (a blocked driver, a spinning one and a starved one); `cargo test -p terse-host rule watch` (terse-host's parts: each machine, `core`, `compose`, `present`, `outside`) |
 | Machine host | R15 | A component that makes frames late is not tolerated: after its 3rd late frame within 60 the host warns the user and saves the machines that use it; after its 10th within 300 it saves and stops them (`SPEC.md` §stopping, stopped by the host). The host's own components are recorded and shown | late frames | `cargo test -p terse-devices --test slow_driver` (warned at the 3rd, stopped at the 10th, the snapshot restores and goes on identically, a replay stops at the same frame); `cargo test -p terse-host` (`rule`: shed, warn, stop, starved, excused frames and their bound; `halt`: the shell shows the machine halted and restores it; `--test slow_machine`: a slow machine in a window, under a headless compositor) |
 | Machine host | R16 | A host checks at start that this computer can draw each device's worst legal frame in time, once per build and computer; where it cannot, the optional look is not offered and the device is said to be too slow here | ms (a target) | `terse-host --hardware-check`; `cargo test -p terse-host hwcheck` |
+| Machine host | R18 | Sound is prompt: a frame's samples (`SPEC.md` §sound, rendered at the frame's end) reach the system's audio output (the sound server's sink, or the ALSA device) within 3 frames of that end, and the host's hand-over never makes the output run dry while it keeps up (no gap and no dropped sample at 60 frames a second). Only the hand-over is timed: the machines' samples are what they are | ms; gaps | by hand on Linux (below): a private PipeWire with a null sink, `TERSE_AUDIO_TRACE` (each frame's hand-over time) against a recording of the sink, and the recording compared with `terse run --audio-out`, sample for sample |
 | Machine host | R12 | The host work a whole system can demand is bounded: the machines a shell shows share the system ink, 691,200 square units of the shell's screen (their pictures' areas first, then their lists' ink times their scale; a picture that does not fit is a plate, a list is cut where the ink runs out), the shell's own screen drawn within its own caps (`spec/machines.md` §machines.ink) | square screen units | `terse perf` W rows `sys-*`: a shell and 8 machines, each with every device at its worst, tiled, overlapping and as panels, with the system ink and without (target: the machines add no more than about one machine's worst); `cargo test -p terse-core --test system_ink` (plates, scales, where lists are cut); `cargo test -p terse-cli --test shell` (`the_layouts_stay_within_the_system_ink`: the bundled layouts are never cut); `cargo test -p terse-devices --test pictures` (terse-bus counts the same shares, frame by frame, and draws the same plates and cut lists) |
 | Machine host | R17 | The first frame waits on nothing but the image, the settings and the fonts they list: before it a host reads only the image (a shell's built-ins), its settings, the listed fonts, its own store and data directories and its hardware check's result (R16), besides opening its window and graphics device; it waits on no relay, reads no font directory and asks the user nothing (`SPEC.md` §responsiveness item 6) | files read; no wait | `cargo test -p terse-host --test startup`: the built-in shell's first frame with a relay that never answers and the user's font directories, a fontconfig file's and the listed font's own directory holding only FIFOs (which block whoever opens them): it comes at once, and nothing is written outside the store and data; `terse perf` H1, H5, H7, H8 (ceiling 1.5 s) |
 
@@ -129,6 +130,28 @@ ceiling passed there too.
 | A worst frame of the host's drawing, 1 thread: fetch's slowest, conform's stress, the full repertoire's first, each W device row, the phosphor look shed | H2–H4, W | 4 frames (66.7 ms) | 1 frame (16.7 ms) | at most 15.6 ms (W all) | at most 46.6 ms (W all) |
 | 1,200 new CJK glyphs a frame from a listed font | H6 | 6 frames (100 ms) | 2 frames (33.3 ms) | 20.5 ms | 64.9 ms |
 | A shell and 8 machines, every device at its worst | W sys-* | 12 frames (200 ms) | 4 frames (66.7 ms) | 32–60 ms | 95–148 ms |
+| A frame's sound, its hand-over to the output's sink (R18) | by hand | 6 frames (100 ms) | 3 frames (50 ms) | 27 ms (libpulse), 36 ms (ALSA through PipeWire) | not measured |
+
+**R18, measured** (2026-11-22, release build, `programs/tune` for 18 s,
+1,107 frames): the host opened a private PipeWire 1.6 (with
+pipewire-pulse) whose only sink is a null sink, in a sandbox with no
+route to the user's sound; a recorder read the sink's monitor in 2.5 ms
+pieces. Each frame's first pair reached the sink a steady 27.4 ms after
+the host handed the frame over through libpulse-simple (the default,
+`TERSE_AUDIO=auto`), 36.1 ms through ALSA and PipeWire's ALSA plugin,
+20.5 ms through ALSA and the PulseAudio plugin; the recording equalled
+`--audio-out`'s samples with no gap or drop, in each case. The host asks
+for 50 ms of output buffer, starting at two thirds of it: 34 ms gave the
+same latency here (the server's own scheduling dominates) and gaps in a
+debug build, 25 and 17 ms gaps in both. A real card adds its own
+latency after the sink (PipeWire's quantum, typically 5 to 21 ms). The
+host before (cpal on ALSA, its default 100 ms buffer kept full, behind a
+queue of up to 4 frames) handed sound over 110 to 190 ms ahead of
+hearing it, by its configuration. `terse perf` does not measure R18
+yet: it needs a sound server of its own, as above (the scripts are
+`pipewire`, `wireplumber`, `pipewire-pulse`, `pactl load-module
+module-null-sink`, and a recorder that notes when each piece of the
+monitor arrives).
 
 Why these multiples. A ceiling must hold on the floor with room, and be
 low enough that a real fault crosses it: a wait for a relay's 10 s
