@@ -127,7 +127,7 @@ The core starts the driver (section 2) and sends HELLO:
 | 9 | `s` | The slots (which ones: below) |
 | … | 2 + … | The session directory: where a driver creates its layer files (section 7). Always a directory that exists, which the core created for the run and removes after it; given also when the core neither presents nor offers shared memory (a driver that never draws need not use it) |
 | … | 2 + … | The driver's bus file (section 4.2); empty if shared memory is not offered |
-| … | 1 + … | Only when the slot asked for is experimental (240–255): its name (section 15.1). A HELLO that asks for no experimental slot ends after the bus file |
+| … | 1 + … | Only to an experimental driver: the device's name, and no slot (section 15.1). Every other HELLO ends after the bus file |
 
 The driver answers HELLO (`81h`):
 
@@ -146,20 +146,21 @@ The driver answers HELLO (`81h`):
 | … | 1 + … | Host services it gives: a count, then names (section 9) |
 | … | 2 + … | Optional: the driver's version (printable ASCII without spaces, at most 32 bytes) |
 | … | 2 + … | Optional, with the version: its build identifier (the same characters): a tag naming a hash, a colon and the first 8 bytes of that hash of the driver's program file in hex (`b3:` BLAKE3, `fnv:` FNV-1a 64, `b2:` BLAKE2b, `s2:` SHA-256), or `unknown` |
-| … | 1 + … | Only in reply to a HELLO that asked for an experimental slot: the device's name and the most bytes of its state (section 15.1) |
+| … | 1 + … | Only in reply to a HELLO that named an experimental device: the device's name and the most bytes of its state (section 15.1) |
 
 - **Which slots the core asks for.** The slots of the driver (section 2)
   that a machine of the run may have: for a single machine, those its
   image lists (required, or optional and not withheld), never 1, 8 or a
   slot that is no device (SPEC §image); for a shell, all of them. An
-  experimental slot (240–255) is asked of its own driver, alone (section
-  15). Slots
+  experimental device (slots 240–255) is asked of its own driver by its
+  name, with no slot (section 15). Slots
   that share state are asked for together (next item).
 - A driver answers for **exactly** the slots it was asked for, or for all
-  of them but slot 10 (below). The core refuses a driver that answers for
-  any other set (a slot it did not ask for, or one asked for left out),
-  or that chooses shared memory when it was not offered: the run does not
-  start (`STATE.md` 6.4, status 2).
+  of them but slot 10 (below); an experimental driver, asked for none,
+  answers with one entry for slot 0 (section 15.1). The core refuses a
+  driver that answers for any other set (a slot it did not ask for, or
+  one asked for left out), or that chooses shared memory when it was not
+  offered: the run does not start (`STATE.md` 6.4, status 2).
 - **A driver may serve several slots.** It does when the devices share
   state: device 9's `style` and `persistence` are device 3's (SPEC §vector3d.calls),
   one section of the state (`STATE.md` 1.7), so `terse-dev-vector` serves
@@ -221,7 +222,7 @@ OPEN:
 | 36 | 4 | `R`: ROM length |
 | 40 | 4 | `L`: RAM length |
 | 44 | 2 + … | The instance's memory file (section 4.1); empty unless the driver chose shared memory |
-| … | 1 + … | The driver's slots the machine has: a count (u8), then (slot, version) pairs. These are the devices the image requires and the optional ones granted (SPEC §image); a device the machine was not granted is not listed, so the driver treats it as absent |
+| … | 1 + … | The driver's slots the machine has: a count (u8), then (slot, version) pairs. These are the devices the image requires and the optional ones granted (SPEC §image); a device the machine was not granted is not listed, so the driver treats it as absent. To an experimental driver: one pair, the slot this machine calls the device on (240–255) and the version its image lists (section 15.1) |
 | … | 1 + … | The program's identity (SPEC §machines.calls), if it was started as one: `0`, or `1`, the publisher (32 bytes) and the name (u16 length and bytes) |
 | … | `R` | The ROM, so that a driver can read ROM without asking |
 
@@ -506,7 +507,8 @@ How a core finds its drivers (`terse-bus` does this, and `tcore`):
    as a shell would. A driver that replaces slot 2 is asked for slot 10
    too when a machine lists 10. Name a whole group (`3,9`). An
    experimental device is named by its name instead of a slot
-   (`--driver example.dice=...`, section 15.1).
+   (`--driver example.dice=...`, section 15.1); it serves the device on
+   whatever slot each machine's image gives it.
 3. It starts a driver only if a machine of the run may have one of its
    slots (section 1.1; for a shell, all of them), and asks it only for
    those.
@@ -526,8 +528,8 @@ How a core finds its drivers (`terse-bus` does this, and `tcore`):
 6. Slots that are no device (0, 5, 11–239) are never asked for, also not
    of a `--driver`: an image that lists one as optional runs without it,
    and one that requires it is refused (SPEC §image). An experimental
-   slot (240–255) is asked only of a driver for its name (section 15.1);
-   without one the device is not granted.
+   slot (240–255) is never asked for: its device goes to the driver for
+   its name (section 15.1), and without one it is not granted.
 
 The set of drivers, and so the devices a machine may be granted, is
 fixed when the run starts. Between `--driver` and the core's own
@@ -597,8 +599,8 @@ installing a name again replaces it), writes the manifest, and sets
 
 **An experimental driver** (section 15) is installed the same way:
 `terse drivers add` first asks the program for each group as above, and
-if it answers for none, sends HELLO for slot 240 with an empty name,
-which asks the driver which device it is. It keeps the name and version
+if it answers for none, sends the experimental HELLO (section 15.1) with
+an empty name, which asks the driver which device it is. It keeps the name and version
 it answered with (a manifest with an `experimental` line and no `slot`
 lines), refuses a driver that breaks the rules of section 15.2, and
 refuses to install a second driver for a name another installed driver
@@ -1666,68 +1668,111 @@ and `.`, starting with a letter), and a driver that declares, at the
 handshake, everything the core needs to run it without knowing it: its
 call table with every call's charge, and the size of its state. This
 section is the bus's side. Nothing in it changes a message to a driver
-that serves no experimental slot: the fields below are sent only to, and
-read only from, a driver asked for one.
+that serves no experimental device: the fields below are sent only to,
+and read only from, an experimental driver, and the HELLO of every other
+driver is byte for byte what it was.
 
-An **experimental driver** serves exactly one experimental device, for
-one slot, and nothing else: a HELLO asks it for that one slot, never with
-another, and it never serves a numbered slot.
+An **experimental driver** serves exactly one experimental device, named,
+and nothing else: it is never asked for a slot and never serves a
+numbered one. The slot is not the driver's but each machine's: one
+process serves every machine of a run that has the device (section 1.2),
+the shell and the machines it starts alike, and each machine calls the
+device on the slot its own image gives it, which its OPEN says. Two
+machines may call the same device on two slots, and one slot may be two
+different devices in two machines (two drivers).
 
 ### 15.1 Which driver, and the handshake
 
-For a single machine whose image lists an experimental slot as optional,
-with a valid table of names (`spec/experimental.md` §experimental.image),
-the core looks for a driver for the slot's name and version, in this
-order:
+**Which drivers a core starts.** For a **single machine**, one for each
+experimental device its image lists as optional, with a valid table of
+names (`spec/experimental.md` §experimental.image), that is not withheld
+(`--without`), in the order of the header: the driver for the device's
+name and the version the image lists, in this order:
 
 1. `--driver <name>=<command line>` (section 2.1, rule 2, with a name in
-   place of the slots): this command line, for the device of that name,
-   on whatever slot the image gives it;
+   place of the slots): this command line, for the device of that name;
 2. else an installed driver (section 2.2) whose manifest says it serves
-   that name (`experimental <name> <version>`);
+   that name in that version (`experimental <name> <version>`);
 3. else none: the device is not granted. There is no shipped driver.
 
-A machine of a system (`--shell`) gets no experimental device, and the
-core starts no experimental driver for one.
+For a **system** (`--shell`) the machines are not known when the run
+starts (the shell starts them later, from images it fetches), and the set
+of drivers is fixed then (section 2.2, "Not hot-plugged"), so the core
+starts every experimental driver the run has: each `--driver <name>=...`,
+then each installed experimental driver for another name, in the order
+of the names, **at most 16** in all (as many as one image can list). An
+installed one beyond the 16th is not started and the core says so on
+standard error; more than 16 `--driver` names refuse the run (status 2).
+A driver that no machine uses costs its process and its handshake: the
+core sends it nothing else until SHUTDOWN.
 
-HELLO to an experimental driver asks for the slot (its `s` is 1, the
-slot 240–255) and has one more field after the bus file:
+HELLO to an experimental driver asks for **no slot** (its `s` is 0) and
+has one more field after the bus file:
 
 | Offset | Size | Field |
 |---|---|---|
 | … | 1 | `x`: the experimental devices asked for, 1 |
-| … | `x` × (1 + 2 + …) | Each: the slot (u8), the name (a string: u16 length and bytes) |
+| … | `x` × (2 + …) | Each: the device's name (a string: u16 length and bytes) |
 
 An empty name asks the driver which device it is: `terse drivers add`
-(section 2.2) sends it, never a run.
+(section 2.2) sends it, never a run. HELLO gives no version: the driver
+says which it serves.
 
-The driver's HELLO reply then has, after the build identifier (which it
-must give, possibly as empty strings), one more field:
+The driver's HELLO reply has **one slot entry, for slot 0** (no device
+has slot 0: the entry is the device's, which has no slot of its own),
+with the device's version, `k` = 0 layers and its call table (section 5).
+After the build identifier (which it must give, possibly as empty
+strings) comes one more field:
 
 | Offset | Size | Field |
 |---|---|---|
 | … | 1 | `x`: experimental devices, as many as asked |
-| … | `x` × (1 + 2 + … + 4) | Each: the slot (u8), the device's name (a string), the most bytes its state section can have (u32, at most 16,384) |
+| … | `x` × (2 + … + 4) | Each: the device's name (a string), the most bytes its state section can have (u32, at most 16,384) |
 
-The slot's entry in the reply's slot list is as for any slot: the
-device's version, `k` = 0 layers and its call table (section 5).
+The core refuses the driver (its handshake fails) if the reply's slot
+list is not that one entry for slot 0, its name is not the name asked
+(any valid name when the name asked was empty), its version is not the
+one the run needs (for a single machine the image's; for an installed
+driver its manifest's; a `--driver` in a system may serve any version),
+or it breaks a rule of 15.2. Then, as for any driver (section 2.1 rule
+5, section 2.2): one named by `--driver` refuses the run (status 2); an
+installed one is not used, the core says why on standard error, and the
+device is not granted to any machine (there is no shipped driver to fall
+back to, and no machine has seen the device).
 
-The core refuses the driver (its handshake fails) if the reply does not
-answer for exactly the slot asked, or its name is not the name asked
-(any valid name when the name asked was empty), or its version is not
-the image's, or it breaks a rule of 15.2. Then, as for any driver
-(section 2.1 rule 5, section 2.2): one named by `--driver` refuses the
-run (status 2); an installed one is not used, the core says why on
-standard error, and the machine runs without the device, which is not
-granted (there is no shipped driver to fall back to, and no machine has
-seen the device). One that will not take the machine in OPEN refuses the
-run, as for any driver.
+*The earlier form.* The first version of this section (one day old, used
+by nothing outside this repository) asked an experimental driver for the
+one slot of a single machine, in HELLO's slot list and again in the
+experimental field, and the driver answered for that slot. It is
+replaced, not kept beside the new one: a driver written for it either
+refuses the new HELLO (ERROR, which fails its handshake) or, if it
+answers with a slot other than 0, is refused with a message saying that
+it was written for the earlier form. `native/driver-experimental/dice.c` has been
+updated; a copy installed before must be installed again (`terse drivers
+add`).
+
+**Grants.** A machine, single or in a system (the shell itself, and each
+machine the shell starts or restores), is granted an optional
+experimental device at its reset exactly when its image's table is
+valid and a started driver declared the device's name in the version the
+image lists (`spec/experimental.md` §experimental.grants). A restored
+machine gets exactly the devices its snapshot's grants say: if one of
+them is experimental and no driver serves its name in that version, it
+fails with "needs a device" (section 1.2), as for a numbered one.
+
+**OPEN.** The core opens an instance on an experimental driver only for a
+machine that has its device. OPEN's list of the driver's slots the
+machine has is then one pair: the slot this machine calls the device on
+(240–255) and the version its image lists. A driver that will not take
+the machine (it replies `00h`, for example for another version) refuses
+a single machine's run, and makes a shell's `start` or `restore` fail
+with "needs a device", as for any driver.
 
 ### 15.2 What an experimental driver may declare
 
 | What | Limit |
 |---|---|
-| Slots | exactly the one asked for; no numbered slot |
+| Slots | one entry, for slot 0 (section 15.1); no numbered slot |
 | Layers, properties published or subscribed, host services | none (section 7, 7.2, 9) |
 | Call table | 1 to 16 entries, each function once |
 | A buffer's greatest length (entry offset 12) | at most 4,096 bytes |
@@ -1745,6 +1790,15 @@ state, but never its charge.
 
 ### 15.3 During the run
 
+- **Addresses.** Every message about a machine's device (CALL, each call
+  in a BATCH, STATE and RESTORE) carries in its address the machine's own
+  slot for it, the one its OPEN gave (`a7` / 256, as for every device),
+  not a slot normalised by the core. So the core translates nothing (the
+  address is what the machine called, and a BATCH may hold the calls of
+  machines that use two slots, each with its own), and a driver's
+  diagnostics show the program's handle; a driver that serves one device
+  may ignore the slot, and one that checks it compares it with OPEN's.
+  BEGIN, END, CLOSE and RESET are the instance's, slot 0.
 - **CALL and RESULT.** The core charges every call to the slot its base
   charge (4 deferred, 64 answered) plus the entry's charge rule (section
   6's computation, for every call). An answered call's RESULT must carry
@@ -1758,13 +1812,26 @@ state, but never its charge.
   must have a charge of 0, no events, no writes and an empty record;
   anything else is a protocol break. Its input record is never in a
   recording.
-- **STATE and RESTORE.** As for any slot. The reply to STATE is the
-  section, at most as long as declared; a longer one is a protocol break.
-  RESTORE carries exactly the section (the core knows its length,
-  `STATE.md` 1.13), and the reply's length must be that length.
+- **STATE and RESTORE**, per instance, as for any slot: each machine's
+  section is its own, and RESTORE of one instance changes no other's.
+  The reply to STATE is the section, at most as long as declared; a
+  longer one is a protocol break. RESTORE carries exactly the section
+  (the core knows its length, `STATE.md` 1.13), and the reply's length
+  must be that length.
 - **Failure and slowness**: sections 10 and `PERFORMANCE.md` R13–R15,
-  unchanged. A machine halted for an experimental device's slowness has
-  that slot in its state (`STATE.md` 1.3).
+  unchanged: a driver that fails stops the run, whichever machines use
+  it. The record (`RECORD.md` 2) calls an experimental driver `dev<n>`,
+  n = 240 + its place among the run's experimental drivers in the order
+  they were started (section 15.1), and gives its slots as `-` in its
+  `device` line. When it is warned about, every machine that uses it is
+  saved, whatever slot each calls it on; when it is stopped, each of
+  them is saved and halted with **its own** slot for the device in its
+  state (`STATE.md` 1.3), and the record has one `stop` line for each,
+  naming the driver and the machine.
+- **Machines.** A driver serves at most as many instances at once as a
+  system has machines, the shell and 8 (SPEC §machines), each with its
+  own state; the 9th machine of a shell is refused by device 8 ("no
+  room"), never by the driver. Instance numbers are not used again.
 
 Determinism is the driver's to keep (`spec/experimental.md`
 §experimental.determinism): results, writes and state a pure function of

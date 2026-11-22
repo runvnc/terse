@@ -43,9 +43,10 @@ static void history(const Dice *d, uint32_t n, uint8_t *out)
 }
 ```
 
-The rest is the device bus, as in any driver: the messages HELLO, OPEN, CALL, STATE and the others over a local socket. Three things differ from a driver of a numbered device, each marked `EXPERIMENTAL` in the file:
+The rest is the device bus, as in any driver: the messages HELLO, OPEN, CALL, STATE and the others over a local socket. Four things differ from a driver of a numbered device, each marked `EXPERIMENTAL` in the file:
 
-- **HELLO.** The core names the device it wants, `example.dice`, and one slot; the driver answers with its name and the most bytes its state can have.
+- **HELLO.** The core names the device it wants, `example.dice`, and no slot; the driver answers with one slot entry, slot 0, holding its version and call table, then with its name and the most bytes its state can have.
+- **OPEN.** Each machine's OPEN gives the slot that machine calls the device on (240 to 255), and that machine's calls carry it. One process serves every machine, so the driver keeps one state per machine.
 - **Charges.** Every call's cost is declared in the driver's call table, and the core charges by the table, never by what the driver says afterwards.
 - **State.** The 24 bytes of `Dice` are the driver's own layout. The core keeps them in the machine's state, so the state hash, snapshots and replays work as for any device.
 

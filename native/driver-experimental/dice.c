@@ -25,22 +25,30 @@
  * every run, after a snapshot is restored, and in a replay.
  *
  * Compared with ../driver-example/terminal.c (a numbered device), the bus
- * half differs in three places, each marked EXPERIMENTAL: HELLO carries
- * the device's name both ways and the size of its state; every call's
- * charge is declared in the table, an answered one's too; and the state
- * section is restored (RESTORE), so snapshots work.
+ * half differs in four places, each marked EXPERIMENTAL: HELLO carries
+ * the device's name both ways and the size of its state, and no slot;
+ * each machine's slot for the device is in its OPEN (one process serves
+ * every machine of a shell, each calling the device on the slot its own
+ * image gives it); every call's charge is declared in the table, an
+ * answered one's too; and the state section is restored (RESTORE), so
+ * snapshots work.
  *
  * For the core's tests, TERSE_DICE_BAD=<what> makes it break one rule on
  * purpose: `table` (a buffer over 4,096 bytes), `name` (answers as another
  * device), `charge` (an answered call charged other than declared),
  * `state` (a section longer than declared), `inputs` (a charge at BEGIN).
+ * TERSE_DICE_SLOW=sleep:<ms>:<from> makes it slow on purpose: it sleeps
+ * <ms> in the END of every machine's frame from that machine's frame
+ * <from> on (for the host's rule for slow devices, PERFORMANCE.md R15).
  */
+#define _POSIX_C_SOURCE 200809L                /* nanosleep */
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <time.h>
 #include <unistd.h>
 
 #define NAME "example.dice"
@@ -100,9 +108,9 @@ static uint32_t rd32(const uint8_t *p) { return p[0] | p[1] << 8 | p[2] << 16 | 
 
 static int sock;
 static uint32_t instance;
-static uint8_t slot;                    /* the one slot this run gives the device */
 static uint8_t to_slot;                 /* the address of the message being handled */
 static const char *bad = "";            /* TERSE_DICE_BAD */
+static unsigned slow_ms, slow_from;     /* TERSE_DICE_SLOW */
 
 static void reply(Buf *b, uint8_t type)
 {
@@ -163,12 +171,17 @@ static void table(Buf *b)
           NONE, 0, 0, 0, 1);                                           /* written; 64 + 1 per 4 bytes */
 }
 
-/* The machines served, by instance. */
-static struct { uint32_t id; Dice d; } *machines;
+/* The machines served, by instance. EXPERIMENTAL: each with the slot its
+   image calls the device on (OPEN); two machines may use two slots. */
+static struct { uint32_t id; uint8_t slot; Dice d; } *machines;
 static size_t nmachines;
-static Dice *find(uint32_t id)
+static Dice *find(uint32_t id, uint8_t slot)
 {
-    for (size_t i = 0; i < nmachines; i++) if (machines[i].id == id) return &machines[i].d;
+    for (size_t i = 0; i < nmachines; i++)
+        if (machines[i].id == id) {
+            if (slot && slot != machines[i].slot) fail("a message on a slot this machine does not call the device on");
+            return &machines[i].d;
+        }
     return 0;
 }
 
@@ -178,7 +191,7 @@ static void call(Dice *d, const uint8_t *m, size_t n, Buf *r)
 {
     uint8_t out[HISTORY];
     uint32_t a[6], ret = 0, charge = 0, wlen = 0;
-    if (n < 40 || slot == 0) fail("a malformed CALL");
+    if (n < 40) fail("a malformed CALL");
     for (int i = 0; i < 6; i++) a[i] = rd32(m + 4 + 4 * i);
     switch (m[1]) {
     case 0: seed(d, a[0]); break;
@@ -196,6 +209,10 @@ int main(int argc, char **argv)
 {
     if (argc > 1 && !strcmp(argv[1], "--version")) { puts("dice 0.1.0 unknown"); return 0; }
     if (getenv("TERSE_DICE_BAD")) bad = getenv("TERSE_DICE_BAD");
+    if (getenv("TERSE_DICE_SLOW") && sscanf(getenv("TERSE_DICE_SLOW"), "sleep:%u:%u", &slow_ms, &slow_from) != 2) {
+        fputs("dice: TERSE_DICE_SLOW is sleep:<ms>:<from>\n", stderr);
+        return 2;
+    }
     const char *path = getenv("TERSE_BUS_SOCKET");
     struct sockaddr_un sa = {.sun_family = AF_UNIX};
     if (!path || strlen(path) >= sizeof sa.sun_path) { fputs("start me from a Terse core\n", stderr); return 2; }
@@ -215,44 +232,53 @@ int main(int argc, char **argv)
         to_slot = in.p[4];
         const uint8_t *m = in.p + 8;
         size_t n = len - 8;
-        Dice *d = find(instance);
+        Dice *d = find(instance, to_slot);
 
         switch (m[0]) {
-        case 0x01: { /* HELLO. EXPERIMENTAL: one slot (240-255), and after
-                        the bus file the device's name: ours, or empty when
-                        `terse drivers add` asks which device this is. */
-            if (n < 9 || m[1] != 1 || m[8] != 1 || m[9] < 240) fail("this driver serves one experimental slot");
-            slot = m[9];
-            size_t at = 10;
+        case 0x01: { /* HELLO. EXPERIMENTAL: no slots, and after the bus
+                        file the device's name: ours, or empty when `terse
+                        drivers add` asks which device this is. */
+            if (n < 9 || m[1] != 1 || m[8] != 0) fail("this driver serves one experimental device, and no slot");
+            size_t at = 9;
             for (int i = 0; i < 2; i++) at += 2 + (at + 1 < n ? (m[at] | m[at + 1] << 8) : 0);
-            if (at + 4 > n || m[at] != 1 || m[at + 1] != slot) fail("no experimental device asked for");
-            size_t nl = m[at + 2] | m[at + 3] << 8;
-            if (at + 4 + nl > n || (nl && (nl != strlen(NAME) || memcmp(m + at + 4, NAME, nl))))
+            if (at + 3 > n || m[at] != 1) fail("no experimental device asked for");
+            size_t nl = m[at + 1] | m[at + 2] << 8;
+            if (at + 3 + nl > n || (nl && (nl != strlen(NAME) || memcmp(m + at + 3, NAME, nl))))
                 fail("this driver serves " NAME " only");
             reply(&r, 0x81);
             u8(&r, 1); u8(&r, 0); u8(&r, 0);                   /* protocol 1, the socket */
             str(&r, "dice (example)");
             u16(&r, 0); u16(&r, 0);                             /* draws nothing */
-            u8(&r, 1); u8(&r, slot); u8(&r, 0); u8(&r, 0);     /* 1 slot: it, version 0, no layers */
+            u8(&r, 1); u8(&r, 0); u8(&r, 0); u8(&r, 0);        /* 1 entry: slot 0, version 0, no layers */
             table(&r);
             u8(&r, 0); u8(&r, 0); u8(&r, 0);                    /* no properties, subscriptions, services */
             str(&r, "0.1.0"); str(&r, "unknown");               /* identity */
-            u8(&r, 1); u8(&r, slot);                            /* EXPERIMENTAL: the device, */
+            u8(&r, 1);                                          /* EXPERIMENTAL: the device, */
             str(&r, !strcmp(bad, "name") ? "other.dice" : NAME);/* its name */
             u32(&r, SECTION);                                   /* and the most its state can be */
             send_reply(&r);
             break;
         }
-        case 0x03: /* OPEN: a machine starts, its dice at reset */
-            if (!d) {
+        case 0x03: { /* OPEN: a machine starts, its dice at reset. EXPERIMENTAL:
+                        its one (slot, version) pair is the slot this
+                        machine calls the device on, 240-255. */
+            size_t at = 44;
+            at += 2 + (at + 1 < n ? (m[at] | m[at + 1] << 8) : 0);   /* the memory file */
+            uint8_t s = at + 3 <= n && m[at] == 1 ? m[at + 1] : 0, v = at + 3 <= n ? m[at + 2] : 0;
+            if (s < 240) fail("OPEN without the machine's slot for the device");
+            size_t i = 0;
+            while (i < nmachines && machines[i].id != instance) i++;
+            if (i == nmachines) {
                 machines = realloc(machines, (nmachines + 1) * sizeof *machines);
-                machines[nmachines].id = instance;
-                d = &machines[nmachines++].d;
+                machines[nmachines++].id = instance;
             }
+            machines[i].slot = s;
+            d = &machines[i].d;
             reset(d);
-            reply(&r, 0x83); u8(&r, 1); u16(&r, 0); str(&r, "");
+            reply(&r, 0x83); u8(&r, v == 0); u16(&r, 0); str(&r, v == 0 ? "" : "this driver implements version 0");
             send_reply(&r);
             break;
+        }
         case 0x04: /* CLOSE */
             for (size_t i = 0; i < nmachines; i++)
                 if (machines[i].id == instance) { machines[i] = machines[--nmachines]; break; }
@@ -272,7 +298,7 @@ int main(int argc, char **argv)
                 uint32_t l = at + 4 <= n ? rd32(m + at) : 0;
                 if (l < 9 || at + 4 + l > n) fail("a malformed BATCH");
                 instance = rd32(m + at + 4);
-                if (!(d = find(instance))) fail("a batched call for a machine that was not opened");
+                if (!(d = find(instance, m[at + 8]))) fail("a batched call for a machine that was not opened");
                 call(d, m + at + 12, l - 8, &scratch);
                 at += 4 + l;
             }
@@ -284,7 +310,11 @@ int main(int argc, char **argv)
             u32(&r, !strcmp(bad, "inputs")); u32(&r, 0); u32(&r, 0); u32(&r, 0);
             send_reply(&r);
             break;
-        case 0x31: /* END: nothing between frames */
+        case 0x31: /* END: nothing between frames (but TERSE_DICE_SLOW) */
+            if (slow_ms && n >= 8 && rd32(m + 4) >= slow_from) {
+                struct timespec ts = {slow_ms / 1000, (long)(slow_ms % 1000) * 1000000};
+                while (nanosleep(&ts, &ts)) {}
+            }
             break;
         case 0x40: /* STATE: x, rolls, the last 16 rolls (24 bytes, as declared) */
             if (!d) fail("STATE of a machine that was not opened");

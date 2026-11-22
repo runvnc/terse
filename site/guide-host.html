@@ -3,57 +3,34 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Make a host, step 1: run a program to its end - the Tersenet manual</title>
+<title>Make a host - the Tersenet manual</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Contents</a></nav></header>
 <main>
 <article>
-<h1 id="make-a-host-step-1-run-a-program-to-its-end">Make a host, step 1: run a program to its end</h1>
-<p>A host runs Terse32 programs: it reads a program file, runs its instructions and gives the program its devices. You can write one in any language and check it against the reference exactly. The specifications cover every device; a host starts much smaller. This guide builds one in four tested steps: run a program until it stops (this page), keep time, show <code>hello</code> through the reference terminal, prove the host exact. Each says how much code it took in <code>tcore</code>, a core written in C from the specifications alone (<code>native/core-c</code>).</p>
-<h2 id="the-program-file">The program file</h2>
-<p>A program file (<code>.terse</code>) starts with a 32-byte header:</p>
+<h1 id="make-a-host">Make a host</h1>
+<p>A host runs Terse32 programs: it reads a program file, runs its instructions at a fixed speed and gives the program its devices. You can write one in any language and prove it exact against the reference. This guide does it in four steps, twice, once in Go and once in Rust:</p>
+<p>1. Run a program to its end: the program file, memory, the processor and <code>exit</code>. 2. Frames and the budget: 125,000 units a frame, <code>wait_frame</code> and the carry rule. 3. A driver shows hello: the terminal as a separate program on the device bus. 4. Prove it exact: the state hash, equal to the reference&#39;s.</p>
+<p>Each step is a small working program in the Tersenet sources, built and checked against the reference by the sources&#39; tests.</p>
+<h2 id="two-tracks">Two tracks</h2>
 <ul>
-<li>bytes 0 to 3: <code>TERS</code>; byte 4: 0, the format; byte 5: 1, the machine profile;</li>
-<li>bytes 6 to 8: the ROM&#39;s length, 1 to 131,072, least significant byte first;</li>
-<li>byte 9: RAM in pages of 8 KiB, 1 to 128; byte 10: the number of device entries, 0 to 16;</li>
-<li>bytes 11 to 15: zero; bytes 16 to 31: the title, padded with zero bytes.</li>
+<li>In Go, in <code>examples/host/go</code>: <a href="guide-host-go.html">Make a host in Go, step 1: run a program to its end</a>.</li>
+<li>In Rust, in <code>examples/host/rust</code>: <a href="guide-host-rust.html">Make a host in Rust, step 1: run a program to its end</a>.</li>
 </ul>
-<p>Two bytes per device entry follow, then the ROM. Refuse a file whose length is not exactly 32 + 2 × entries + the ROM&#39;s length. Until step 3, run only programs that list no devices.</p>
-<h2 id="memory-and-reset">Memory and reset</h2>
-<p>The ROM, the program&#39;s bytes, is at <code>0001_0000h</code>, to read and execute. The RAM, all zero, is at <code>0010_0000h</code>, to read, write and execute. Nothing else is there. Start at the first byte of ROM, with <code>sp</code> (<code>x2</code>) at the end of RAM, <code>0010_0000h</code> + 8,192 × pages, and every other register 0.</p>
-<h2 id="the-processor">The processor</h2>
-<p>RV32IMC: RISC-V&#39;s 32-bit integer instructions with multiply and divide (M) and the 16-bit compressed forms (C), in user mode: no floating point, atomics, control registers or interrupts. <code>fence</code> does nothing; division by zero gives RISC-V&#39;s answers, not a trap.</p>
-<p>A fault stops the machine: an instruction it does not have (<code>ebreak</code>, the CSR instructions and every reserved encoding among them), a fetch or load outside ROM and RAM, a store outside RAM, or a load or store at an address that is not a multiple of its size. The faulting instruction is not carried out and <code>pc</code> stays on it. Show the user the fault, never an exit code.</p>
-<h2 id="calls">Calls</h2>
-<p><code>ecall</code> calls a device: <code>a7</code> holds the device&#39;s slot × 256 + the function, <code>a0</code> to <code>a5</code> the arguments, and the result goes in <code>a0</code>. Two cases are enough now:</p>
+<p>The two have the same design, so either explains the other. Each is a package that gains a file per step (the processor, then frames, the bus, the state) with a short program per step on top, <code>step1</code> to <code>step4</code>. The pages list every file in full or its important part, exactly as it is in the sources. Lines of code below are counted with blank lines.</p>
+<h2 id="libraries-and-why-the-processor-is-written-out">Libraries, and why the processor is written out</h2>
+<p>The examples use their language&#39;s standard library and one package more: BLAKE3, which names a program by its hash from step 3 on (<code>lukechampine.com/blake3</code> in Go, the <code>blake3</code> crate in Rust). They use no RISC-V emulator package. Those emulate whole computers and hide what a Terse32 host must get exactly right: what each instruction costs, whether it was fetched from ROM or RAM, where the machine pauses when its budget runs out, and which encodings must fault. The processor is about 390 lines in either language, and it is most of the work.</p>
+<h2 id="what-the-examples-leave-out">What the examples leave out</h2>
+<p>They run <code>programs/hello</code> exactly, prove it, and stop there: no input events, four of the ten System calls, one driver (the terminal), no snapshots. Step 4 says what the rest is. The full implementations:</p>
 <ul>
-<li><code>106h</code>, <code>exit</code>: the machine stops with exit code <code>a0</code> &amp; <code>FFh</code>. Like every call it then writes its result, 0, to <code>a0</code>, and <code>pc</code> moves past the <code>ecall</code>.</li>
-<li>A call you do not have: put <code>FFFF_FFFFh</code> in <code>a0</code> and go on.</li>
+<li><code>native/core-c</code>: <code>tcore</code>, an independent core in C, about 1,580 lines, which passes the conformance program with the reference drivers;</li>
+<li><code>crates/terse-core</code>: the reference machine in Rust, which <code>terse run</code> and <code>terse-host</code> use; <code>crates/terse-bus</code>, the reference core on the device bus.</li>
 </ul>
-<h2 id="check-yourself">Check yourself</h2>
-<p>STATE.md gives a 42-byte program that exits with code 7: <code>c.li a0, 7</code>, <code>addi a7, x0, 106h</code>, <code>ecall</code>. Make the file:</p>
-<pre>xxd -r -p &gt; exit.terse &lt;&lt;EOF
-5445525300010a000001000000000000657869740000
-000000000000000000001d459308601073000000
-EOF</pre>
-<p>Your host should stop with exit code 7, <code>pc</code> = <code>0001_000Ah</code>, <code>a0</code> = 0 and <code>a7</code> = <code>106h</code>. The reference&#39;s exit status is the program&#39;s exit code, 7:</p>
-<pre>terse run exit.terse --frames 1
-echo $?</pre>
-<p>This one adds 100 + 99 + ... + 1 and exits with the sum&#39;s low byte, 186:</p>
-<pre>xxd -r -p &gt; sum.terse &lt;&lt;EOF
-544552530001160000010000000000007375
-6d0000000000000000000000000001459302
-40061695fd12e39e02fe9308601073000000
-EOF</pre>
-<h2 id="how-much-code">How much code</h2>
-<p>In <code>tcore</code> the processor is 262 lines of C (<code>cpu.c</code>); the file and the memory map about 50 more.</p>
-<h2 id="what-you-have-now">What you have now</h2>
-<p>A Terse32 processor that runs a program to its end. Next, make it keep time: <a href="guide-host-frames.html">Make a host, step 2: frames and the budget</a>.</p>
-<p>The detail is in <a href="machine.html">The Terse32 machine</a>, sections &quot;CPU&quot;, &quot;Memory map&quot;, &quot;Reset state&quot;, &quot;Stopping and faults&quot;, &quot;The image format&quot; and &quot;Calls&quot; (SPEC §cpu, §memory, §reset, §stopping, §image, §calls.convention), and <code>exit</code> in <a href="device-system.html">The system device</a>.</p>
+<p>The specification is <a href="machine.html">The Terse32 machine</a> and the pages after it.</p>
 </article>
 </main>
-<footer><nav class="pn"><a rel="prev" href="guide-game-rust.html">← Make a small game in Rust</a><a rel="next" href="guide-host-frames.html">Make a host, step 2: frames and the budget →</a></nav></footer>
+<footer><nav class="pn"><a rel="prev" href="guide-game-rust.html">← Make a small game in Rust</a><a rel="next" href="guide-host-go.html">Make a host in Go, step 1: run a program to its end →</a></nav></footer>
 </body>
 </html>

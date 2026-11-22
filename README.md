@@ -1733,9 +1733,13 @@ is one, `example.dice`, with a program that uses it:
     terse-bus demo.terse --driver example.dice=$PWD/dice --frames 200 --dump
     terse drivers add dice               # installed: every terse-bus run grants it
 
-Only `terse-bus`, for a single machine, grants one; everywhere else (`terse run`,
-`terse-host`, a shell's machines) the program runs without it. A machine that has
-one is outside conformance, and its snapshots and recordings say so.
+Only `terse-bus` grants one: to a single machine, and in a shell (`terse-bus
+--shell`) to the shell and every program it starts, each with its own state, on
+whatever slot its image gives the device (one driver process serves them all).
+Everywhere else (`terse run`, `terse-host`) the program runs without it. A machine
+that has one is outside conformance, and its snapshots (a saved session's too) and
+recordings say so; restoring one where the driver is missing fails for that machine
+with "needs a device".
 
 ## Sparks
 

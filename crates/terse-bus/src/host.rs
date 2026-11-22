@@ -165,7 +165,7 @@ pub fn installed_drivers(config: &Path) -> (Vec<InstalledDriver>, Vec<crate::bus
     for (group, source) in sources {
         match source {
             Source::Installed { name, program, manifest } => out.push(InstalledDriver { group: group.to_vec(), name, program, versions: manifest.slots }),
-            Source::Shipped { note: Some((name, why)), .. } => unused.push(crate::bus::Unused { name, slot: group[0], why }),
+            Source::Shipped { note: Some((name, why)), .. } => unused.push(crate::bus::Unused { name, slot: group[0], why, device: None }),
             Source::Shipped { .. } => {}
         }
     }
@@ -231,49 +231,80 @@ pub fn drivers_with(dir: &Path, slots: &[u8], content: &[String], overrides: &[(
     Ok(out)
 }
 
-/// The experimental drivers a single machine's run starts (DEVICES.md
-/// 15.1), one for each experimental device its image lists, by name: a
-/// `--driver <name>=...` (`overrides`), else an installed one (`installed`:
-/// device name, version, driver name, program, from
-/// `terse_net::driverlist::experimental`). A device with neither, one
-/// withheld (`without`), and every one in a system (`shell`) gets no
-/// driver and is not granted. The second item: why, for the user.
+/// The most experimental drivers a run starts (DEVICES.md 15.1): as many
+/// as one image can list.
+pub const EXPERIMENTAL_DRIVERS: usize = 16;
+
+/// The experimental drivers a run starts (DEVICES.md 15.1), by the name of
+/// the device: a `--driver <name>=...` (`overrides`), else an installed
+/// one (`installed`: device name, version, driver name, program, from
+/// `terse_net::driverlist::experimental`).
+///
+/// For a single machine, one for each experimental device its image lists
+/// and does not withhold (`without`), in the version it lists; a device
+/// with no driver is not granted. For a system (`shell`), whose machines
+/// are not known yet, every one the run has: the `--driver` ones, then
+/// the installed ones for other names, in the order of their names, at
+/// most [`EXPERIMENTAL_DRIVERS`] in all; a machine is granted a device
+/// when one of them serves its name in the version its image lists. More
+/// `--driver` ones than that is an error. The second item: notes for the
+/// user.
 pub fn experimental_drivers(
     image: &Image,
     shell: bool,
     without: &[u8],
     overrides: &[(String, Vec<String>)],
     installed: &[(String, u8, String, PathBuf)],
-) -> (Vec<Driven>, Vec<String>) {
+) -> Result<(Vec<Driven>, Vec<String>), String> {
     let (mut out, mut notes) = (Vec::new(), Vec::new());
+    let installed_one = |name: &str, version: u8, driver: &str, program: &Path| Driven {
+        slots: Vec::new(),
+        command: vec![program.display().to_string()],
+        installed: Some(crate::bus::Installed { name: driver.to_string(), versions: Vec::new(), shipped: None }),
+        experimental: Some((name.to_string(), Some(version))),
+    };
+    if shell {
+        if overrides.len() > EXPERIMENTAL_DRIVERS {
+            return Err(format!("{} --driver options name experimental devices: at most {EXPERIMENTAL_DRIVERS} (DEVICES.md 15.1)", overrides.len()));
+        }
+        for (name, cmd) in overrides {
+            if !out.iter().any(|d: &Driven| d.experimental.as_ref().is_some_and(|x| x.0 == *name)) {
+                out.push(Driven { slots: Vec::new(), command: cmd.clone(), installed: None, experimental: Some((name.clone(), None)) });
+            }
+        }
+        let mut rest: Vec<&(String, u8, String, PathBuf)> = installed.iter().filter(|i| !overrides.iter().any(|(n, _)| *n == i.0)).collect();
+        rest.sort_by(|a, b| a.0.cmp(&b.0));
+        for (name, version, driver, program) in rest {
+            if out.len() == EXPERIMENTAL_DRIVERS {
+                notes.push(format!("the installed driver {driver} for the experimental device {name} is not started: a run starts at most {EXPERIMENTAL_DRIVERS} experimental drivers"));
+                continue;
+            }
+            out.push(installed_one(name, *version, driver, program));
+        }
+        return Ok((out, notes));
+    }
     let listed: Vec<&terse_core::DeviceReq> = image.devices.iter().filter(|d| d.experimental() && d.optional).collect();
     if listed.is_empty() {
-        return (out, notes);
+        return Ok((out, notes));
     }
     let Some(names) = image.experimental() else {
         notes.push("the image lists experimental devices without a valid table of their names (spec/experimental.md): none is granted".into());
-        return (out, notes);
+        return Ok((out, notes));
     };
-    if shell {
-        notes.push("experimental devices are not granted in a system (spec/experimental.md §experimental.grants)".into());
-        return (out, notes);
-    }
     for d in listed {
         let Some((_, name)) = names.iter().find(|(s, _)| *s == d.slot) else { continue };
         if without.contains(&d.slot) {
             continue;
         }
-        let experimental = Some((name.clone(), d.version));
         if let Some((_, cmd)) = overrides.iter().find(|(n, _)| n == name) {
-            out.push(Driven { slots: vec![d.slot], command: cmd.clone(), installed: None, experimental });
+            out.push(Driven { slots: Vec::new(), command: cmd.clone(), installed: None, experimental: Some((name.clone(), Some(d.version))) });
         } else if let Some((_, _, driver, program)) = installed.iter().find(|i| i.0 == *name && i.1 == d.version) {
-            let installed = Some(crate::bus::Installed { name: driver.clone(), versions: Vec::new(), shipped: None });
-            out.push(Driven { slots: vec![d.slot], command: vec![program.display().to_string()], installed, experimental });
+            out.push(installed_one(name, d.version, driver, program));
         } else {
             notes.push(format!("no driver for the experimental device {name} version {} (slot {}): it is not granted", d.version, d.slot));
         }
     }
-    (out, notes)
+    Ok((out, notes))
 }
 
 /// Device 10, full text: a capability the terminal's driver gives (SPEC
@@ -514,10 +545,13 @@ impl BusSystem {
     fn driver_of(&self, c: terse_perflog::Component) -> Option<(usize, String)> {
         let terse_perflog::Component::Device(slot) = c else { return None };
         let bus = self.bus.borrow();
-        let p = bus.proc_for(slot)?;
+        let p = bus.proc_of_component(slot)?;
         let d = &bus.procs[p];
         let id = terse_perflog::Identity { name: d.info.name.clone(), version: d.info.version.clone(), build: d.info.build.clone() };
-        Some((p, format!("device {slot} ({})", id.line())))
+        Some((p, match &d.experimental {
+            Some(x) => format!("the experimental device {} ({})", x.name, id.line()),
+            None => format!("device {slot} ({})", id.line()),
+        }))
     }
 
     /// The machines that use driver `p`: handles (0: the shell or the
@@ -634,11 +668,20 @@ impl BusSystem {
             out.push(format!("terse-bus: {what} is slow ({count} late frames): your work is saved ({}); if it goes on, the machines that use it are stopped", saved.join("; ")));
             return Ok(out);
         }
-        let slot = match c {
+        let component = match c {
             terse_perflog::Component::Device(s) => s,
             _ => 0,
         };
+        let experimental = self.bus.borrow().procs[p].experimental.is_some();
         for h in users {
+            // Halted with the device's slot (SPEC §stopping): for an
+            // experimental driver, the slot this machine calls it on, which
+            // may differ from machine to machine (DEVICES.md 15.3).
+            let slot = match (experimental, h) {
+                (false, _) => component,
+                (true, 0) => self.system.shell().devices().experimental_slot(p).unwrap_or(component),
+                (true, h) => self.system.child(h).and_then(|c| c.machine.as_ref()).and_then(|m| m.devices().experimental_slot(p)).unwrap_or(component),
+            };
             let (saved, d) = self.save(h);
             let image = match h {
                 0 => Some(*self.system.shell().image_id()),
