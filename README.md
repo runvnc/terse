@@ -408,7 +408,9 @@ host's prompt first, then F12 (the home key, with a shell), then to the machine 
 the focus. Ctrl+V and
 Shift+Insert paste: the clipboard's text goes to the focused program as text events (SPEC §events),
 newlines kept and other control characters dropped, fed in only as fast as the event
-queue has room, so none is lost. The screen
+queue has room, so none is lost. Ctrl+Alt+minus, Ctrl+Alt+plus (`=`) and Ctrl+Alt+M are
+the host's volume keys (down, up, mute; "Sound" below), and so are the keyboard's own
+volume keys if the desktop passes them on: no program receives them. The screen
 (SPEC §screen) is shown at 4:3, so screen units are square: a cell is exactly 1:2 pixels
 (11 × 22 at the default font size; the glyphs are rasterised at that size, so
 text is crisp at the native size and at whole multiples of it), and the grid is
@@ -1854,8 +1856,9 @@ lets them reach the window. These keys are the host's: no program receives them.
 short notice shows the new volume, which is kept in `<config>/sound`; `--volume
 <0-100>` and `--mute` set it for one run.
 
-Sound is heard about 2 to 3 frames after the frame that made it (PERFORMANCE.md
-R18). Tests: `crates/terse-core/src/sound.rs` (the
+A frame's sound reaches the sound server's sink about 27 ms after the frame (PERFORMANCE.md
+R18: at most 3 frames). `TERSE_AUDIO_TRACE=<file>` writes each frame's hand-over time,
+to measure that against a recording. Tests: `crates/terse-core/src/sound.rs` (the
 synthesis, bit for bit), `crates/terse-cli/tests/tune.rs` (the golden samples, a
 snapshot in the middle of a note, `--audio-out`, the reading profile),
 `crates/terse-devices/tests/sound.rs` (the driver and the compiled-in device give the
