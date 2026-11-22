@@ -1,6 +1,6 @@
 # Make a shell
 
-When `terse-host` opens, the first thing you see, the launcher with its tiles, is not part of the host. It is a Terse32 program like any other, the shell, with one device the others lack: Machines, device 8, which starts other machines and says where their screens go. You can write your own, in C here or in Rust on [the next page](terse:151be75da79d6955e2cb5b0a10e835a0b736ab8fc6e212fbafe969e8225c8966).
+When `terse-host` opens, the first thing you see, the launcher with its tiles, is not part of the host. It is a Terse32 program like any other, the shell, with one device the others lack: Machines, device 8, which starts other machines and says where their screens go. You can write your own, in C here or in Rust on [the next page](terse:340b863f427507125b96b2af9135fe2bc3333189eb826ac43a81ba7762e6228b).
 
 ## The smallest shell
 
@@ -57,6 +57,6 @@ From here a shell is a matter of taste: a list of programs to choose from (`mach
 
 ## What you have now
 
-A system of machines under your own shell. It is `examples/program/c/myshell.c` in the Tersenet sources. Next, [the same in Rust](terse:151be75da79d6955e2cb5b0a10e835a0b736ab8fc6e212fbafe969e8225c8966), or a device nobody has specified yet: [Invent a device](terse:0e28d058782b8fcbc6e37e4c22686ae618fd0a7c62f7d8b598ef4a0c033a5338).
+A system of machines under your own shell. It is `examples/program/c/myshell.c` in the Tersenet sources. Next, [the same in Rust](terse:340b863f427507125b96b2af9135fe2bc3333189eb826ac43a81ba7762e6228b), or a device nobody has specified yet: [Invent a device](terse:a55b4b4a4efa6ae11cf039fc2adc90dba3d6862845fc1434f8928dce585c1787).
 
 Every call of device 8 is in [The Machines device](terse:d8ecc86bcb5f015d6d36132394d3acb52506b6a997940ba39395c7ccb22b559b), and panels, the 3D view and input routing in [Screens, panels and input](terse:b980033957b3d45202da6bbfb254ecaa63ec6cfec80b9f2fa4a202c88d72f77f).
