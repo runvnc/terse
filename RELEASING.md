@@ -39,7 +39,23 @@ macos-15 and windows-latest, the bus tests also with every end sleeping on the
 socket and no process timing and with the socket transport only, then the C
 core, the example driver and the Go reader where they build (Linux, macOS). It
 runs only by hand (Actions, "test", "Run workflow"; or `gh workflow run
-test.yml --ref <branch>`), never on a push.
+test.yml --ref <branch>`), never on a push. Each step ends with the list of
+skipped tests (`scripts/test-skips.py`). On Linux, where every tool is
+installed, the main test step runs with `TERSE_TEST_NO_SKIP=1`: a skip there
+is a failure, except a missing graphics adapter (`TERSE_TEST_ALLOW_SKIP=gpu`;
+the runner has no GPU, and lavapipe is installed so that wgpu may find a
+software one). On macOS and Windows skips stay skips; the legitimate ones
+there are listed in the run's skip list (no `/proc/self/schedstat`, no
+graphics adapter, no CJK font, and on Windows no `AF_UNIX` in Python and no
+C compiler, clang, Go or the RISC-V tools unless installed).
+
+Locally, before a release: `scripts/cargo test --workspace` (it builds every
+program the tests run, from the current sources; no build is needed first),
+then `scripts/cargo build --release --workspace --bins` and the tests outside
+cargo, which use `target/release` and refuse programs older than their
+sources: `native/core-c` (`make && ./test.sh`), `native/driver-example/test.sh`,
+`native/driver-experimental/test.sh` and `go test ./...` in
+`native/reader-go`.
 
 ## Cutting a release
 

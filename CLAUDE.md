@@ -21,3 +21,27 @@ the desktop, so do not bypass it. Run one heavy build at a time.
   build only:
   `CARGO_PROFILE_DEV_DEBUG=true scripts/cargo build ...`
   That produces a second, much larger set of artifacts.
+
+## Running the tests
+
+`scripts/cargo test --workspace` alone runs the whole suite correctly: no
+build is needed before it.
+
+- **Programs are never stale.** A test that runs another package's program
+  (`terse-bus`, `terse`, the drivers) gets it from
+  `terse_testkit::program(name)`, which runs `cargo build --workspace --bin
+  <name>` first (once per test binary; nothing happens when it is up to
+  date, and `terse-testkit: built ...` is printed when it was not). Never
+  find such a program by path (`target/debug/...`, beside
+  `CARGO_BIN_EXE_*`): cargo builds only the programs of the package being
+  tested. A program of the test's own package comes from
+  `env!("CARGO_BIN_EXE_<name>")`.
+- **Skips are seen.** A test that cannot run here calls
+  `terse_testkit::skip!("<need>", "why")` and returns; never a bare
+  `eprintln!("skipped ...")`, which cargo hides behind `ok`. The run ends
+  with the list of skips. `TERSE_TEST_NO_SKIP=1` turns every skip into a
+  failure (`TERSE_TEST_ALLOW_SKIP=gpu,...` exempts needs).
+- The tests outside cargo (`native/*/test.sh`, `go test` in
+  `native/reader-go`) use `target/release`: run
+  `scripts/cargo build --release --workspace --bins` before them. They
+  refuse a program older than its sources (`scripts/check-built.py`).

@@ -296,7 +296,7 @@ mod tests {
     #[test]
     fn an_extra_font_adds_coverage() {
         let Some(cjk) = crate::fonts::tests::system_cjk() else {
-            eprintln!("no CJK font on this system: skipped");
+            terse_testkit::skip!("fonts", "no CJK font on this system");
             return;
         };
         let config = tempfile::tempdir().unwrap();

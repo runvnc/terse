@@ -1175,7 +1175,7 @@ mod tests {
     }
 
     fn shaders_are_per_device_checks() {
-        let Some((_a, first)) = device() else { return eprintln!("no GPU adapter: not tested") };
+        let Some((_a, first)) = device() else { return terse_testkit::skip!("gpu", "no GPU adapter") };
         let Some((_b, second)) = device() else { return };
         let glyphs = crate::glyphs::TermGlyphs::builtin(crate::FONT_PX);
         let shaders = Shaders::new(&first);

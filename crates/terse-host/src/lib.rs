@@ -26,8 +26,7 @@ pub(crate) mod gpu_test {
         if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
             let msg = e.downcast_ref::<String>().cloned().or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_default();
             if msg.contains("wgpu error") && msg.contains("Out of Memory") {
-                println!("{what}: GPU part skipped: no graphics memory");
-                eprintln!("{what}: GPU part skipped: no graphics memory ({})", msg.lines().next().unwrap_or(""));
+                terse_testkit::skip!("gpu", "{what}: GPU part: no graphics memory ({})", msg.lines().next().unwrap_or(""));
             } else {
                 std::panic::resume_unwind(e);
             }

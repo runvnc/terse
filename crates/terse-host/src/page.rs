@@ -1516,7 +1516,11 @@ mod tests {
 
     fn typesetter() -> Option<Typesetter> {
         // A system without fonts cannot run these.
-        Typesetter::new(&PageFonts::default()).ok().filter(|t| !t.fonts.db().is_empty())
+        let t = Typesetter::new(&PageFonts::default()).ok().filter(|t| !t.fonts.db().is_empty());
+        if t.is_none() {
+            terse_testkit::skip!("fonts", "no system fonts for the page typesetter");
+        }
+        t
     }
 
     #[test]
