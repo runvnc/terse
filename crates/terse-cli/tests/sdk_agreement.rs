@@ -110,15 +110,15 @@ impl Maker {
 
     /// A small-order or non-canonical key encoding.
     fn odd_key(&self, rng: &mut Rng) -> [u8; 32] {
-        let mut p_plus = |add: u8| {
-            let mut b = [0xff; 32];
-            b[31] = 0x7f | ((rng.next() as u8) & 0x80);
-            b[0] = 0xed + add;
-            b
-        };
         match rng.below(4) {
             0 | 1 => self.torsion[rng.below(8)].compress().0,
-            2 => p_plus(rng.below(19) as u8),
+            2 => {
+                // y = p + add, either sign.
+                let mut b = [0xff; 32];
+                b[31] = 0x7f | ((rng.next() as u8) & 0x80);
+                b[0] = 0xed + rng.below(19) as u8;
+                b
+            }
             _ => {
                 let mut b = self.torsion[rng.below(8)].compress().0;
                 b[31] |= 0x80;
