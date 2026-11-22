@@ -204,7 +204,7 @@ pub fn drivers_with(dir: &Path, slots: &[u8], content: &[String], overrides: &[(
         let s: Vec<u8> = s.iter().copied().filter(|x| slots.contains(x)).collect();
         if !s.is_empty() {
             covered.extend(&s);
-            out.push(Driven { slots: s, command: cmd.clone(), installed: None });
+            out.push(Driven { slots: s, command: cmd.clone(), installed: None, experimental: None });
         }
     }
     for (group, cmd) in defaults {
@@ -220,15 +220,60 @@ pub fn drivers_with(dir: &Path, slots: &[u8], content: &[String], overrides: &[(
                 let mut command = vec![i.program.display().to_string()];
                 command.extend_from_slice(&cmd[1..]);
                 let shipped = Path::new(&cmd[0]).exists().then_some(cmd);
-                out.push(Driven { slots: s, command, installed: Some(crate::bus::Installed { name: i.name.clone(), versions: i.versions.clone(), shipped }) });
+                out.push(Driven { slots: s, command, installed: Some(crate::bus::Installed { name: i.name.clone(), versions: i.versions.clone(), shipped }), experimental: None });
             }
-            _ => out.push(Driven { slots: s, command: cmd, installed: None }),
+            _ => out.push(Driven { slots: s, command: cmd, installed: None, experimental: None }),
         }
     }
     if let Some(s) = slots.iter().find(|s| !covered.contains(s)) {
         return Err(format!("no driver for device {s} (SPEC §image)"));
     }
     Ok(out)
+}
+
+/// The experimental drivers a single machine's run starts (DEVICES.md
+/// 15.1), one for each experimental device its image lists, by name: a
+/// `--driver <name>=...` (`overrides`), else an installed one (`installed`:
+/// device name, version, driver name, program, from
+/// `terse_net::driverlist::experimental`). A device with neither, one
+/// withheld (`without`), and every one in a system (`shell`) gets no
+/// driver and is not granted. The second item: why, for the user.
+pub fn experimental_drivers(
+    image: &Image,
+    shell: bool,
+    without: &[u8],
+    overrides: &[(String, Vec<String>)],
+    installed: &[(String, u8, String, PathBuf)],
+) -> (Vec<Driven>, Vec<String>) {
+    let (mut out, mut notes) = (Vec::new(), Vec::new());
+    let listed: Vec<&terse_core::DeviceReq> = image.devices.iter().filter(|d| d.experimental() && d.optional).collect();
+    if listed.is_empty() {
+        return (out, notes);
+    }
+    let Some(names) = image.experimental() else {
+        notes.push("the image lists experimental devices without a valid table of their names (spec/experimental.md): none is granted".into());
+        return (out, notes);
+    };
+    if shell {
+        notes.push("experimental devices are not granted in a system (spec/experimental.md §experimental.grants)".into());
+        return (out, notes);
+    }
+    for d in listed {
+        let Some((_, name)) = names.iter().find(|(s, _)| *s == d.slot) else { continue };
+        if without.contains(&d.slot) {
+            continue;
+        }
+        let experimental = Some((name.clone(), d.version));
+        if let Some((_, cmd)) = overrides.iter().find(|(n, _)| n == name) {
+            out.push(Driven { slots: vec![d.slot], command: cmd.clone(), installed: None, experimental });
+        } else if let Some((_, _, driver, program)) = installed.iter().find(|i| i.0 == *name && i.1 == d.version) {
+            let installed = Some(crate::bus::Installed { name: driver.clone(), versions: Vec::new(), shipped: None });
+            out.push(Driven { slots: vec![d.slot], command: vec![program.display().to_string()], installed, experimental });
+        } else {
+            notes.push(format!("no driver for the experimental device {name} version {} (slot {}): it is not granted", d.version, d.slot));
+        }
+    }
+    (out, notes)
 }
 
 /// Device 10, full text: a capability the terminal's driver gives (SPEC
@@ -338,7 +383,8 @@ impl Start<'_> {
             (None, Some(g)) => g,
             (None, None) => {
                 let b = bus.borrow();
-                self.image.grants(|d| b.provides(d) && !self.without.contains(&d.slot))
+                let without = |d: &terse_core::DeviceReq| !self.without.contains(&d.slot);
+                self.image.grants_on(|d| b.provides(d) && without(d), |d, name| b.provides_experimental(d, name) && without(d))
             }
         };
         let mut machine = Bus::open_instance(&bus, 0, self.image, Some(&grants), identity.as_ref()).map_err(|f| f.message)?;

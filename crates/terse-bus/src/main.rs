@@ -23,7 +23,8 @@ use terse_net::{BlobStore, builtin};
 const USAGE: &str = "usage:
   terse-bus [<image> | --shell [<image>]] [--builtin <image>]... [--frames N] [--events <file>]
             [--hash] [--hash-all] [--hash-every N] [--dump] [--save-state <file>] [--load-state <file>]
-            [--driver <slot>[,<slot>...]=<command line>]... [--transport shm|socket] [--no-batch] [--in-process]
+            [--driver <slot>[,<slot>...]=<command line>]... [--driver <device name>=<command line>]...
+            [--transport shm|socket] [--no-batch] [--in-process]
             [--screenshot <out.png>] [--size <W>x<H>] [--eye <dx>,<dy>] [--panels perspective|flat]
             [--present-every-frame] [--window] [--selftest] [--parallax off|pointer] [--threads N]
             [--bench] [--realtime] [--frame-times <file>] [--pin] [--spin-us N] [--spin fixed|adaptive]
@@ -33,6 +34,7 @@ const USAGE: &str = "usage:
             [--without <slot>]... [--perf-log <dir>|off] [--perf-rule on|off]
             [--tube xy|p31|amber|vectrex] [--vignette] [--no-trails] [--force-phosphor] [--no-shed]
   terse-bus --probe-driver <program> [--slot <n>]
+  terse-bus --probe-driver <program> --experimental
   terse-bus --version
 
 Runs the devices as driver processes: by default terse-dev-terminal (slot 2), terse-dev-vector
@@ -67,6 +69,10 @@ devices played (SPEC §sound.presentation: every machine's frame, mixed) as a WA
 is ever played. --without withholds an optional device (SPEC §image: the machine runs without it); a
 device only optional devices use whose driver is not installed is left out the same way, while a
 required device without a driver stops the run.
+An experimental device (slots 240-255, spec/experimental.md) is served by --driver <its name>=...
+(--driver example.dice=./dice), else by the installed driver for its name; without one it is not
+granted. A system (--shell) grants none. --probe-driver --experimental asks a program which
+experimental device it serves.
 --perf-log: where the performance record goes (RECORD.md; default: none headless, and
 $XDG_DATA_HOME/terse/perf with --window or --realtime; it never leaves this computer). --perf-rule
 (default: on with --window or --realtime, off headless): the rule of PERFORMANCE.md R15: a driver
@@ -87,6 +93,8 @@ struct Opts {
     save_state: Option<PathBuf>,
     load_state: Option<PathBuf>,
     drivers: Vec<(Vec<u8>, String)>,
+    /// `--driver <name>=...`: an experimental device's driver (DEVICES.md 15.1).
+    experimental_drivers: Vec<(String, String)>,
     socket_only: bool,
     batching: bool,
     in_process: bool,
@@ -134,6 +142,7 @@ fn parse(args: Vec<String>) -> Result<Opts, String> {
         save_state: None,
         load_state: None,
         drivers: Vec::new(),
+        experimental_drivers: Vec::new(),
         socket_only: false,
         batching: true,
         in_process: false,
@@ -183,6 +192,14 @@ fn parse(args: Vec<String>) -> Result<Opts, String> {
             "--driver" => {
                 let v = value()?;
                 let (slots, cmd) = v.split_once('=').ok_or("--driver <slot>[,<slot>...]=<command line>")?;
+                // An experimental device's driver, by its name (DEVICES.md 15.1).
+                if slots.starts_with(|c: char| c.is_ascii_alphabetic()) {
+                    if !terse_core::image::valid_experimental_name(slots) {
+                        return Err(format!("--driver {slots}=...: not a valid name of an experimental device (spec/experimental.md)"));
+                    }
+                    o.experimental_drivers.push((slots.to_string(), cmd.to_string()));
+                    continue;
+                }
                 let slots = slots.split(',').map(|s| s.parse().map_err(|_| format!("bad slot {s}"))).collect::<Result<Vec<u8>, String>>()?;
                 o.drivers.push((slots, cmd.to_string()));
             }
@@ -325,10 +342,14 @@ fn main() -> ExitCode {
 /// `--slot`), and prints, for each group it answers for, its identity and
 /// slots: lines `group`, `name`, `version`, `build` and `slot <s> <v>`, then
 /// a blank line. The groups it refuses go to standard error. Status 0 if it
-/// answered for one or more groups, else 2.
+/// answered for one or more groups, else 2. With `--experimental` it asks
+/// once, for slot 240 with an empty name (DEVICES.md 15.1), and prints
+/// `experimental <name> <version>` instead of slot lines.
 fn probe(args: Vec<String>) -> ExitCode {
+    const EXPERIMENTAL: &[u8] = &[240];
     let (program, slot) = match args.as_slice() {
         [p] => (p.clone(), None),
+        [p, f] if f == "--experimental" => (p.clone(), Some(EXPERIMENTAL)),
         [p, f, s] if f == "--slot" => match s.parse::<u8>().ok().and_then(terse_net::driverlist::group_of) {
             Some(g) => (p.clone(), Some(g)),
             None => {
@@ -356,7 +377,8 @@ fn probe(args: Vec<String>) -> ExitCode {
         };
         let mut config = BusConfig::new(session.0.clone());
         config.shm = false;
-        let want = terse_bus::bus::Wanted { slots: g.to_vec(), command: vec![program.clone()], installed: None };
+        let experimental = (g == EXPERIMENTAL).then(|| (String::new(), 0));
+        let want = terse_bus::bus::Wanted { slots: g.to_vec(), command: vec![program.clone()], installed: None, experimental };
         match terse_bus::bus::Bus::start(&config, &[want]) {
             Ok(bus) => {
                 let d = &bus.procs[0].info;
@@ -364,8 +386,13 @@ fn probe(args: Vec<String>) -> ExitCode {
                 println!("name {}", d.name.replace('\n', " "));
                 println!("version {}", if d.version.is_empty() { "-" } else { &d.version });
                 println!("build {}", if d.build.is_empty() { "-" } else { &d.build });
-                for s in &d.slots {
-                    println!("slot {} {}", s.slot, s.version);
+                match &bus.procs[0].experimental {
+                    Some(x) => println!("experimental {} {}", x.name, d.slots[0].version),
+                    None => {
+                        for s in &d.slots {
+                            println!("slot {} {}", s.slot, s.version);
+                        }
+                    }
                 }
                 println!();
                 answered += 1;
@@ -460,7 +487,16 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
         eprintln!("terse-bus: {b}");
     }
     let slots = host::installed_slots_with(&dir, &image, opts.shell, &opts.without, &overrides, &installed);
-    let drivers = host::drivers_with(&dir, &slots, &opts.content.args(), &overrides, &installed)?;
+    let mut drivers = host::drivers_with(&dir, &slots, &opts.content.args(), &overrides, &installed)?;
+    // Experimental devices (DEVICES.md 15.1): a --driver by name, else the
+    // installed driver for the name; with neither it is not granted.
+    let exp_overrides: Vec<(String, Vec<String>)> = opts.experimental_drivers.iter().map(|(n, c)| (n.clone(), terse_bus::bus::split_command(c))).collect();
+    let exp_installed = config_dir.as_deref().map(terse_net::driverlist::experimental).unwrap_or_default();
+    let (exp, notes) = host::experimental_drivers(&image, opts.shell, &opts.without, &exp_overrides, &exp_installed);
+    for n in notes {
+        eprintln!("terse-bus: {n}");
+    }
+    drivers.extend(exp);
     let presents = opts.screenshot.is_some() || opts.present_every || opts.window;
     let mut config = BusConfig::new(PathBuf::new());
     config.shm = !opts.socket_only;
@@ -566,7 +602,7 @@ fn headless(opts: &Opts, bs: &mut BusSystem, script: &Script, replay: Option<&[F
     let picture = opts.size.unwrap_or(native);
     let mut times = Vec::new();
     let mut present_times = Vec::new();
-    let mut recording = opts.record.as_ref().map(|_| record::header(bs.system.shell().image_id(), bs.system.shell().grants()));
+    let mut recording = opts.record.as_ref().map(|_| record::header(bs.system.shell().image_id(), bs.system.shell().grants(), bs.system.shell().has_experimental()));
     if (opts.record.is_some() || replay.is_some()) && bs.system.is_system() {
         return Err("--record and --replay are for a single machine".into());
     }

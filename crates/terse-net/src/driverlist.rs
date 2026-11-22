@@ -81,6 +81,17 @@ pub struct Manifest {
     pub name: String,
     pub version: String,
     pub build: String,
+    /// An experimental driver's device (`DEVICES.md` 15): its name and
+    /// version, in place of slots.
+    pub experimental: Option<(String, u8)>,
+}
+
+/// Whether `name` may name an experimental device (`spec/experimental.md`):
+/// 1 to 30 of `a`-`z`, `0`-`9`, `-` and `.`, starting with a letter.
+pub fn valid_device_name(name: &str) -> bool {
+    (1..=30).contains(&name.len())
+        && name.as_bytes()[0].is_ascii_lowercase()
+        && name.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'.')
 }
 
 fn field(s: &str) -> &str {
@@ -93,6 +104,9 @@ impl Manifest {
         for (slot, v) in &self.slots {
             s.push_str(&format!("slot {slot} {v}\n"));
         }
+        if let Some((name, v)) = &self.experimental {
+            s.push_str(&format!("experimental {name} {v}\n"));
+        }
         s.push_str(&format!("name {}\nversion {}\nbuild {}\n", field(&self.name), field(&self.version), field(&self.build)));
         s
     }
@@ -102,7 +116,7 @@ impl Manifest {
         if lines.next().map(str::trim_end) != Some("terse-driver 1") {
             return Err("not a driver manifest (terse-driver 1)".into());
         }
-        let mut m = Manifest { program: String::new(), slots: Vec::new(), name: String::new(), version: String::new(), build: String::new() };
+        let mut m = Manifest { program: String::new(), slots: Vec::new(), name: String::new(), version: String::new(), build: String::new(), experimental: None };
         for line in lines {
             let line = line.trim_end();
             let (word, value) = line.split_once(' ').unwrap_or((line, ""));
@@ -115,11 +129,22 @@ impl Manifest {
                 "name" => m.name = value.to_string(),
                 "version" => m.version = value.to_string(),
                 "build" => m.build = value.to_string(),
+                "experimental" => {
+                    let (n, v) = value.split_once(' ').ok_or(format!("bad line: {line}"))?;
+                    let v: u8 = v.parse().ok().filter(|&v| v < 128).ok_or(format!("bad line: {line}"))?;
+                    if !valid_device_name(n) {
+                        return Err(format!("bad line: {line}"));
+                    }
+                    m.experimental = Some((n.to_string(), v));
+                }
                 _ => {}
             }
         }
         if m.program.is_empty() || m.program.contains('/') || m.program == "." || m.program == ".." {
             return Err("no program file named".into());
+        }
+        if m.experimental.is_some() {
+            return if m.slots.is_empty() { Ok(m) } else { Err("an experimental driver with slots".into()) };
         }
         let group = m.slots.first().and_then(|s| group_of(s.0)).ok_or("no slot named")?;
         if m.slots.iter().any(|s| !group.contains(&s.0)) {
@@ -173,6 +198,20 @@ pub fn list(config: &Path) -> Vec<Installed> {
     let mut names: Vec<String> = rd.flatten().filter(|e| e.path().is_dir()).filter_map(|e| e.file_name().into_string().ok()).filter(|n| valid_name(n)).collect();
     names.sort();
     names.into_iter().map(|n| installed(config, &n)).collect()
+}
+
+/// The installed experimental drivers (`DEVICES.md` 15.1): for each, the
+/// device's name and version, the driver's name and its program. `use`
+/// has no line for them: the manifest names the device. Drivers that
+/// cannot be used are left out.
+pub fn experimental(config: &Path) -> Vec<(String, u8, String, PathBuf)> {
+    list(config)
+        .into_iter()
+        .filter_map(|i| {
+            let (n, v) = i.manifest.as_ref().ok()?.experimental.clone()?;
+            Some((n, v, i.name.clone(), i.program().ok()?))
+        })
+        .collect()
 }
 
 /// A line of `use`: a group (its lowest slot) and an installed driver's
@@ -271,13 +310,21 @@ mod tests {
 
     #[test]
     fn manifest_round_trip() {
-        let m = Manifest { program: "terminal".into(), slots: vec![(2, 0), (10, 0)], name: "terminal (example)".into(), version: "0.1.0".into(), build: "fnv:0011223344556677".into() };
+        let m = Manifest { program: "terminal".into(), slots: vec![(2, 0), (10, 0)], name: "terminal (example)".into(), version: "0.1.0".into(), build: "fnv:0011223344556677".into(), experimental: None };
         let t = m.encode();
         assert_eq!(Manifest::parse(&t).unwrap(), m);
         assert_eq!(m.group(), &[2, 10]);
         assert!(Manifest::parse(&t.replace("slot 10 0", "slot 3 0")).is_err());
         assert!(Manifest::parse(&t.replace("program terminal", "program ../x")).is_err());
         assert!(Manifest::parse("terse-driver 2\n").is_err());
+        // DEVICES.md 15: an experimental driver names its device, no slots.
+        let x = Manifest { slots: vec![], experimental: Some(("example.dice".into(), 0)), ..m.clone() };
+        let t = x.encode();
+        assert!(t.contains("experimental example.dice 0\n"));
+        assert_eq!(Manifest::parse(&t).unwrap(), x);
+        assert_eq!(x.group(), &[] as &[u8]);
+        assert!(Manifest::parse(&t.replace("example.dice", "Dice")).is_err());
+        assert!(Manifest::parse(&(t.clone() + "slot 2 0\n")).is_err());
     }
 
     #[test]
@@ -288,7 +335,7 @@ mod tests {
         let d = folder(c).join("t");
         std::fs::create_dir_all(&d).unwrap();
         std::fs::write(d.join("prog"), b"x").unwrap();
-        let m = Manifest { program: "prog".into(), slots: vec![(2, 0)], name: "t".into(), version: String::new(), build: String::new() };
+        let m = Manifest { program: "prog".into(), slots: vec![(2, 0)], name: "t".into(), version: String::new(), build: String::new(), experimental: None };
         std::fs::write(d.join(MANIFEST), m.encode()).unwrap();
         let mut ch = Vec::new();
         set(&mut ch, 2, Some("t".into()));
