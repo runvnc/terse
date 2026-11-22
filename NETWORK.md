@@ -355,6 +355,11 @@ received first is kept.
   relay keeps at least the 256 most recent of each feed, section 4.3).
   Unsubscribing removes the feed from the list and unsubscribes on the
   connection. A client subscribes only to valid feed keys (section 4.1).
+  The list is the one in force now: a client whose list is changed by
+  another program while it runs (the reference implementation's
+  `terse feed subscribe` beside a running `terse-host`) follows the change
+  within about a second, as if it had been asked, and keeps that change
+  when it saves its own.
 - **Automatic download:** when the client receives an entry for a
   subscribed feed whose size is at most 16,384 bytes (the user may change
   this limit), it gets the blob without being asked. This applies to

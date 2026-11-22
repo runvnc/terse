@@ -76,6 +76,9 @@ pub const PREFETCH_LINKS: usize = 8;
 pub const CONNECT_GRACE: Duration = Duration::from_millis(200);
 /// Relays asked at once for a blob.
 const GET_FANOUT: usize = 2;
+/// How often the subscription file is looked at for another program's
+/// change.
+const SUBSCRIPTIONS_CHECK: Duration = Duration::from_secs(1);
 
 const FIRST_RETRY: Duration = Duration::from_secs(1);
 const MAX_RETRY: Duration = Duration::from_secs(30);
@@ -179,6 +182,11 @@ pub enum FeedEvent {
     /// The result of `ContentService::publish`.
     Published { seq: u32, blob: BlobId },
     PublishFailed(Done),
+    /// The subscription list changed, by `subscribe` or `unsubscribe` or
+    /// by another program changing its file (`terse feed subscribe` while
+    /// the host runs), and the node follows the new list: the timeline
+    /// changed.
+    SubscriptionsChanged,
 }
 
 /// What a relay request belongs to.
@@ -284,6 +292,9 @@ pub struct Node {
     ready: Vec<(Token, Done)>,
     feeds: FeedStore,
     subscriptions: Subscriptions,
+    /// When the subscription file was last looked at for another
+    /// program's change.
+    subscriptions_checked: Option<Instant>,
     nicknames: Nicknames,
     identity: Option<Identity>,
     /// Where the identity is kept, so one can be created when first needed.
@@ -401,6 +412,7 @@ impl Node {
             deferred_since: None,
             feed_relays: true,
             feed_relays_dirty: true,
+            subscriptions_checked: None,
             feed_relays_unrestricted: false,
             connect_feed_relay: Box::new(|url| RelayClient::websocket_checked(url, DEFAULT_TIMEOUT, true)),
             held_on_own: BTreeSet::new(),
@@ -1030,37 +1042,84 @@ impl Node {
     /// hints given replace those remembered.
     pub fn subscribe_with_hints(&mut self, feed: FeedKey, hints: Option<&str>) -> std::io::Result<()> {
         let hints = hints.filter(|h| !h.is_empty() && h.len() <= crate::address::MAX_HINT_LIST && crate::address::parse_hints(h.as_bytes()).is_ok());
+        // Another program's change first, so that saving keeps it.
+        self.follow_subscription_file(true);
         let added = self.subscriptions.add(feed)?;
         if hints.is_some() && self.subscriptions.set_hints(&feed, hints)? {
             self.feed_relays_dirty = true;
             self.check_hints(&feed);
         }
         if added {
-            let after = self.feeds.highest(&feed).unwrap_or(0);
-            for (&lid, link) in self.links.iter_mut().filter(|(_, l)| l.ready() && l.serves(&feed)) {
-                let req = link.client.subscribe(&feed, after);
-                self.waiting.insert((lid, req), Waiting::Subscribe(feed, after));
-            }
-            self.feed_relays_dirty = true;
+            self.follow_added(feed);
+            self.events.push(FeedEvent::SubscriptionsChanged);
         }
         Ok(())
     }
 
     pub fn unsubscribe(&mut self, feed: &FeedKey) -> std::io::Result<()> {
+        self.follow_subscription_file(true);
         if self.subscriptions.remove(feed)? {
-            self.held_on_own.remove(feed);
-            self.empty_on_own.remove(feed);
-            self.hints_wanted.remove(feed);
-            for (&lid, link) in self.links.iter_mut() {
-                link.catching_up.remove(feed);
-                if link.client.connected() && link.serves(feed) {
-                    let req = link.client.unsubscribe(feed);
-                    self.waiting.insert((lid, req), Waiting::Unsubscribe);
-                }
-            }
-            self.feed_relays_dirty = true;
+            self.follow_removed(feed);
+            self.events.push(FeedEvent::SubscriptionsChanged);
         }
         Ok(())
+    }
+
+    /// Subscribes on the current connections to a feed just added to the
+    /// list.
+    fn follow_added(&mut self, feed: FeedKey) {
+        let after = self.feeds.highest(&feed).unwrap_or(0);
+        for (&lid, link) in self.links.iter_mut().filter(|(_, l)| l.ready() && l.serves(&feed)) {
+            let req = link.client.subscribe(&feed, after);
+            self.waiting.insert((lid, req), Waiting::Subscribe(feed, after));
+        }
+        self.feed_relays_dirty = true;
+    }
+
+    /// Unsubscribes on the current connections from a feed just removed
+    /// from the list.
+    fn follow_removed(&mut self, feed: &FeedKey) {
+        self.held_on_own.remove(feed);
+        self.empty_on_own.remove(feed);
+        self.hints_wanted.remove(feed);
+        for (&lid, link) in self.links.iter_mut() {
+            link.catching_up.remove(feed);
+            if link.client.connected() && link.serves(feed) {
+                let req = link.client.unsubscribe(feed);
+                self.waiting.insert((lid, req), Waiting::Unsubscribe);
+            }
+        }
+        self.feed_relays_dirty = true;
+    }
+
+    /// Whether the subscriptions are kept in a file another program may
+    /// change (the node then looks at it about once a second).
+    pub fn subscriptions_in_file(&self) -> bool {
+        self.subscriptions.in_file()
+    }
+
+    /// Takes in another program's change to the subscription file
+    /// (NETWORK 4.4: the host follows the list as it is now): subscribes
+    /// to the feeds added, unsubscribes from those removed and reports
+    /// `SubscriptionsChanged`. Looks at the file at most once a second,
+    /// unless `now`.
+    fn follow_subscription_file(&mut self, now: bool) {
+        if !self.subscriptions.in_file() || (!now && self.subscriptions_checked.is_some_and(|t| t.elapsed() < SUBSCRIPTIONS_CHECK)) {
+            return;
+        }
+        self.subscriptions_checked = Some(Instant::now());
+        let changes = self.subscriptions.reload();
+        if changes.is_empty() {
+            return;
+        }
+        for feed in changes.added {
+            self.follow_added(feed);
+        }
+        for feed in &changes.removed {
+            self.follow_removed(feed);
+        }
+        self.feed_relays_dirty = true;
+        self.events.push(FeedEvent::SubscriptionsChanged);
     }
 
     /// Whether `feed` is followed through a relay named by a hint of its
@@ -1265,6 +1324,7 @@ impl Node {
     /// and works out the feed relays when a profile or the subscriptions
     /// changed (NETWORK 5).
     fn maintain(&mut self) {
+        self.follow_subscription_file(false);
         let undecided: Vec<FeedKey> =
             self.subscriptions.hinted().map(|(f, _)| *f).filter(|f| !self.hints_wanted.contains(f) && !self.held_on_own.contains(f)).collect();
         for feed in undecided {

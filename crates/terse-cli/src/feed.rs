@@ -624,7 +624,7 @@ fn sync(args: &[String]) -> Result<ExitCode, String> {
                 report();
                 return Ok(ExitCode::SUCCESS);
             }
-            FeedEvent::Settled | FeedEvent::Busy => {}
+            FeedEvent::Settled | FeedEvent::Busy | FeedEvent::SubscriptionsChanged => {}
             FeedEvent::Connected(url) => {
                 if lost {
                     eprintln!("terse: connected to {url}");
