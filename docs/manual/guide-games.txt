@@ -2,9 +2,13 @@
 
 Reading is the heart of Tersenet; programs are the optional part. A program is small, at most 1 MiB of memory, and runs on a tiny virtual machine of its own, Terse32, inside the window. It cannot read your files, and the window asks you before it publishes anything in your name.
 
-## The game that comes with Tersenet
+## The games that come with Tersenet
 
-The launcher lists the programs built into the window. One of them is a game: sparks. Choose it and press Enter:
+The launcher lists the programs built into the window. Two of them are games. Choose reef, Lumen Reef, and press Enter.
+
+You fly a lamp skiff at the edge of the Reef, drawn in glowing wireframe lines, and hold it against what comes out of the deep: kites that weave and fire sparks, rolling wheels, diving prongs and, every fourth stage, a Warden, a cube in a ring of four nodes. Between swarms you steer between slabs and through gates of light. Aiming is flying: the arrow keys or W A S D move the sight, and the skiff goes where it points, which is also how you dodge. Space, Z or Ctrl fires, as does the mouse button (the pointer aims); a game controller works too, the left stick aiming and A firing. Fire, or Enter, starts a game. Firing heats the guns. P or Esc pauses, V switches the display style. The game ends when your shields are gone.
+
+The other game is sparks:
 
 ```
   SPARKS    HIGH 0000         demo - Enter or Start to play
@@ -14,9 +18,11 @@ The launcher lists the programs built into the window. One of them is a game: sp
                      Enter or Start: play.        Esc: quit.
 ```
 
-Enter plays. Left and Right turn your craft, Up thrusts; a game controller works too. Your high score is kept on this computer, for the next time. F12 takes you back to the launcher while the game goes on in its tile; Enter on its line there, or a click on it, brings it back.
+Enter plays. Left and Right turn your craft, Up thrusts. Both games keep your high score on this computer, for the next time. F12 takes you back to the launcher while a game goes on in its tile; Enter on its line there, or a click on it, brings it back.
 
 The other built-in programs are small tools and demonstrations: sketch draws with the mouse, holo shows 3D scenes (try scene 6, a cockpit), hello and fetch show what a program can do, and reports gathers performance reports.
+
+Not built in, but in the Tersenet sources: sheet, a small spreadsheet. Start it with `terse-host programs/sheet/sheet.terse`. A cell holds a number, text or a formula starting with `=`: arithmetic, references such as `A1`, ranges such as `A1:A5`, and SUM, AVERAGE, MIN, MAX, COUNT, ROUND, ABS and IF. Numbers are exact to four decimal places, so sums of money come out right. Ctrl+G shows a bar chart of the selection, Ctrl+L a line chart; Ctrl+S keeps the sheet on this computer for the next start, and Ctrl+P publishes it in your feed, after the window asks you.
 
 ## Games from other people
 
