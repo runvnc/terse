@@ -40,7 +40,7 @@ pub const RATE: u32 = terse_core::sound::RATE;
 const FRAME: usize = terse_core::sound::FRAME_SAMPLES;
 /// The output's own buffer, in pairs: three frames (50 ms), or
 /// `TERSE_AUDIO_BUFFER_MS` (for measuring)...
-#[cfg_attr(not(feature = "audio"), allow(dead_code))]
+#[cfg_attr(not(all(feature = "audio", target_os = "linux")), allow(dead_code))]
 pub(crate) fn buffer() -> usize {
     std::env::var("TERSE_AUDIO_BUFFER_MS")
         .ok()
@@ -49,7 +49,7 @@ pub(crate) fn buffer() -> usize {
 }
 
 /// ...which starts playing once it holds two thirds of that.
-#[cfg_attr(not(feature = "audio"), allow(dead_code))]
+#[cfg_attr(not(all(feature = "audio", target_os = "linux")), allow(dead_code))]
 pub(crate) fn start() -> usize {
     buffer() * 2 / 3
 }
@@ -195,7 +195,7 @@ impl Shared {
 }
 
 /// An output fed by a thread of its own that blocks in `write`.
-#[cfg_attr(not(feature = "audio"), allow(dead_code))]
+#[cfg_attr(not(all(feature = "audio", target_os = "linux")), allow(dead_code))]
 pub(crate) trait Writer: Send {
     /// Interleaved pairs; blocks while the output's buffer is full.
     fn write(&mut self, s: &[i16]) -> Result<(), String>;
@@ -209,6 +209,7 @@ pub(crate) trait Writer: Send {
 
 /// What an output measured (`TERSE_AUDIO_STATS`).
 #[derive(Default)]
+#[cfg_attr(not(all(feature = "audio", target_os = "linux")), allow(dead_code))]
 struct Stats {
     writes: u64,
     pairs: u64,
@@ -220,7 +221,7 @@ struct Stats {
 }
 
 enum Keep {
-    #[cfg_attr(not(feature = "audio"), allow(dead_code))]
+    #[cfg_attr(not(all(feature = "audio", target_os = "linux")), allow(dead_code))]
     Thread(Option<std::thread::JoinHandle<Stats>>),
     #[cfg(all(feature = "audio", not(target_os = "linux")))]
     Stream(#[allow(dead_code)] cpal_out::Stream),
@@ -262,7 +263,7 @@ impl Output {
         self.shared.q.lock().unwrap().dead.clone()
     }
 
-    #[cfg_attr(not(feature = "audio"), allow(dead_code))]
+    #[cfg_attr(not(all(feature = "audio", target_os = "linux")), allow(dead_code))]
     fn threaded(name: String, shared: Arc<Shared>, w: Box<dyn Writer>) -> Output {
         let s = shared.clone();
         let t = std::thread::Builder::new().name("terse-audio".into()).spawn(move || feed(&s, w)).expect("a thread for the sound");
@@ -311,6 +312,7 @@ impl Drop for Output {
 
 /// The output's thread: waits for samples and writes them, a frame at
 /// most at a time, until the output closes or fails.
+#[cfg_attr(not(all(feature = "audio", target_os = "linux")), allow(dead_code))]
 fn feed(shared: &Shared, mut w: Box<dyn Writer>) -> Stats {
     let stats_on = std::env::var_os("TERSE_AUDIO_STATS").is_some();
     let mut st = Stats { lat_min: f64::MAX, ..Default::default() };
