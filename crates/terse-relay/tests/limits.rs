@@ -280,7 +280,7 @@ fn rate_limits() {
     r.advance_clock(Duration::from_secs(60));
     assert_eq!(put(&r, &c, &vec![1; 1_000_000]), status::DONE);
     assert_eq!(put(&r, &c, &vec![2; 1_000_000]), status::DONE);
-    assert!(matches!(Refusal::of_status(put(&r, &c, b"x")), Refusal::TryLater(_)));
+    assert!(matches!(Refusal::of_status(put(&r, &c, &vec![3; 100_000])), Refusal::TryLater(_)));
     assert_eq!(r.refused(Reason::UploadBytes), 1);
     // New feeds: 2 a minute per address; a feed already held is not new.
     r.advance_clock(Duration::from_secs(60));
@@ -288,6 +288,8 @@ fn rate_limits() {
     assert_eq!(publish(&r, &other64, &article(&ids[0], 1, b"a"), &ids[0]), status::DONE);
     assert_eq!(publish(&r, &other64, &article(&ids[1], 1, b"a"), &ids[1]), status::DONE);
     assert_eq!(publish(&r, &other64, &article(&ids[0], 2, b"b"), &ids[0]), status::DONE);
+    // 20 s later: an upload is allowed again, a new feed not yet.
+    r.advance_clock(Duration::from_secs(20));
     assert!(matches!(Refusal::of_status(publish(&r, &other64, &article(&ids[2], 1, b"a"), &ids[2])), Refusal::TryLater(_)));
     assert_eq!(r.refused(Reason::NewFeeds), 1);
     // In-process and outgoing peer connections are not limited.

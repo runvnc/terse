@@ -472,7 +472,10 @@ bytes it newly stores, follows on them the feeds its clients follow, and asks th
 a blob a client wants that it does not hold. Two relays only need one of them to name
 the other. It answers searches (`terse find`) from what it holds, articles in the
 order it stored them, newest first, and refuses a connection's fifth search within
-a second.
+a second. It pings a connection that has been silent for 30 s (`--ping-every`), and
+stops gracefully on SIGTERM. Its other limits (bytes per feed, blobs no entry names,
+rates per address, a list of writers) are off unless given; `terse-relay --help`
+lists them and "Running a public relay" below says which to use.
 
 ## Trying the relay locally
 
@@ -486,6 +489,78 @@ a second.
     # prints fetch.terse's image ID; run it from an empty store:
     target/debug/terse run <id> --relay $U --store /tmp/terse-try/b --frames 10 --dump
     target/debug/terse-host <id> --relay $U --store /tmp/terse-try/b
+
+## Running a public relay
+
+A relay anyone can reach needs limits: blobs are stored by their hash, not by who sent
+them, and keys cost nothing to make, so without limits one person can fill it or use it
+as free file hosting. `--public` turns on the limits NETWORK.md section 5.3 allows,
+with these defaults (each can be given on its own, and changed):
+
+| Limit | `--public` | Option |
+|---|---|---|
+| Bytes of the blobs one feed's entries name (older entries are dropped to make room; the latest profile is kept) | 16 MiB | `--feed-bytes` |
+| Entries per feed | 1024 | `--feed-entries` |
+| How long a blob no entry names is kept; such a blob is not served | 1 hour | `--unreferenced-time` |
+| Such blobs in all, and per address | 256 MiB, 16 MiB | `--unreferenced-bytes`, `--unreferenced-bytes-per-address` |
+| Puts and publishes per address | 120 a minute | `--uploads-per-minute` |
+| Bytes put per address | 32 MiB an hour | `--upload-bytes-per-hour` |
+| Entries of feeds new to the relay, per address and in all | 3 and 60 an hour | `--new-feeds-per-hour`, `--new-feeds-per-hour-total` |
+| Finds and lookups per address (and 4 a second per connection) | 60 a minute | `--finds-per-minute` |
+| Connections per address, and in all | 32, 1000 | `--connections-per-address`, `--max-connections` |
+| A status line on stderr | every 10 minutes | `--status-every`, `--status-file` |
+
+An address is an IPv4 address or an IPv6 /64. A refusal tells the client why, and for
+a rate when to try again (NETWORK.md section 3.1); `terse feed publish` and `terse put`
+print it for each relay. Without a limit per feed in bytes, the entry limit and
+`--max-store-bytes` are all that bound a feed.
+
+**A list of writers.** `--writers <file>` takes entries only from the feeds listed in
+the file, one key (64 hex digits) a line, `#` comments; anyone can still read. The file
+is read again within 2 s of a change, or at once on SIGHUP; a file with a bad line is
+not taken (the relay says so and keeps the list it has). A put carries no key, so puts
+are taken from anyone into the room for blobs no entry names; an address that none of
+the listed feeds has published from in the last day has 1 MiB of it (one article) and
+such addresses have half the room in all. Since those blobs are not served and go after
+an hour, the list leaves nothing to host for free. Entries a peer sends are held to the
+list too.
+
+**Behind Cloudflare** (or another proxy), every connection comes from the proxy, so
+limits per address need the client's address from the proxy's header:
+`--trust-proxy <ranges>` believes `CF-Connecting-IP` (else `X-Forwarded-For`) on
+connections from those addresses only (`@<file>` reads them from a file, one a line).
+Never trust a range anyone else can connect from: the header is easy to forge. The
+reference clients speak plain `ws://`, so the proxy must pass plain HTTP: put the relay
+on a port Cloudflare proxies without TLS (80, 8080, 8880, 2052, 2082, 2086 or 2095), keep
+"Always Use HTTPS" off for its host name, and give people `ws://relay.example.org:8080`
+(and the feed address hint `relay.example.org:8080`). The relay pings a silent
+connection every 30 s, inside Cloudflare's 100 s idle limit.
+
+For a 1-CPU, 1 GB, 25 GB-disk server behind Cloudflare, with a list of writers:
+
+    curl -s https://www.cloudflare.com/ips-v4 https://www.cloudflare.com/ips-v6 > /etc/terse-relay/proxies
+    terse-relay --public --listen 0.0.0.0:8080 --store /var/lib/terse-relay/store \
+        --max-store-bytes 20G --writers /etc/terse-relay/writers \
+        --trust-proxy @/etc/terse-relay/proxies --status-file /run/terse-relay/status
+
+`packaging/linux/terse-relay.service` is a systemd unit for this, with the steps to
+install it. Then:
+
+- **Firewall**: only the proxy may reach the relay's port, so no one can go around
+  the limits (or forge the header) by connecting directly. With ufw:
+  `for r in $(cat /etc/terse-relay/proxies); do ufw allow proto tcp from $r to any port 8080; done`,
+  with SSH allowed and everything else denied.
+- **What it is doing**: `journalctl -u terse-relay | grep status` (every 10 minutes) or
+  `cat /run/terse-relay/status`: bytes stored, feeds, entries, blobs waiting for an
+  entry, connections, blobs collected, entries dropped, and refusals by reason. Logs
+  name a client by its /24 (IPv4) or /48 (IPv6) only.
+- **Backups**: the store directory is all there is (`<store>/feeds` holds the entries).
+  A blob or entry file is never changed once written, so copying it while the relay
+  runs is safe: `rsync -a --exclude '.*.tmp' /var/lib/terse-relay/store/ backup:`. A
+  restored relay rebuilds its index at start; blobs no entry names wait from their
+  file times. The writers file and the proxies file are in `/etc/terse-relay`.
+- **Stopping**: SIGTERM (`systemctl stop`) closes every connection with a close frame;
+  what was acknowledged is on disk already.
 
 ## Feeds
 

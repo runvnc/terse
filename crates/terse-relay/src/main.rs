@@ -40,7 +40,7 @@ Limits for a public relay (README \"Running a public relay\"); all off unless gi
                             line, # comments); read again when it changes or on SIGHUP
   --trust-proxy <addr[/bits]>[,...]   connections from these addresses are a proxy's:
                             the client is the one CF-Connecting-IP or X-Forwarded-For
-                            names (repeatable)
+                            names (repeatable; @<file>: the ranges in a file, one a line)
   --ping-every <time|never> a ping on a silent connection (default 30s)
   --status-every <time|never>  a status line on stderr; --status-file <path>: kept
                             up to date in a file (every 5 s)
@@ -192,7 +192,14 @@ fn run(args: Vec<String>) -> Result<(), String> {
             }
             "--writers" => policy.writers = Some(value()?.into()),
             "--trust-proxy" => {
-                for item in value()?.split(',').filter(|s| !s.is_empty()) {
+                // `@<file>`: the ranges in a file, one per line (# comments).
+                let v = value()?;
+                let text = match v.strip_prefix('@') {
+                    Some(path) => std::fs::read_to_string(path).map_err(|e| format!("--trust-proxy {path}: {e}"))?,
+                    None => v,
+                };
+                let items = text.lines().map(|l| l.split('#').next().unwrap_or_default()).flat_map(|l| l.split([',', ' ', '\t']));
+                for item in items.map(str::trim).filter(|s| !s.is_empty()) {
                     policy.trust_proxy.push(Cidr::parse(item).ok_or(format!("--trust-proxy: not an address or range: {item}"))?);
                 }
             }

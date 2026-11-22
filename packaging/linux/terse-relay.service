@@ -1,0 +1,49 @@
+# A public Tersenet relay (README "Running a public relay").
+#
+#   sudo useradd --system --home /var/lib/terse-relay --create-home terse-relay
+#   sudo install -m 755 terse-relay /usr/local/bin/
+#   sudo install -d -o terse-relay /etc/terse-relay
+#   sudo -u terse-relay touch /etc/terse-relay/writers     # one feed key a line
+#   curl -s https://www.cloudflare.com/ips-v4 https://www.cloudflare.com/ips-v6 \
+#     | sudo tee /etc/terse-relay/proxies                   # one range a line
+#   sudo cp terse-relay.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now terse-relay
+#
+# The status: journalctl -u terse-relay | grep status, or
+# cat /run/terse-relay/status. A changed writers file is read within 2 s
+# (or at once: systemctl reload terse-relay).
+
+[Unit]
+Description=Tersenet relay
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=terse-relay
+ExecStart=/usr/local/bin/terse-relay --public \
+    --listen 0.0.0.0:8080 \
+    --store /var/lib/terse-relay/store \
+    --max-store-bytes 20G \
+    --writers /etc/terse-relay/writers \
+    --trust-proxy @/etc/terse-relay/proxies \
+    --status-file /run/terse-relay/status
+ExecReload=/bin/kill -HUP $MAINPID
+# SIGTERM closes every connection with a close frame, then exits.
+KillSignal=SIGTERM
+TimeoutStopSec=10
+Restart=on-failure
+RestartSec=2
+RuntimeDirectory=terse-relay
+StateDirectory=terse-relay
+# One thread per connection; --max-connections (1000 with --public) bounds them.
+LimitNOFILE=4096
+TasksMax=2048
+MemoryMax=700M
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/terse-relay
+
+[Install]
+WantedBy=multi-user.target
