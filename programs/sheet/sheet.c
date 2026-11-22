@@ -135,6 +135,8 @@ typedef uint64_t u64;
 #define CHART_H 90
 #define STACK_MAX 40
 
+#define KEY_A 0x04
+#define KEY_B 0x05
 #define KEY_C 0x06
 #define KEY_D 0x07
 #define KEY_G 0x0A
@@ -143,22 +145,44 @@ typedef uint64_t u64;
 #define KEY_P 0x13
 #define KEY_R 0x15
 #define KEY_S 0x16
+#define KEY_V 0x19
+#define KEY_X 0x1B
 #define KEY_Y 0x1C
+#define KEY_Z 0x1D
 #define KEY_F2 0x3B
+#define KEY_F4 0x3D
 #define KEY_DELETE 0x4C
+#define KEY_LSHIFT 0xE1
+#define KEY_RSHIFT 0xE5
 #define MOD_SHIFT 0x01
 #define MOD_CTRL 0x02
+/* Two presses on one cell this many frames apart or less are a double-click. */
+#define DOUBLE_FRAMES 30
 
 /* Anchors of the page document. */
 #define A_HEAD 2000
 #define A_ROW 1000
 #define A_BOTTOM 999
+/* Each character of the content line's text (A_LINE + its byte offset),
+ * and of the text in the cell being edited: a press on one reports it. */
+#define A_LINE 3000
+#define A_CELL 3200
 
 /* Value kinds. */
-enum { K_EMPTY, K_NUM, K_STR, K_ERR, K_RANGE };
+enum { K_EMPTY, K_NUM, K_STR, K_ERR, K_RANGE, K_BOOL };
 /* Errors. */
-enum { E_NONE, E_DIV, E_CYCLE, E_ERR, E_REF, E_VALUE, E_NUM };
-static const char *const err_text[] = { "", "#DIV/0", "#CYCLE", "#ERR", "#REF", "#VALUE", "#NUM" };
+enum { E_NONE, E_DIV, E_CYCLE, E_ERR, E_REF, E_VALUE, E_NUM, E_NAME };
+static const char *const err_text[] = { "", "#DIV/0!", "#CYCLE!", "#ERROR!", "#REF!", "#VALUE!", "#NUM!", "#NAME?" };
+static const char *const err_why[] = {
+    "",
+    "division by zero",
+    "circular reference: the formula depends on its own cell",
+    "the formula cannot be read",
+    "a reference outside the sheet (A1 to Z99)",
+    "text or a range where a number is needed",
+    "a number out of range",
+    "no function of that name",
+};
 
 /* Cell flags. */
 #define F_FORMULA 0x01
@@ -166,6 +190,7 @@ static const char *const err_text[] = { "", "#DIV/0", "#CYCLE", "#ERR", "#REF", 
 #define F_NUM 0x04
 #define F_PCT 0x08
 #define F_BAD 0x10 /* a formula that cannot be read: its code is the error */
+#define F_BOOL 0x20 /* TRUE or FALSE typed */
 /* Recalculation states. */
 enum { S_CLEAN, S_DIRTY, S_BUSY };
 
@@ -190,11 +215,15 @@ enum {
     OP_GE,
     OP_FN,    /* function, argument count */
     OP_SMALL, /* a whole number, 2 bytes, signed */
+    OP_CAT,   /* & */
+    OP_BOOL,  /* 0 or 1 */
 };
-enum { FN_SUM, FN_AVERAGE, FN_MIN, FN_MAX, FN_COUNT, FN_ROUND, FN_ABS, FN_IF, FN_N };
-static const char *const fn_name[FN_N] = { "SUM", "AVERAGE", "MIN", "MAX", "COUNT", "ROUND", "ABS", "IF" };
-static const uint8_t fn_min[FN_N] = { 1, 1, 1, 1, 1, 1, 1, 2 };
-static const uint8_t fn_max[FN_N] = { 30, 30, 30, 30, 30, 2, 1, 3 };
+/* The functions over lists of values and ranges come first (aggregate). */
+enum { FN_SUM, FN_AVERAGE, FN_MIN, FN_MAX, FN_COUNT, FN_COUNTA, FN_AND, FN_OR, FN_ROUND, FN_ABS, FN_INT, FN_NOT, FN_IF, FN_N };
+#define FN_LISTS FN_OR
+static const char *const fn_name[FN_N] = { "SUM", "AVERAGE", "MIN", "MAX", "COUNT", "COUNTA", "AND", "OR", "ROUND", "ABS", "INT", "NOT", "IF" };
+static const uint8_t fn_min[FN_N] = { 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2 };
+static const uint8_t fn_max[FN_N] = { 30, 30, 30, 30, 30, 30, 30, 30, 2, 1, 1, 1, 3 };
 
 /* --- The cells ------------------------------------------------------------ */
 
@@ -457,10 +486,18 @@ static uint32_t cut_text(const uint8_t *p, uint32_t n, uint32_t width, uint8_t *
     return keep + 3;
 }
 
-/* The string value packed in an i64: pool offset and length. */
+/* The string value packed in an i64: offset, length, and whether it is in
+ * the pool (bit 24 clear) or in the strings that & made during this
+ * recalculation (set). */
 #define STR(off, len) ((i64)(off) | (i64)(len) << 16)
 #define STR_OFF(v) ((uint32_t)(v) & 0xFFFF)
 #define STR_LEN(v) ((uint32_t)((v) >> 16) & 0xFF)
+#define STR_MADE ((i64)1 << 24)
+#define MADE_MAX 4096
+static uint8_t made[MADE_MAX];
+static uint32_t made_used;
+
+static const uint8_t *str_p(i64 v) { return (v & STR_MADE ? made : pool) + STR_OFF(v); }
 
 /* A cell's raw text, without the ' that marks text. */
 static const uint8_t *text_of(uint16_t i, uint32_t *n)
@@ -479,10 +516,20 @@ static void update_disp(uint16_t i)
     uint8_t *d = c_disp[i];
     uint32_t n = 0;
     const uint8_t *p;
-    uint8_t kind = c_flag[i] & F_FORMULA ? c_kind[i] : c_flag[i] & F_NUM ? K_NUM : c_flag[i] & F_TEXT ? K_STR : K_EMPTY;
+    uint8_t kind = c_flag[i] & F_FORMULA ? c_kind[i]
+                   : c_flag[i] & F_NUM   ? K_NUM
+                   : c_flag[i] & F_BOOL  ? K_BOOL
+                   : c_flag[i] & F_TEXT  ? K_STR
+                                         : K_EMPTY;
     if (kind == K_NUM)
         n = format_num(c_val[i], c_flag[i] & F_PCT, CELL_WIDTH, d);
-    else if (kind == K_ERR) {
+    else if (kind == K_BOOL) {
+        p = (const uint8_t *)(c_val[i] ? "TRUE" : "FALSE");
+        while (p[n]) {
+            d[n] = p[n];
+            n++;
+        }
+    } else if (kind == K_ERR) {
         p = (const uint8_t *)err_text[c_val[i]];
         while (p[n]) {
             d[n] = p[n];
@@ -491,7 +538,7 @@ static void update_disp(uint16_t i)
     } else if (kind == K_STR) {
         uint32_t len;
         if (c_flag[i] & F_FORMULA) {
-            p = pool + STR_OFF(c_val[i]);
+            p = str_p(c_val[i]);
             len = STR_LEN(c_val[i]);
         } else
             p = text_of(i, &len);
@@ -593,10 +640,13 @@ static void emit_num(i64 v)
         emit((uint8_t)((u64)v >> (8 * k)));
 }
 
-/* A reference at the current position (a letter and a row number), or 0. */
+/* A reference at the current position (a letter and a row number, each
+ * with an optional $ before it), or 0. */
 static int read_ref(uint8_t *r, uint8_t *c)
 {
     uint32_t i = spos, row = 0, nd = 0;
+    if (i < send && src[i] == '$')
+        i++;
     if (i >= send || !is_alpha(src[i]))
         return 0;
     int col = upper(src[i]) - 'A';
@@ -605,6 +655,8 @@ static int read_ref(uint8_t *r, uint8_t *c)
         /* Two letters and digits: a column past Z. */
         uint32_t j = i;
         while (j < send && is_alpha(src[j]))
+            j++;
+        if (j < send && src[j] == '$')
             j++;
         if (j < send && is_digit(src[j])) {
             while (j < send && is_digit(src[j]))
@@ -617,6 +669,8 @@ static int read_ref(uint8_t *r, uint8_t *c)
         }
         return 0;
     }
+    if (i < send && src[i] == '$')
+        i++;
     while (i < send && is_digit(src[i])) {
         if (row < 1000)
             row = row * 10 + (src[i] - '0');
@@ -681,7 +735,7 @@ static void p_primary(int depth)
         return;
     }
     if (ch == '#') {
-        /* "#REF" left by a copy that moved a reference off the sheet. */
+        /* "#REF!" left by a copy that moved a reference off the sheet. */
         perr = perr ? perr : (send - spos >= 4 && src[spos + 1] == 'R' && src[spos + 2] == 'E' && src[spos + 3] == 'F' ? E_REF : E_ERR);
         spos = send;
         return;
@@ -719,8 +773,24 @@ static void p_primary(int depth)
             if (k == len && !name[k])
                 break;
         }
-        if (f == FN_N || peek() != '(') {
-            perr = E_ERR;
+        if (peek() != '(') {
+            /* TRUE and FALSE; any other name is unknown. */
+            static const char *const tf[2] = { "FALSE", "TRUE" };
+            for (uint32_t t = 0; t < 2; t++) {
+                uint32_t k = 0;
+                while (k < len && tf[t][k] && upper(src[start + k]) == tf[t][k])
+                    k++;
+                if (k == len && !tf[t][k]) {
+                    emit(OP_BOOL);
+                    emit((uint8_t)t);
+                    return;
+                }
+            }
+            perr = E_NAME;
+            return;
+        }
+        if (f == FN_N) {
+            perr = E_NAME;
             return;
         }
         spos++;
@@ -814,9 +884,19 @@ static void p_add(int depth)
     }
 }
 
-static void p_expr(int depth)
+static void p_cat(int depth)
 {
     p_add(depth);
+    while (!perr && peek() == '&') {
+        spos++;
+        p_add(depth);
+        emit(OP_CAT);
+    }
+}
+
+static void p_expr(int depth)
+{
+    p_cat(depth);
     while (!perr) {
         int ch = peek(), op;
         if (ch == '=') {
@@ -834,7 +914,7 @@ static void p_expr(int depth)
                 op = ch == '<' ? OP_LT : OP_GT;
         } else
             break;
-        p_add(depth);
+        p_cat(depth);
         emit((uint8_t)op);
     }
 }
@@ -882,6 +962,16 @@ static uint8_t compile(const uint8_t *p, uint32_t n, i64 *val)
                 *val = neg ? -v : v;
                 return flag;
             }
+        }
+    }
+    /* TRUE and FALSE, in any case. */
+    if (n == 4 || n == 5) {
+        const char *w = n == 4 ? "TRUE" : "FALSE";
+        for (at = 0; at < n && upper(p[at]) == w[at]; at++)
+            ;
+        if (at == n) {
+            *val = n == 4 ? SCALE : 0;
+            return F_BOOL;
         }
     }
     return F_TEXT;
@@ -992,7 +1082,7 @@ static int set_cell(uint16_t i, const uint8_t *p, uint32_t n)
 
 /* --- Formulas: computing -------------------------------------------------- */
 
-static const uint8_t op_size[] = { 1, 9, 0, 3, 5, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 3, 3 };
+static const uint8_t op_size[] = { 1, 9, 0, 3, 5, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 3, 3, 1, 2 };
 
 static uint32_t op_len(const uint8_t *p) { return *p == OP_STR ? 2 + p[1] : op_size[*p]; }
 
@@ -1014,8 +1104,8 @@ static value cell_value(uint16_t i)
     if (c_flag[i] & F_FORMULA) {
         x.k = c_kind[i];
         x.v = c_val[i];
-    } else if (c_flag[i] & F_NUM) {
-        x.k = K_NUM;
+    } else if (c_flag[i] & (F_NUM | F_BOOL)) {
+        x.k = c_flag[i] & F_NUM ? K_NUM : K_BOOL;
         x.v = c_val[i];
     } else if (c_flag[i] & F_TEXT) {
         uint32_t n;
@@ -1041,9 +1131,15 @@ static value num(i64 v)
 }
 
 /* A number from a value: 0 with *e set for an error or text. */
+static value boolean(int t)
+{
+    value x = { K_BOOL, t ? SCALE : 0 };
+    return x;
+}
+
 static i64 as_num(value x, uint8_t *e)
 {
-    if (x.k == K_NUM)
+    if (x.k == K_NUM || x.k == K_BOOL)
         return x.v;
     if (x.k == K_EMPTY)
         return 0;
@@ -1054,7 +1150,7 @@ static i64 as_num(value x, uint8_t *e)
 
 static int cmp_text(value a, value b)
 {
-    const uint8_t *p = pool + STR_OFF(a.v), *q = pool + STR_OFF(b.v);
+    const uint8_t *p = str_p(a.v), *q = str_p(b.v);
     uint32_t n = STR_LEN(a.v), m = STR_LEN(b.v), i;
     for (i = 0; i < n && i < m; i++) {
         int x = upper(p[i]), y = upper(q[i]);
@@ -1094,7 +1190,64 @@ static value compare(uint8_t op, value a, value b)
     case OP_LE: c = c <= 0; break;
     default: c = c >= 0; break;
     }
-    return num(c ? SCALE : 0);
+    return boolean(c);
+}
+
+/* Writes a number as & joins it: no separators, no trailing zeros. */
+static uint32_t plain_num(i64 v, uint8_t *out)
+{
+    uint32_t frac, n = 0, k = 4;
+    u64 ip = divs(mag(v), SCALE, &frac);
+    uint8_t f[4];
+    if (v < 0)
+        out[n++] = '-';
+    n += put_int(ip, 0, out + n);
+    for (uint32_t i = 0; i < 4; i++) {
+        f[3 - i] = (uint8_t)('0' + frac % 10);
+        frac /= 10;
+    }
+    while (k && f[k - 1] == '0')
+        k--;
+    if (k) {
+        out[n++] = '.';
+        for (uint32_t i = 0; i < k; i++)
+            out[n++] = f[i];
+    }
+    return n;
+}
+
+/* a & b: the text of each, joined in the strings made this recalculation
+ * (at most 255 bytes). */
+static value concat(value a, value b)
+{
+    value two[2] = { a, b };
+    uint32_t start = made_used, n = 0;
+    for (uint32_t k = 0; k < 2; k++) {
+        value x = two[k];
+        uint8_t buf[40];
+        const uint8_t *p = buf;
+        uint32_t len = 0;
+        if (x.k == K_ERR)
+            return x;
+        if (x.k == K_RANGE)
+            return err(E_VALUE);
+        if (x.k == K_STR) {
+            p = str_p(x.v);
+            len = STR_LEN(x.v);
+        } else if (x.k == K_NUM)
+            len = plain_num(x.v, buf);
+        else if (x.k == K_BOOL) {
+            p = (const uint8_t *)(x.v ? "TRUE" : "FALSE");
+            len = x.v ? 4 : 5;
+        }
+        if (n + len > 255 || start + n + len > MADE_MAX)
+            return err(E_VALUE);
+        memcpy(made + start + n, p, len);
+        n += len;
+        work += (int32_t)len / 4 + 4;
+    }
+    made_used = start + n;
+    return (value){ K_STR, STR(start, n) | STR_MADE };
 }
 
 static value power(i64 x, i64 y)
@@ -1148,11 +1301,13 @@ static value round_to(i64 x, i64 places)
     return num(r);
 }
 
-/* SUM, AVERAGE, MIN, MAX, COUNT over the n values at a. */
+/* SUM, AVERAGE, MIN, MAX, COUNT, COUNTA, AND, OR over the n values at a.
+ * In ranges, cells that are not numbers are skipped (AND and OR take
+ * TRUE and FALSE too; COUNTA counts every cell that is not empty). */
 static value aggregate(uint8_t f, value *a, uint32_t n)
 {
     i64 sum = 0, best = 0, count = 0;
-    uint32_t i;
+    uint32_t i, zeros = 0;
     for (i = 0; i < n; i++) {
         value x = a[i];
         uint32_t r, c, r0 = 0, c0 = 0, r1 = 0, c1 = 0;
@@ -1166,36 +1321,45 @@ static value aggregate(uint8_t f, value *a, uint32_t n)
             for (c = c0; c <= c1; c++) {
                 value y = x;
                 work += 3;
-                if (x.k == K_RANGE) {
+                if (x.k == K_RANGE)
                     y = cell_value(idx(r, c));
-                    if (y.k == K_ERR && f != FN_COUNT)
-                        return y;
-                    if (y.k != K_NUM)
+                if (f == FN_COUNTA) {
+                    if (y.k != K_EMPTY)
+                        count += SCALE;
+                    continue;
+                }
+                if (y.k == K_EMPTY)
+                    continue;
+                if (y.k == K_ERR) {
+                    if (f == FN_COUNT)
                         continue;
-                } else {
-                    if (y.k == K_EMPTY)
+                    return y;
+                }
+                if (x.k == K_RANGE) {
+                    if (y.k != K_NUM && !(y.k == K_BOOL && f >= FN_AND))
                         continue;
-                    if (y.k == K_ERR) {
-                        if (f == FN_COUNT)
-                            continue;
-                        return y;
-                    }
-                    if (y.k == K_STR) {
-                        if (f == FN_COUNT)
-                            continue;
-                        return err(E_VALUE);
-                    }
+                } else if (y.k == K_STR) {
+                    if (f == FN_COUNT)
+                        continue;
+                    return err(E_VALUE);
                 }
                 if (!count || (f == FN_MIN && y.v < best) || (f == FN_MAX && y.v > best))
                     best = y.v;
                 count += SCALE;
+                zeros += !y.v;
                 if (!add_fix(sum, y.v, &sum))
                     return err(E_NUM);
             }
     }
     switch (f) {
     case FN_SUM: return num(sum);
-    case FN_COUNT: return num(count);
+    case FN_COUNT:
+    case FN_COUNTA: return num(count);
+    case FN_AND:
+    case FN_OR:
+        if (!count)
+            return err(E_VALUE);
+        return boolean(f == FN_AND ? !zeros : (u64)zeros * SCALE < (u64)count);
     case FN_MIN:
     case FN_MAX: return num(count ? best : 0);
     default:
@@ -1230,6 +1394,11 @@ static value evaluate(uint16_t i)
             break;
         }
         case OP_SMALL: st[sp++] = num((i64)(p[pc + 1] | p[pc + 2] << 8) * SCALE); break;
+        case OP_BOOL: st[sp++] = boolean(p[pc + 1]); break;
+        case OP_CAT:
+            b = st[--sp];
+            st[sp - 1] = concat(st[sp - 1], b);
+            break;
         case OP_STR: st[sp++] = (value){ K_STR, STR(p + pc + 2 - pool, p[pc + 1]) }; break;
         case OP_REF: st[sp++] = cell_value(idx(p[pc + 1], p[pc + 2])); break;
         case OP_RANGE:
@@ -1250,7 +1419,7 @@ static value evaluate(uint16_t i)
         case OP_FN: {
             uint8_t f = p[pc + 1], k = p[pc + 2];
             value *args = st + sp - k, r;
-            if (f <= FN_COUNT)
+            if (f <= FN_LISTS)
                 r = aggregate(f, args, k);
             else if (f == FN_IF) {
                 a = args[0];
@@ -1259,7 +1428,7 @@ static value evaluate(uint16_t i)
                 else if (a.k == K_STR || a.k == K_RANGE)
                     r = err(E_VALUE);
                 else
-                    r = a.v ? args[1] : k == 3 ? args[2] : num(0);
+                    r = a.v ? args[1] : k == 3 ? args[2] : boolean(0);
                 if (r.k == K_RANGE)
                     r = err(E_VALUE);
             } else {
@@ -1271,7 +1440,14 @@ static value evaluate(uint16_t i)
                     r = err(e);
                 else if (f == FN_ABS)
                     r = num(x < 0 ? -x : x);
-                else
+                else if (f == FN_NOT)
+                    r = boolean(!x);
+                else if (f == FN_INT) {
+                    /* Down to the whole number below. */
+                    uint32_t frac;
+                    i64 w = (i64)divs(mag(x), SCALE, &frac) * SCALE;
+                    r = num(x < 0 ? -w - (frac ? SCALE : 0) : w);
+                } else
                     r = round_to(x, y);
             }
             sp -= k;
@@ -1349,6 +1525,7 @@ static void start_recalc(void)
     rsp = rscan = 0;
     recalcing = 1;
     dirty_all = 0;
+    made_used = 0;
 }
 
 static void set_result(uint16_t i, value v)
@@ -1450,9 +1627,20 @@ static void recalc_step(void)
 
 static uint32_t top, left;         /* the first row and column shown */
 static uint32_t sr, sc, ar, ac;    /* the selected cell and the range's other corner */
-static uint8_t editing;
+/* Editing: the entry in ebuf, the text cursor at ecaret. An entry started
+ * by typing is in "enter" mode (the arrows keep it and move, or point at a
+ * cell for a formula); F2, a double-click or a click on the text is "edit"
+ * mode (the arrows move the cursor). */
+static uint8_t editing, emode;
+enum { M_ENTER, M_EDIT };
 static uint8_t ebuf[RAW_MAX];
 static uint32_t elen, ecaret;
+/* Pointing: a reference put into the formula by a click, a drag or the
+ * arrows, at ebuf[pt_s, pt_e), for the range (pr0, pc0)-(pr1, pc1); the
+ * next one replaces it while the cursor stays at its end. */
+static uint8_t pt_on, pt_drag;
+static uint32_t pt_s, pt_e, pr0, pc0, pr1, pc1;
+static int32_t tab_col = -1; /* where a row of Tab entries started: Enter goes back to it */
 static uint8_t has_vec, keeps;
 static uint8_t chart_kind;         /* 0 none, 1 bar, 2 line */
 static uint8_t ch_r0, ch_c0, ch_r1, ch_c1;
@@ -1479,7 +1667,7 @@ static uint32_t g_y[VROWS_ALL + 2];
 /* What a page document showed: the rows, the first row and column, the
  * selection. The overlay draws the one shown (vis_v), not the newest. */
 static struct {
-    uint32_t top, left, sr, sc, ar, ac, rows;
+    uint32_t top, left, sr, sc, ar, ac, rows, pt, pr0, pc0, pr1, pc1;
 } pend_v, vis_v;
 static uint16_t loc_ids[VROWS_ALL + 2];
 static uint32_t loc_n, loc_at;
@@ -1713,16 +1901,92 @@ static void range_name(char *out, uint32_t *n, uint32_t r0, uint32_t c0, uint32_
     }
 }
 
+static const uint8_t ACC[3] = { 26, 100, 210 };
+static const uint8_t PT[3] = { 214, 98, 0 }; /* the range being pointed at */
+
+/* The text cursor: a bar in the accent colour. */
+static void caret_mark(void)
+{
+    doc_anchor(0);
+    doc_colour(ACC[0], ACC[1], ACC[2]);
+    doc_font(DOC_SANS, DOC_BOLD);
+    text("|");
+    doc_font(DOC_SANS, 0);
+    doc_colour(25, 25, 25);
+}
+
+/* p[from, to) with each character in its own anchor (base + its offset),
+ * so that a press on it tells which one it is; the text cursor before
+ * offset `at` (none if `at` is past `to`). */
+static void anchored(const uint8_t *p, uint32_t from, uint32_t to, uint16_t base, uint32_t at)
+{
+    uint32_t k = from;
+    for (;;) {
+        if (k == at)
+            caret_mark();
+        if (k >= to)
+            break;
+        uint32_t q = k + 1;
+        while (q < to && (p[q] & 0xC0) == 0x80)
+            q++;
+        doc_anchor((uint16_t)(base + k));
+        doc_text(p + k, q - k);
+        k = q;
+    }
+    doc_anchor(0);
+}
+
+/* The part of the entry that the cell being edited shows: as much as fits
+ * around the cursor. */
+static void edit_window(uint32_t *from, uint32_t *to)
+{
+    uint32_t w = 0, s = ecaret, e = ecaret, room = CELL_WIDTH - 40;
+    if (est_width(ebuf, elen) > room)
+        room -= 180; /* an ellipsis at each end */
+    while (s) {
+        uint32_t p = s - 1, cw;
+        while (p && (ebuf[p] & 0xC0) == 0x80)
+            p--;
+        cw = est_width(ebuf + p, s - p);
+        if (w + cw > room)
+            break;
+        w += cw;
+        s = p;
+    }
+    while (e < elen) {
+        uint32_t q = e + 1, cw;
+        while (q < elen && (ebuf[q] & 0xC0) == 0x80)
+            q++;
+        cw = est_width(ebuf + e, q - e);
+        if (w + cw > room)
+            break;
+        w += cw;
+        e = q;
+    }
+    *from = s;
+    *to = e;
+}
+
+static int can_point(void);
+
+static int pointed(uint32_t r, uint32_t c)
+{
+    uint32_t a = pr0 < pr1 ? pr0 : pr1, b = pr0 < pr1 ? pr1 : pr0, x = pc0 < pc1 ? pc0 : pc1, y = pc0 < pc1 ? pc1 : pc0;
+    return editing && pt_on && r >= a && r <= b && c >= x && c <= y;
+}
+
 static void build_doc(void)
 {
-    static const uint8_t ACC[3] = { 26, 100, 210 };
     uint8_t align[8];
     char nm[8];
     uint32_t n, i, k, rows = vrows();
     uint16_t sel = idx(sr, sc);
     columns_align();
     doc_begin(pdoc, sizeof pdoc - 1);
-    /* The entry line. */
+    /* The content line: the selection's name, then the selected cell's
+     * content as typed (a formula, not its value), or the entry being
+     * typed with its text cursor. Every character is an anchor: a press
+     * on one puts the cursor there. */
     doc_colour(25, 25, 25);
     doc_size(14);
     doc_paragraph(DOC_START, 6, 4, DOC_NOWRAP | DOC_ELLIPSIS);
@@ -1733,24 +1997,30 @@ static void build_doc(void)
     doc_text(nm, n);
     doc_font(DOC_SANS, 0);
     text("   ");
-    if (editing) {
-        doc_text(ebuf, ecaret);
-        doc_colour(ACC[0], ACC[1], ACC[2]);
-        doc_font(DOC_SANS, DOC_BOLD);
-        text("|");
-        doc_font(DOC_SANS, 0);
-        doc_colour(25, 25, 25);
-        doc_text(ebuf + ecaret, elen - ecaret);
-    } else if (c_rlen[sel]) {
-        if (c_flag[sel] & F_FORMULA && c_kind[sel] == K_NUM) {
-            /* The formula, then its value. */
-            doc_text(pool + c_off[sel], c_rlen[sel]);
-            doc_colour(120, 120, 120);
-            text("   ");
+    if (editing)
+        anchored(ebuf, 0, elen, A_LINE, ecaret);
+    else if (c_rlen[sel]) {
+        anchored(pool + c_off[sel], 0, c_rlen[sel], A_LINE, RAW_MAX + 1);
+        if (c_flag[sel] & F_FORMULA) {
+            /* Then its value, or what its error means. */
             uint8_t b[40];
-            doc_text(b, format_num(c_val[sel], 0, 0, b));
-        } else
-            doc_text(pool + c_off[sel], c_rlen[sel]);
+            text("   ");
+            if (c_kind[sel] == K_ERR) {
+                doc_colour(200, 40, 40);
+                text(err_text[c_val[sel]]);
+                text(" ");
+                text(err_why[c_val[sel]]);
+            } else {
+                doc_colour(120, 120, 120);
+                text("= ");
+                if (c_kind[sel] == K_NUM)
+                    doc_text(b, format_num(c_val[sel], 0, 0, b));
+                else if (c_kind[sel] == K_STR)
+                    doc_text(str_p(c_val[sel]), STR_LEN(c_val[sel]));
+                else
+                    doc_text(c_disp[sel], c_dlen[sel]);
+            }
+        }
     }
     /* The table: row numbers and VCOLS columns. */
     doc_paragraph(DOC_START, 0, 4, 0);
@@ -1792,19 +2062,32 @@ static void build_doc(void)
         for (k = 0; k < VCOLS; k++) {
             uint16_t c = idx(r, left + k);
             doc_cell();
-            int here = c == sel && !has_vec;
-            if (here) {
-                doc_colour(ACC[0], ACC[1], ACC[2]);
+            if (c == sel && editing) {
+                /* The entry being typed, in its cell too. */
+                uint32_t s, e;
+                edit_window(&s, &e);
+                doc_colour(25, 25, 25);
+                if (s)
+                    text("\xE2\x80\xA6");
+                anchored(ebuf, s, e, A_CELL, ecaret);
+                if (e < elen)
+                    text("\xE2\x80\xA6");
+                continue;
+            }
+            int here = c == sel && !has_vec, pt = !has_vec && pointed(r, left + k);
+            if (here || pt) {
+                doc_colour(pt ? PT[0] : ACC[0], pt ? PT[1] : ACC[1], pt ? PT[2] : ACC[2]);
                 doc_font(DOC_SANS, DOC_BOLD);
             }
             if (c_dlen[c]) {
-                if (!here)
-                    doc_colour(c_flag[c] & F_FORMULA && c_kind[c] == K_ERR ? 200 : 25, c_flag[c] & F_FORMULA && c_kind[c] == K_ERR ? 40 : 25,
-                               c_flag[c] & F_FORMULA && c_kind[c] == K_ERR ? 40 : 25);
+                if (!here && !pt) {
+                    int bad = c_flag[c] & F_FORMULA && c_kind[c] == K_ERR;
+                    doc_colour(bad ? 200 : 25, bad ? 40 : 25, bad ? 40 : 25);
+                }
                 doc_text(c_disp[c], c_dlen[c]);
-            } else if (here)
+            } else if (here || pt)
                 text("\xC2\xB7");
-            if (here)
+            if (here || pt)
                 doc_font(DOC_SANS, 0);
         }
     }
@@ -1812,7 +2095,8 @@ static void build_doc(void)
     doc_table_end();
     if (chart_kind)
         chart_doc();
-    /* The status line. */
+    /* The status line: while an entry is typed, its mode and keys; else
+     * what happened last and how to begin an entry. */
     doc_paragraph(DOC_START, 6, 6, DOC_NOWRAP | DOC_ELLIPSIS);
     doc_size(11);
     doc_font(DOC_SANS, 0);
@@ -1820,19 +2104,31 @@ static void build_doc(void)
         doc_colour(180, 100, 0);
         text("Calculating\xE2\x80\xA6  ");
     }
-    if (*status) {
-        doc_colour(26, 100, 210);
-        text(status);
-        text("   ");
+    doc_colour(90, 90, 90);
+    if (editing) {
+        int point = pt_on || (emode == M_ENTER && can_point());
+        doc_font(DOC_SANS, DOC_BOLD);
+        if (point)
+            doc_colour(PT[0], PT[1], PT[2]);
+        text(point ? "Point  " : emode == M_EDIT ? "Edit  " : "Enter  ");
+        doc_font(DOC_SANS, 0);
+        doc_colour(90, 90, 90);
+        if (point)
+            text("Click a cell or drag over a range (or use the arrows) to put it in the formula \xC2\xB7 Enter keeps \xC2\xB7 Esc cancels");
+        else if (emode == M_EDIT)
+            text("\xE2\x86\x90 \xE2\x86\x92 Home End move the cursor \xC2\xB7 Enter keeps \xC2\xB7 Esc cancels \xC2\xB7 F4 makes $A$1 \xC2\xB7 F2 points with the arrows");
+        else
+            text("Enter keeps \xC2\xB7 Tab or an arrow keeps and moves \xC2\xB7 F2 moves the cursor in the text \xC2\xB7 Esc cancels");
+    } else {
+        if (*status) {
+            doc_colour(26, 100, 210);
+            text(status);
+            text("   ");
+            doc_colour(130, 130, 130);
+        }
+        text("Type to fill a cell, = to start a formula \xC2\xB7 F2 or double-click edits \xC2\xB7 Ctrl+Z undo \xC2\xB7 "
+             "Ctrl+C/X copy/cut, Ctrl+B paste \xC2\xB7 Ctrl+D/R fill \xC2\xB7 Ctrl+G/L chart \xC2\xB7 Ctrl+S save \xC2\xB7 Ctrl+P publish \xC2\xB7 Ctrl+N new");
     }
-    doc_colour(130, 130, 130);
-    if (chart_kind) {
-        range_name(nm, &n, ch_r0, ch_c0, ch_r1, ch_c1);
-        text(chart_kind == 1 ? "Bar chart of " : "Line chart of ");
-        doc_text(nm, n);
-        text(ch_n > 8 ? " (labels for at most 8)   " : "   ");
-    }
-    text("F2 edit  Ctrl+C/Y copy/paste  Ctrl+D/R fill  Ctrl+G/L chart  Ctrl+S save  Ctrl+P publish  Ctrl+N new");
     doc_end();
     page_submit(pdoc, doc_length(pdoc));
     /* Where the rows are, in this layout. */
@@ -1852,6 +2148,11 @@ static void build_doc(void)
     pend_v.ar = ar;
     pend_v.ac = ac;
     pend_v.rows = rows;
+    pend_v.pt = editing && pt_on;
+    pend_v.pr0 = pr0;
+    pend_v.pc0 = pc0;
+    pend_v.pr1 = pr1;
+    pend_v.pc1 = pc1;
 }
 
 static void located(const page_place *p)
@@ -1917,6 +2218,29 @@ static void build_vec(void)
         vec_colour(26, 100, 210, 36);
         vrect((c0 + 1) * COLW, (int32_t)g_y[1 + r0], (c1 + 2) * COLW, (int32_t)g_y[2 + r1]);
     }
+    if (vis_v.pt) {
+        /* The range a formula is pointing at: shaded, with an orange edge. */
+        int32_t a = (int32_t)(vis_v.pr0 < vis_v.pr1 ? vis_v.pr0 : vis_v.pr1) - (int32_t)top;
+        int32_t b = (int32_t)(vis_v.pr0 < vis_v.pr1 ? vis_v.pr1 : vis_v.pr0) - (int32_t)top;
+        int32_t x = (int32_t)(vis_v.pc0 < vis_v.pc1 ? vis_v.pc0 : vis_v.pc1) - (int32_t)left;
+        int32_t y = (int32_t)(vis_v.pc0 < vis_v.pc1 ? vis_v.pc1 : vis_v.pc0) - (int32_t)left;
+        a = a < 0 ? 0 : a;
+        b = b >= (int32_t)rows ? (int32_t)rows - 1 : b;
+        x = x < 0 ? 0 : x;
+        y = y >= VCOLS ? VCOLS - 1 : y;
+        if (a <= b && x <= y) {
+            int32_t x0 = (x + 1) * COLW, x1 = (y + 2) * COLW, ya = (int32_t)g_y[1 + a], yb = (int32_t)g_y[2 + b];
+            vec_colour(214, 98, 0, 40);
+            vrect(x0, ya, x1, yb);
+            vec_colour(214, 98, 0, 255);
+            vec_width(24);
+            vec_move((int16_t)(x0 * 16), (int16_t)(ya * 16));
+            vec_line((int16_t)(x1 * 16), (int16_t)(ya * 16));
+            vec_line((int16_t)(x1 * 16), (int16_t)(yb * 16));
+            vec_line((int16_t)(x0 * 16), (int16_t)(yb * 16));
+            vec_line((int16_t)(x0 * 16), (int16_t)(ya * 16));
+        }
+    }
     int32_t r = (int32_t)sr - (int32_t)top, c = (int32_t)sc - (int32_t)left;
     if (r >= 0 && r < (int32_t)rows && c >= 0 && c < VCOLS) {
         int32_t x0 = (c + 1) * COLW * 16, x1 = (c + 2) * COLW * 16;
@@ -1933,60 +2257,246 @@ static void build_vec(void)
     vec_submit(vlist, vec_length(vlist));
 }
 
-/* --- Moving and editing --------------------------------------------------- */
+/* --- Moving --------------------------------------------------------------- */
 
-static void show_selection(void)
+/* Scrolls so that cell (r, c) is shown. */
+static void show_cell(uint32_t r, uint32_t c)
 {
     uint32_t rows = vrows();
-    if (sr < top)
-        top = sr;
-    if (sr >= top + rows)
-        top = sr - rows + 1;
-    if (sc < left)
-        left = sc;
-    if (sc >= left + VCOLS)
-        left = sc - VCOLS + 1;
+    if (r < top)
+        top = r;
+    if (r >= top + rows)
+        top = r - rows + 1;
+    if (c < left)
+        left = c;
+    if (c >= left + VCOLS)
+        left = c - VCOLS + 1;
     doc_dirty = 1;
 }
 
+static void show_selection(void) { show_cell(sr, sc); }
+
+static uint32_t clamp(int32_t v, uint32_t n) { return v < 0 ? 0 : v >= (int32_t)n ? n - 1 : (uint32_t)v; }
+
 static void move_to(int32_t r, int32_t c, int extend)
 {
-    if (r < 0)
-        r = 0;
-    if (r >= NROWS)
-        r = NROWS - 1;
-    if (c < 0)
-        c = 0;
-    if (c >= NCOLS)
-        c = NCOLS - 1;
-    sr = (uint32_t)r;
-    sc = (uint32_t)c;
+    sr = clamp(r, NROWS);
+    sc = clamp(c, NCOLS);
     if (!extend) {
         ar = sr;
         ac = sc;
     }
     new_armed = 0;
+    tab_col = -1;
     show_selection();
 }
 
-static void start_edit(int keep)
+/* Enter: down (Shift: up); after a row of entries kept with Tab, to the
+ * column the row started in, as spreadsheets do. */
+static void enter_move(int shift)
+{
+    int32_t c = tab_col >= 0 && !shift ? tab_col : (int32_t)sc;
+    move_to((int32_t)sr + (shift ? -1 : 1), c, 0);
+}
+
+static void tab_move(int shift)
+{
+    int32_t t = tab_col >= 0 ? tab_col : (int32_t)sc;
+    move_to((int32_t)sr, (int32_t)sc + (shift ? -1 : 1), 0);
+    tab_col = t;
+}
+
+static int filled(int32_t r, int32_t c) { return r >= 0 && r < NROWS && c >= 0 && c < NCOLS && c_rlen[idx((uint32_t)r, (uint32_t)c)]; }
+
+/* Ctrl+arrow: to the edge of the block of filled cells, or to the next
+ * filled cell, or to the sheet's edge. */
+static void jump(int dr, int dc, int extend)
+{
+    int32_t r = (int32_t)sr, c = (int32_t)sc;
+    if (filled(r, c) && filled(r + dr, c + dc))
+        while (filled(r + dr, c + dc)) {
+            r += dr;
+            c += dc;
+        }
+    else {
+        while (r + dr >= 0 && r + dr < NROWS && c + dc >= 0 && c + dc < NCOLS) {
+            r += dr;
+            c += dc;
+            if (filled(r, c))
+                break;
+        }
+    }
+    move_to(r, c, extend);
+}
+
+/* --- Undo ----------------------------------------------------------------- */
+
+/* Every change the user makes to cells (an entry kept, a paste, a fill, a
+ * clear, a move) is a group in this log: a mark with the selection, then
+ * one record per cell changed with its text before and after. Ctrl+Z puts
+ * back the text before, Ctrl+Y the text after; a new change drops what
+ * was undone. Records are padded to 4 bytes and end in their size, so the
+ * log is walked both ways; when it is full the oldest groups go. A single
+ * change too large for it cannot be undone (and the log is emptied). */
+#define ULOG 16384
+static uint8_t ulog[ULOG] __attribute__((aligned(4)));
+static uint32_t u_cur, u_end, u_group;
+static uint8_t u_off;
+
+static int is_mark(uint32_t at) { return ulog[at] == 0xFF && ulog[at + 1] == 0xFF; }
+
+static uint32_t rec_size(uint32_t at)
+{
+    uint32_t ol, nl;
+    if (is_mark(at))
+        return 8;
+    ol = ulog[at + 2];
+    nl = ulog[at + 3 + ol];
+    return (2 + 1 + ol + 1 + nl + 2 + 3) & ~3u;
+}
+
+/* Room for `size` more bytes, dropping the oldest groups (down to half the
+ * log, so that it is seldom moved), never the one being logged. */
+static int make_room(uint32_t size)
+{
+    uint32_t at = 0, cut = 0, *d = (uint32_t *)ulog, *s, k;
+    if (u_end + size <= ULOG)
+        return 1;
+    while (at < u_group) {
+        at += rec_size(at);
+        if (at >= u_group || is_mark(at)) {
+            cut = at;
+            if (u_end - cut + size <= ULOG / 2)
+                break;
+        }
+    }
+    if (!cut || u_end - cut + size > ULOG) {
+        u_off = 1;
+        u_cur = u_end = u_group = 0;
+        return 0;
+    }
+    s = (uint32_t *)(ulog + cut);
+    for (k = 0; k < (u_end - cut) / 4; k++)
+        d[k] = s[k];
+    u_end -= cut;
+    u_group -= cut;
+    u_cur = u_end;
+    return 1;
+}
+
+/* A new group: the mark, with the selection to show when it is undone. */
+static void ubegin(void)
+{
+    u_end = u_cur;
+    u_off = 0;
+    u_group = u_end;
+    if (!make_room(8))
+        return;
+    uint8_t *w = ulog + u_end;
+    w[0] = w[1] = 0xFF;
+    w[2] = (uint8_t)sr;
+    w[3] = (uint8_t)sc;
+    w[4] = (uint8_t)ar;
+    w[5] = (uint8_t)ac;
+    w[6] = 8;
+    w[7] = 0;
+    u_end += 8;
+    u_cur = u_end;
+}
+
+/* Cell i is about to become p[0, n). */
+static void ulog_put(uint16_t i, const uint8_t *p, uint32_t n)
+{
+    uint32_t ol = c_rlen[i], size;
+    const uint8_t *o = pool + c_off[i];
+    if (u_off)
+        return;
+    if (n > RAW_MAX)
+        n = RAW_MAX;
+    if (ol == n && !memcmp(o, p, n))
+        return;
+    size = (2 + 1 + ol + 1 + n + 2 + 3) & ~3u;
+    if (!make_room(size))
+        return;
+    uint8_t *w = ulog + u_end;
+    w[0] = (uint8_t)i;
+    w[1] = (uint8_t)(i >> 8);
+    w[2] = (uint8_t)ol;
+    memcpy(w + 3, o, ol);
+    w[3 + ol] = (uint8_t)n;
+    memcpy(w + 4 + ol, p, n);
+    w[size - 2] = (uint8_t)size;
+    w[size - 1] = (uint8_t)(size >> 8);
+    u_end += size;
+    u_cur = u_end;
+}
+
+/* Changes the cell as the user asked: logged for undo. */
+static int put_cell(uint16_t i, const uint8_t *p, uint32_t n)
+{
+    ulog_put(i, p, n);
+    return set_cell(i, p, n);
+}
+
+/* --- Editing -------------------------------------------------------------- */
+
+static void start_edit(int keep, uint8_t mode)
 {
     uint16_t i = idx(sr, sc);
     editing = 1;
+    emode = mode;
+    pt_on = pt_drag = 0;
     elen = keep ? c_rlen[i] : 0;
     memcpy(ebuf, pool + c_off[i], elen);
     ecaret = elen;
     ar = sr;
     ac = sc;
+    show_selection();
+    say("");
+}
+
+static void cancel_edit(void)
+{
+    editing = pt_on = pt_drag = 0;
     doc_dirty = 1;
+}
+
+/* A formula as spreadsheets keep it: names and references in capitals
+ * (outside text in quotes), and the brackets left open closed. */
+static void tidy_formula(void)
+{
+    uint32_t k, open = 0;
+    int q = 0;
+    for (k = 1; k < elen; k++) {
+        uint8_t ch = ebuf[k];
+        if (ch == '"')
+            q = !q;
+        else if (!q) {
+            ebuf[k] = (uint8_t)upper(ch);
+            if (ch == '(')
+                open++;
+            else if (ch == ')' && open)
+                open--;
+        }
+    }
+    while (!q && open-- && elen < RAW_MAX)
+        ebuf[elen++] = ')';
 }
 
 static void commit(void)
 {
-    editing = 0;
-    if (!set_cell(idx(sr, sc), ebuf, elen))
-        say("The sheet is full: no room for that entry");
+    uint16_t i = idx(sr, sc);
+    editing = pt_on = pt_drag = 0;
     doc_dirty = 1;
+    if (elen && ebuf[0] == '=')
+        tidy_formula();
+    if (c_rlen[i] == elen && !memcmp(pool + c_off[i], ebuf, elen))
+        return;
+    ubegin();
+    if (!put_cell(i, ebuf, elen))
+        say("The sheet is full: no room for that entry");
+    else if (c_flag[i] & F_BAD)
+        say(c_val[i] == E_NAME ? "#NAME?: no function of that name (F2 edits the formula)" : c_val[i] == E_REF ? "#REF!: a reference outside A1:Z99" : "#ERROR!: the formula cannot be read (F2 edits it)");
 }
 
 static void insert_cp(uint32_t cp)
@@ -2014,6 +2524,7 @@ static void insert_cp(uint32_t cp)
         b[3] = (uint8_t)(0x80 | (cp & 0x3F));
         n = 4;
     }
+    pt_on = 0;
     if (elen + n > RAW_MAX)
         return;
     memmove(ebuf + ecaret + n, ebuf + ecaret, elen - ecaret);
@@ -2043,13 +2554,233 @@ static uint32_t next_char(uint32_t at)
     return at;
 }
 
-/* Copies a formula's text moved by (dr, dc): references move, those that
- * would leave the sheet become #REF. Returns the length (at most RAW_MAX). */
+static int one_of(uint8_t ch, const char *set)
+{
+    while (*set)
+        if (ch == (uint8_t)*set++)
+            return 1;
+    return 0;
+}
+
+/* The text cursor is where a reference may go in a formula: after "=",
+ * an operator, "(", "," or ":" (outside quotes), and before the end, a
+ * space, an operator or ")"; or right after the reference just pointed at. */
+static int can_point(void)
+{
+    uint32_t k = ecaret, j;
+    int q = 0;
+    if (!editing || !elen || ebuf[0] != '=')
+        return 0;
+    if (pt_on && ecaret == pt_e)
+        return 1;
+    for (j = 0; j < ecaret; j++)
+        if (ebuf[j] == '"')
+            q = !q;
+    if (q)
+        return 0;
+    while (k > 1 && ebuf[k - 1] == ' ')
+        k--;
+    if (!k || !one_of(ebuf[k - 1], "=+-*/^&<>(,:"))
+        return 0;
+    k = ecaret;
+    while (k < elen && ebuf[k] == ' ')
+        k++;
+    return k == elen || one_of(ebuf[k], ")+-*/^&<>=,:%");
+}
+
+/* Puts the reference to (a_r, a_c):(b_r, b_c) at the cursor, or in place
+ * of the one pointed at before. */
+static void point_set(uint32_t a_r, uint32_t a_c, uint32_t b_r, uint32_t b_c)
+{
+    char t[8];
+    uint32_t n, old;
+    pr0 = a_r;
+    pc0 = a_c;
+    pr1 = b_r;
+    pc1 = b_c;
+    range_name(t, &n, a_r < b_r ? a_r : b_r, a_c < b_c ? a_c : b_c, a_r < b_r ? b_r : a_r, a_c < b_c ? b_c : a_c);
+    if (!pt_on)
+        pt_s = pt_e = ecaret;
+    old = pt_e - pt_s;
+    if (elen - old + n > RAW_MAX)
+        return;
+    memmove(ebuf + pt_s + n, ebuf + pt_e, elen - pt_e);
+    memcpy(ebuf + pt_s, t, n);
+    elen = elen - old + n;
+    pt_e = pt_s + n;
+    ecaret = pt_e;
+    pt_on = 1;
+    show_cell(b_r, b_c);
+}
+
+/* An arrow while pointing: the reference moves (Shift: grows) from the
+ * cell being edited, or from the one pointed at. */
+static void point_key(int dr, int dc, int extend)
+{
+    if (!pt_on) {
+        pr0 = pr1 = sr;
+        pc0 = pc1 = sc;
+    }
+    uint32_t r = clamp((int32_t)pr1 + dr, NROWS), c = clamp((int32_t)pc1 + dc, NCOLS);
+    if (extend)
+        point_set(pr0, pc0, r, c);
+    else
+        point_set(r, c, r, c);
+}
+
+/* F4: the reference at the cursor goes A1, $A$1, A$1, $A1 and back. */
+static void toggle_dollar(void)
+{
+    uint32_t s = ecaret, j, cabs = 0, rabs = 0, n = 0, d0;
+    uint8_t t[8];
+    while (s > 1 && (is_alpha(ebuf[s - 1]) || is_digit(ebuf[s - 1]) || ebuf[s - 1] == '$'))
+        s--;
+    j = s;
+    if (j < elen && ebuf[j] == '$') {
+        cabs = 1;
+        j++;
+    }
+    if (j >= elen || !is_alpha(ebuf[j]) || (j > 1 && is_alpha(ebuf[j - 1])))
+        return;
+    uint8_t col = ebuf[j++];
+    if (j < elen && ebuf[j] == '$') {
+        rabs = 1;
+        j++;
+    }
+    if (j >= elen || !is_digit(ebuf[j]))
+        return;
+    d0 = j;
+    while (j < elen && is_digit(ebuf[j]) && j - d0 < 2)
+        j++;
+    if (j < ecaret || (j < elen && (is_alpha(ebuf[j]) || is_digit(ebuf[j]))))
+        return;
+    /* (0,0) -> (1,1) -> (0,1) -> (1,0) -> (0,0) */
+    if (!cabs && !rabs)
+        cabs = rabs = 1;
+    else if (cabs && rabs)
+        cabs = 0;
+    else if (rabs) {
+        cabs = 1;
+        rabs = 0;
+    } else
+        cabs = 0;
+    if (cabs)
+        t[n++] = '$';
+    t[n++] = col;
+    if (rabs)
+        t[n++] = '$';
+    for (uint32_t k = d0; k < j; k++)
+        t[n++] = ebuf[k];
+    if (elen - (j - s) + n > RAW_MAX)
+        return;
+    memmove(ebuf + s + n, ebuf + j, elen - j);
+    memcpy(ebuf + s, t, n);
+    elen = elen - (j - s) + n;
+    ecaret = s + n;
+    pt_on = 0;
+    doc_dirty = 1;
+}
+
+static void edit_key(uint8_t k, int shift, int ctrl)
+{
+    int dr = 0, dc = 0;
+    if (ctrl) {
+        if (k == KEY_HOME || k == KEY_END) {
+            ecaret = k == KEY_HOME ? 0 : elen;
+            pt_on = 0;
+            doc_dirty = 1;
+        } else if (k == KEY_Z)
+            cancel_edit();
+        return;
+    }
+    switch (k) {
+    case KEY_ESCAPE: cancel_edit(); return;
+    case KEY_ENTER:
+        commit();
+        enter_move(shift);
+        return;
+    case KEY_TAB:
+        commit();
+        tab_move(shift);
+        return;
+    case KEY_UP: dr = -1; break;
+    case KEY_DOWN: dr = 1; break;
+    case KEY_LEFT: dc = -1; break;
+    case KEY_RIGHT: dc = 1; break;
+    case KEY_HOME:
+    case KEY_END:
+        ecaret = k == KEY_HOME ? 0 : elen;
+        pt_on = 0;
+        doc_dirty = 1;
+        return;
+    case KEY_BACKSPACE:
+        if (ecaret) {
+            uint32_t p = prev_char(ecaret);
+            memmove(ebuf + p, ebuf + ecaret, elen - ecaret);
+            elen -= ecaret - p;
+            ecaret = p;
+        }
+        pt_on = 0;
+        doc_dirty = 1;
+        return;
+    case KEY_DELETE:
+        if (ecaret < elen) {
+            uint32_t q = next_char(ecaret);
+            memmove(ebuf + ecaret, ebuf + q, elen - q);
+            elen -= q - ecaret;
+        }
+        pt_on = 0;
+        doc_dirty = 1;
+        return;
+    case KEY_F2:
+        emode = emode == M_EDIT ? M_ENTER : M_EDIT;
+        pt_on = 0;
+        doc_dirty = 1;
+        return;
+    case KEY_F4: toggle_dollar(); return;
+    default: return;
+    }
+    /* An arrow: points at a cell in a formula being entered, moves the
+     * cursor in edit mode, else keeps the entry and moves. */
+    if (emode == M_ENTER && can_point()) {
+        point_key(dr, dc, shift);
+        return;
+    }
+    if (emode == M_EDIT && dc) {
+        ecaret = dc < 0 ? prev_char(ecaret) : next_char(ecaret);
+        pt_on = 0;
+        doc_dirty = 1;
+        return;
+    }
+    commit();
+    move_to((int32_t)sr + dr, (int32_t)sc + dc, shift);
+}
+
+/* --- Copying, filling, clearing ------------------------------------------- */
+
+/* Writes the name of cell (r, c) with $ where the reference is absolute. */
+static uint32_t ref_text(uint32_t r, uint32_t c, int cabs, int rabs, uint8_t *out)
+{
+    uint32_t n = 0;
+    if (cabs)
+        out[n++] = '$';
+    out[n++] = (uint8_t)('A' + c);
+    if (rabs)
+        out[n++] = '$';
+    if (r + 1 >= 10)
+        out[n++] = (uint8_t)('0' + (r + 1) / 10);
+    out[n++] = (uint8_t)('0' + (r + 1) % 10);
+    return n;
+}
+
+/* Copies a formula's text moved by (dr, dc): relative references move,
+ * the parts after a $ stay; those that would leave the sheet become #REF!.
+ * Returns the length (at most RAW_MAX). */
 static uint32_t shift_refs(const uint8_t *p, uint32_t n, int32_t dr, int32_t dc, uint8_t *out)
 {
     uint32_t i = 0, o = 0;
     int in_str = 0;
-    if (!n || p[0] != '=') {
+    if (!n || p[0] != '=' || (!dr && !dc)) {
         memcpy(out, p, n);
         return n;
     }
@@ -2057,29 +2788,43 @@ static uint32_t shift_refs(const uint8_t *p, uint32_t n, int32_t dr, int32_t dc,
         uint8_t ch = p[i];
         if (ch == '"')
             in_str = !in_str;
-        if (!in_str && is_alpha(ch) && (i == 0 || !is_alpha(p[i - 1])) && i + 1 < n && is_digit(p[i + 1])) {
-            uint32_t j = i + 1, row = 0;
-            while (j < n && is_digit(p[j])) {
-                if (row < 1000)
-                    row = row * 10 + (p[j] - '0');
+        if (!in_str && (is_alpha(ch) || ch == '$') && (i == 0 || !(is_alpha(p[i - 1]) || is_digit(p[i - 1]) || p[i - 1] == '$'))) {
+            uint32_t j = i, row = 0, cabs = 0, rabs = 0, col;
+            if (p[j] == '$') {
+                cabs = 1;
                 j++;
             }
-            if (j >= n || (p[j] != '(' && !is_alpha(p[j]))) {
-                int32_t r = (int32_t)row - 1 + dr, c = upper(ch) - 'A' + dc;
-                uint8_t nm[4];
-                uint32_t k, len;
-                const uint8_t *w;
-                if (r < 0 || r >= NROWS || c < 0 || c >= NCOLS || row < 1 || row > NROWS) {
-                    w = (const uint8_t *)"#REF";
-                    len = 4;
-                } else {
-                    len = name_of((uint32_t)r, (uint32_t)c, nm);
-                    w = nm;
+            if (j < n && is_alpha(p[j])) {
+                col = (uint32_t)(upper(p[j]) - 'A');
+                j++;
+                if (j < n && p[j] == '$') {
+                    rabs = 1;
+                    j++;
                 }
-                for (k = 0; k < len && o < RAW_MAX; k++)
-                    out[o++] = w[k];
-                i = j;
-                continue;
+                if (j < n && is_digit(p[j])) {
+                    while (j < n && is_digit(p[j])) {
+                        if (row < 1000)
+                            row = row * 10 + (p[j] - '0');
+                        j++;
+                    }
+                    if (j >= n || (p[j] != '(' && !is_alpha(p[j]))) {
+                        int32_t r = (int32_t)row - 1 + (rabs ? 0 : dr), c = (int32_t)col + (cabs ? 0 : dc);
+                        uint8_t nm[6];
+                        uint32_t k, len;
+                        const uint8_t *w;
+                        if (r < 0 || r >= NROWS || c < 0 || c >= NCOLS || row < 1 || row > NROWS) {
+                            w = (const uint8_t *)"#REF!";
+                            len = 5;
+                        } else {
+                            len = ref_text((uint32_t)r, (uint32_t)c, (int)cabs, (int)rabs, nm);
+                            w = nm;
+                        }
+                        for (k = 0; k < len && o < RAW_MAX; k++)
+                            out[o++] = w[k];
+                        i = j;
+                        continue;
+                    }
+                }
             }
         }
         out[o++] = ch;
@@ -2088,20 +2833,24 @@ static uint32_t shift_refs(const uint8_t *p, uint32_t n, int32_t dr, int32_t dc,
     return o;
 }
 
-static uint8_t clip_on, cl_r0, cl_c0, cl_r1, cl_c1;
+static uint8_t clip_on, clip_cut, cl_r0, cl_c0, cl_r1, cl_c1;
 static uint8_t tmp[RAW_MAX];
 
-/* Copying, filling and clearing are a job over the target's cells,
- * JOB_CELLS a frame (each may compile a formula and format its value):
- * target cell (r, c) takes the source block's cell (sr0 + (r - tr0) mod
- * its height, sc0 + (c - tc0) mod its width), its references moved by as
- * much, so a block pastes once and a row or column fills by repeating.
- * Where the target overlaps the source, the order reads every source
- * cell before it is written. A clear empties the target. */
+/* Copying, filling, clearing and undoing are a job over the target's
+ * cells, JOB_CELLS a frame (each may compile a formula and format its
+ * value): target cell (r, c) takes the source block's cell (sr0 + (r -
+ * tr0) mod its height, sc0 + (c - tc0) mod its width), its references
+ * moved by as much, so a block pastes once and a row or column fills by
+ * repeating. Where the target overlaps the source, the order reads every
+ * source cell before it is written. A clear empties the target. A move
+ * (a paste after Ctrl+X) copies without moving references, then clears
+ * the source cells outside the target. Undo and redo apply a group of
+ * the log. */
 #define JOB_CELLS 6
-enum { JOB_NONE, JOB_COPY, JOB_CLEAR };
-static uint8_t job, job_full;
-static uint32_t js_r0, js_c0, js_h, js_w, jt_r0, jt_c0, jt_h, jt_w, j_at;
+enum { JOB_NONE, JOB_COPY, JOB_CLEAR, JOB_UNDO, JOB_REDO };
+static uint8_t job, job_full, j_cut, j_keep;
+static uint32_t js_r0, js_c0, js_h, js_w, jt_r0, jt_c0, jt_h, jt_w, j_at, jk_r0, jk_c0, jk_r1, jk_c1;
+static uint32_t j_pos, j_stop;
 static int8_t j_dy, j_dx;
 static const char *job_msg;
 
@@ -2124,31 +2873,111 @@ static void start_job(uint8_t kind, uint32_t sr0, uint32_t sc0, uint32_t sh, uin
     j_dy = tr0 > sr0 ? -1 : 1;
     j_dx = tc0 > sc0 ? -1 : 1;
     j_at = 0;
-    job_full = 0;
+    job_full = j_cut = j_keep = 0;
     job_msg = msg;
+    ubegin();
 }
 
 static void job_step(void)
 {
     uint32_t k;
+    if (job == JOB_UNDO || job == JOB_REDO) {
+        for (k = 0; k < JOB_CELLS; k++) {
+            uint32_t at;
+            if (job == JOB_UNDO) {
+                if (j_pos <= j_stop)
+                    break;
+                j_pos -= (uint32_t)(ulog[j_pos - 2] | ulog[j_pos - 1] << 8);
+                at = j_pos;
+                set_cell((uint16_t)(ulog[at] | ulog[at + 1] << 8), ulog + at + 3, ulog[at + 2]);
+            } else {
+                if (j_pos >= j_stop)
+                    break;
+                at = j_pos;
+                j_pos += rec_size(at);
+                set_cell((uint16_t)(ulog[at] | ulog[at + 1] << 8), ulog + at + 4 + ulog[at + 2], ulog[at + 3 + ulog[at + 2]]);
+            }
+        }
+        if (job == JOB_UNDO ? j_pos > j_stop : j_pos < j_stop)
+            return;
+        say(job == JOB_UNDO ? "Undone (Ctrl+Y redoes)" : "Redone");
+        job = JOB_NONE;
+        doc_dirty = 1;
+        return;
+    }
     for (k = 0; k < JOB_CELLS && j_at < jt_h * jt_w; k++, j_at++) {
         uint32_t a = j_at / jt_w, b = j_at % jt_w;
         uint32_t y = j_dy < 0 ? jt_h - 1 - a : a, x = j_dx < 0 ? jt_w - 1 - b : b;
         uint32_t tr = jt_r0 + y, tc = jt_c0 + x;
         if (job == JOB_CLEAR) {
-            set_cell(idx(tr, tc), 0, 0);
+            if (j_keep && tr >= jk_r0 && tr <= jk_r1 && tc >= jk_c0 && tc <= jk_c1)
+                continue;
+            put_cell(idx(tr, tc), 0, 0);
             continue;
         }
         uint32_t r = js_r0 + y % js_h, c = js_c0 + x % js_w;
         uint16_t s = idx(r, c);
-        uint32_t n = shift_refs(pool + c_off[s], c_rlen[s], (int32_t)tr - (int32_t)r, (int32_t)tc - (int32_t)c, tmp);
-        if (!set_cell(idx(tr, tc), tmp, n))
+        int32_t dr = j_cut ? 0 : (int32_t)tr - (int32_t)r, dc = j_cut ? 0 : (int32_t)tc - (int32_t)c;
+        uint32_t n = shift_refs(pool + c_off[s], c_rlen[s], dr, dc, tmp);
+        if (!put_cell(idx(tr, tc), tmp, n))
             job_full = 1;
     }
     if (j_at < jt_h * jt_w)
         return;
+    if (j_cut) {
+        /* A move: now the source cells the target did not cover. */
+        j_cut = 0;
+        j_keep = 1;
+        jk_r0 = jt_r0;
+        jk_c0 = jt_c0;
+        jk_r1 = jt_r0 + jt_h - 1;
+        jk_c1 = jt_c0 + jt_w - 1;
+        jt_r0 = js_r0;
+        jt_c0 = js_c0;
+        jt_h = js_h;
+        jt_w = js_w;
+        j_dy = j_dx = 1;
+        j_at = 0;
+        job = JOB_CLEAR;
+        return;
+    }
     job = JOB_NONE;
-    say(job_full ? "The sheet is full" : job_msg);
+    say(job_full ? "The sheet is full" : u_off ? "Done; it is too large to undo" : job_msg);
+}
+
+/* Ctrl+Z (redo 0) and Ctrl+Y (redo 1). */
+static void undo(int redo)
+{
+    uint32_t mark;
+    if (!redo) {
+        if (!u_cur) {
+            say("Nothing to undo");
+            return;
+        }
+        mark = u_cur;
+        do
+            mark -= (uint32_t)(ulog[mark - 2] | ulog[mark - 1] << 8);
+        while (mark && !is_mark(mark));
+        j_pos = u_cur;
+        j_stop = mark + 8;
+        u_cur = mark;
+    } else {
+        if (u_cur >= u_end) {
+            say("Nothing to redo");
+            return;
+        }
+        mark = u_cur;
+        j_pos = j_stop = mark + 8;
+        while (j_stop < u_end && !is_mark(j_stop))
+            j_stop += rec_size(j_stop);
+        u_cur = j_stop;
+    }
+    job = redo ? JOB_REDO : JOB_UNDO;
+    sr = ulog[mark + 2];
+    sc = ulog[mark + 3];
+    ar = ulog[mark + 4];
+    ac = ulog[mark + 5];
+    show_selection();
 }
 
 /* Fills the selection from its first row down (or first column right);
@@ -2178,6 +3007,45 @@ static void clear_range(void)
     start_job(JOB_CLEAR, 0, 0, 1, 1, rmin(), cmin(), rmax() - rmin() + 1, cmax() - cmin() + 1, "");
 }
 
+static void copy(int cut)
+{
+    clip_on = 1;
+    clip_cut = (uint8_t)cut;
+    cl_r0 = (uint8_t)rmin();
+    cl_c0 = (uint8_t)cmin();
+    cl_r1 = (uint8_t)rmax();
+    cl_c1 = (uint8_t)cmax();
+    say(cut ? "Cut: Ctrl+B moves it to the selected cell (Ctrl+V is the window's paste of text)"
+            : "Copied: Ctrl+B pastes at the selected cell (Ctrl+V is the window's paste of text)");
+}
+
+/* Pastes what was copied at the selected cell; one cell copied fills a
+ * selected range. After a cut, moves it (once). */
+static void paste(void)
+{
+    uint32_t h = cl_r1 - cl_r0 + 1u, w = cl_c1 - cl_c0 + 1u, th = h, tw = w, r0 = sr, c0 = sc;
+    if (!clip_on) {
+        say("Nothing copied: Ctrl+C copies, Ctrl+X cuts");
+        return;
+    }
+    if (h == 1 && w == 1 && !clip_cut && (rmin() != rmax() || cmin() != cmax())) {
+        r0 = rmin();
+        c0 = cmin();
+        th = rmax() - r0 + 1;
+        tw = cmax() - c0 + 1;
+    }
+    sr = r0;
+    sc = c0;
+    ar = clamp((int32_t)(r0 + th - 1), NROWS);
+    ac = clamp((int32_t)(c0 + tw - 1), NCOLS);
+    show_selection();
+    start_job(JOB_COPY, cl_r0, cl_c0, h, w, r0, c0, th, tw, clip_cut ? "Moved" : "Pasted");
+    if (clip_cut) {
+        j_cut = 1;
+        clip_on = clip_cut = 0;
+    }
+}
+
 static void set_chart(uint8_t kind)
 {
     /* The same key again removes the chart: with its range selected, or one
@@ -2194,7 +3062,19 @@ static void set_chart(uint8_t kind)
         ch_c0 = (uint8_t)cmin();
         ch_r1 = (uint8_t)rmax();
         ch_c1 = (uint8_t)cmax();
-        say("");
+        /* "Bar chart of D3:D7", and whether its values have labels. */
+        static char m[64];
+        const char *w = kind == 1 ? "Bar chart of " : "Line chart of ";
+        uint32_t n = 0, len, many = ch_r0 == ch_r1 ? ch_c1 - ch_c0 >= 8 : ch_r1 - ch_r0 >= 8;
+        while (*w)
+            m[n++] = *w++;
+        range_name(m + n, &len, ch_r0, ch_c0, ch_r1, ch_c1);
+        n += len;
+        w = many ? " (labels for at most 8)" : " (the same key again removes it)";
+        while (*w)
+            m[n++] = *w++;
+        m[n] = 0;
+        say(m);
     }
     show_selection();
 }
@@ -2230,7 +3110,10 @@ static void clear_sheet(void)
     recalcing = 0;
     rsp = 0;
     top = left = sr = sc = ar = ac = 0;
-    editing = 0;
+    editing = pt_on = pt_drag = 0;
+    tab_col = -1;
+    u_cur = u_end = u_group = 0; /* a new or loaded sheet has nothing to undo */
+    clip_on = clip_cut = 0;
     doc_dirty = 1;
 }
 
@@ -2447,7 +3330,7 @@ static void load_example(void)
     flen = sizeof example - 1;
     memcpy(fdata, example, flen);
     start_parse();
-    say(arg_msg ? arg_msg : "An example: an estimate for a service. Ctrl+N twice starts a new sheet");
+    say(arg_msg ? arg_msg : "An example estimate: column D is formulas, select one to see it");
 }
 
 static void loaded(void)
@@ -2556,82 +3439,42 @@ static void done(uint32_t h)
 
 /* --- Input ---------------------------------------------------------------- */
 
-static uint8_t buttons;
+static uint8_t buttons, shift_held, sel_drag;
+static uint32_t frame, ev_frame, press_frame, press_r = 0xFFFF, press_c;
 
 static void key(uint8_t k, uint8_t mods)
 {
     int shift = mods & MOD_SHIFT, ctrl = mods & MOD_CTRL;
     /* The modifier keys themselves (a window sends them as keys too): only
-     * the keys they modify count. */
-    if (k >= 0xE0 && k <= 0xE7)
+     * the keys they modify count, but Shift is followed for Shift+click. */
+    if (k >= 0xE0 && k <= 0xE7) {
+        if (k == KEY_LSHIFT || k == KEY_RSHIFT)
+            shift_held = 1;
         return;
+    }
+    shift_held = (uint8_t)(shift != 0);
     if (editing) {
-        switch (k) {
-        case KEY_ESCAPE:
-            editing = 0;
-            doc_dirty = 1;
-            return;
-        case KEY_ENTER:
+        if (ctrl && (k == KEY_S || k == KEY_P))
             commit();
-            move_to((int32_t)sr + (shift ? -1 : 1), (int32_t)sc, 0);
+        else {
+            edit_key(k, shift, ctrl);
             return;
-        case KEY_TAB:
-            commit();
-            move_to((int32_t)sr, (int32_t)sc + (shift ? -1 : 1), 0);
-            return;
-        case KEY_UP:
-        case KEY_DOWN:
-            commit();
-            move_to((int32_t)sr + (k == KEY_UP ? -1 : 1), (int32_t)sc, 0);
-            return;
-        case KEY_LEFT: ecaret = prev_char(ecaret); break;
-        case KEY_RIGHT: ecaret = next_char(ecaret); break;
-        case KEY_HOME: ecaret = 0; break;
-        case KEY_END: ecaret = elen; break;
-        case KEY_BACKSPACE:
-            if (ecaret) {
-                uint32_t p = prev_char(ecaret);
-                memmove(ebuf + p, ebuf + ecaret, elen - ecaret);
-                elen -= ecaret - p;
-                ecaret = p;
-            }
-            break;
-        case KEY_DELETE:
-            if (ecaret < elen) {
-                uint32_t q = next_char(ecaret);
-                memmove(ebuf + ecaret, ebuf + q, elen - q);
-                elen -= q - ecaret;
-            }
-            break;
-        default: return;
         }
-        doc_dirty = 1;
-        return;
     }
     if (ctrl) {
         if (k != KEY_N)
             new_armed = 0;
         switch (k) {
-        case KEY_C:
-            clip_on = 1;
-            cl_r0 = (uint8_t)rmin();
-            cl_c0 = (uint8_t)cmin();
-            cl_r1 = (uint8_t)rmax();
-            cl_c1 = (uint8_t)cmax();
-            say("Copied: Ctrl+Y pastes at the selected cell");
-            return;
-        case KEY_Y:
-            if (!clip_on) {
-                say("Nothing copied: Ctrl+C copies");
-                return;
-            }
-            start_job(JOB_COPY, cl_r0, cl_c0, cl_r1 - cl_r0 + 1u, cl_c1 - cl_c0 + 1u, sr, sc, cl_r1 - cl_r0 + 1u, cl_c1 - cl_c0 + 1u, "Pasted");
-            ar = sr + (cl_r1 - cl_r0);
-            ac = sc + (cl_c1 - cl_c0);
-            if (ar >= NROWS)
-                ar = NROWS - 1;
-            if (ac >= NCOLS)
-                ac = NCOLS - 1;
+        case KEY_C: copy(0); return;
+        case KEY_X: copy(1); return;
+        case KEY_V:
+        case KEY_B: paste(); return;
+        case KEY_Z: undo(shift); return;
+        case KEY_Y: undo(1); return;
+        case KEY_A:
+            sr = sc = 0;
+            ar = NROWS - 1;
+            ac = NCOLS - 1;
             doc_dirty = 1;
             return;
         case KEY_D: fill(1); return;
@@ -2651,6 +3494,22 @@ static void key(uint8_t k, uint8_t mods)
             say("A new sheet");
             return;
         case KEY_HOME: move_to(0, 0, shift); return;
+        case KEY_END: {
+            /* The last row and column that hold anything. */
+            int32_t r = 0, c = 0;
+            for (uint32_t i = 0; i < NCELLS; i++)
+                if (c_rlen[i]) {
+                    r = (int32_t)(i / NCOLS);
+                    if ((int32_t)(i % NCOLS) > c)
+                        c = (int32_t)(i % NCOLS);
+                }
+            move_to(r, c, shift);
+            return;
+        }
+        case KEY_UP: jump(-1, 0, shift); return;
+        case KEY_DOWN: jump(1, 0, shift); return;
+        case KEY_LEFT: jump(0, -1, shift); return;
+        case KEY_RIGHT: jump(0, 1, shift); return;
         default: return;
         }
     }
@@ -2660,12 +3519,12 @@ static void key(uint8_t k, uint8_t mods)
     case KEY_DOWN: move_to((int32_t)sr + 1, (int32_t)sc, shift); return;
     case KEY_LEFT: move_to((int32_t)sr, (int32_t)sc - 1, shift); return;
     case KEY_RIGHT: move_to((int32_t)sr, (int32_t)sc + 1, shift); return;
-    case KEY_TAB: move_to((int32_t)sr, (int32_t)sc + (shift ? -1 : 1), 0); return;
-    case KEY_ENTER: move_to((int32_t)sr + (shift ? -1 : 1), (int32_t)sc, 0); return;
+    case KEY_TAB: tab_move(shift); return;
+    case KEY_ENTER: enter_move(shift); return;
     case KEY_PAGE_UP: move_to((int32_t)sr - (int32_t)vrows(), (int32_t)sc, shift); return;
     case KEY_PAGE_DOWN: move_to((int32_t)sr + (int32_t)vrows(), (int32_t)sc, shift); return;
     case KEY_HOME: move_to((int32_t)sr, 0, shift); return;
-    case KEY_F2: start_edit(1); return;
+    case KEY_F2: start_edit(1, M_EDIT); return;
     case KEY_DELETE:
     case KEY_BACKSPACE: clear_range(); return;
     case KEY_ESCAPE:
@@ -2677,56 +3536,174 @@ static void key(uint8_t k, uint8_t mods)
     }
 }
 
-/* The cell under a point of the screen: 1 and (r, c), else 0. */
-static int cell_at(uint32_t x, uint32_t y, uint32_t *r, uint32_t *c)
+/* What is under a point of the screen. */
+enum { H_NONE, H_LINE, H_CORNER, H_COLUMN, H_ROW, H_CELL };
+
+static int hit(uint32_t x, uint32_t y, uint32_t *r, uint32_t *c)
 {
     uint32_t rows = vrows(), i;
-    if (y < g_y[1] || y >= g_y[rows + 1] || x < COLW || x >= 640)
-        return 0;
+    if (y < g_y[0])
+        return H_LINE;
+    if (y >= g_y[rows + 1] || x >= 640)
+        return H_NONE;
+    if (y < g_y[1]) {
+        *c = left + x / COLW - 1;
+        return x < COLW ? H_CORNER : H_COLUMN;
+    }
     for (i = 0; i < rows && y >= g_y[2 + i]; i++)
         ;
     *r = top + i;
     *c = left + x / COLW - 1;
-    return 1;
+    return x < COLW ? H_ROW : H_CELL;
 }
 
 static void pointer(const terse_event *e)
 {
     uint8_t b = EV_POINTER_BUTTONS(*e), was = buttons;
-    uint32_t r, c;
+    uint32_t r = 0, c = 0;
+    int h, dbl;
     buttons = b;
-    if (!(b & BUTTON_PRIMARY))
+    if (!(b & BUTTON_PRIMARY)) {
+        pt_drag = sel_drag = 0;
         return;
-    if (!cell_at(EV_POINTER_X(*e), EV_POINTER_Y(*e), &r, &c))
+    }
+    h = hit(EV_POINTER_X(*e), EV_POINTER_Y(*e), &r, &c);
+    if (was & BUTTON_PRIMARY) {
+        /* A drag: over the range a formula points at, or the selection. */
+        if (h != H_CELL)
+            return;
+        if (editing && pt_drag) {
+            if (r != pr1 || c != pc1)
+                point_set(pr0, pc0, r, c);
+        } else if (!editing && sel_drag && (r != sr || c != sc))
+            move_to((int32_t)r, (int32_t)c, 1);
         return;
-    if (!(was & BUTTON_PRIMARY)) {
-        if (editing)
-            commit();
-        move_to((int32_t)r, (int32_t)c, 0);
-    } else if (r != sr || c != sc)
-        move_to((int32_t)r, (int32_t)c, 1);
+    }
+    dbl = h == H_CELL && r == press_r && c == press_c && ev_frame - press_frame <= DOUBLE_FRAMES;
+    press_r = h == H_CELL ? r : 0xFFFF;
+    press_c = c;
+    press_frame = ev_frame;
+    if (h == H_NONE)
+        return;
+    if (h == H_LINE) {
+        /* The content line: edit there, the cursor at the end, or on the
+         * character pressed (its anchor event follows). */
+        if (!editing)
+            start_edit(1, M_EDIT);
+        emode = M_EDIT;
+        ecaret = elen;
+        pt_on = 0;
+        doc_dirty = 1;
+        return;
+    }
+    if (editing) {
+        if (h == H_CELL && r == sr && c == sc) {
+            /* The cell being edited: the cursor goes to the character
+             * pressed (its anchor event follows), else stays. */
+            emode = M_EDIT;
+            pt_on = 0;
+            doc_dirty = 1;
+            return;
+        }
+        if (h == H_CELL && can_point()) {
+            point_set(r, c, r, c);
+            pt_drag = 1;
+            press_r = 0xFFFF;
+            return;
+        }
+        commit();
+        dbl = 0;
+    }
+    switch (h) {
+    case H_CORNER:
+        sr = sc = 0;
+        ar = NROWS - 1;
+        ac = NCOLS - 1;
+        break;
+    case H_COLUMN:
+        sr = 0;
+        sc = ac = c;
+        ar = NROWS - 1;
+        break;
+    case H_ROW:
+        sr = ar = r;
+        sc = 0;
+        ac = NCOLS - 1;
+        break;
+    default:
+        if (dbl) {
+            start_edit(1, M_EDIT);
+            return;
+        }
+        move_to((int32_t)r, (int32_t)c, shift_held);
+        sel_drag = 1;
+        return;
+    }
+    new_armed = 0;
+    tab_col = -1;
+    doc_dirty = 1;
+}
+
+/* A press on a character of the entry (content line or cell) puts the
+ * text cursor before it. */
+static void anchor_pressed(uint16_t id)
+{
+    uint32_t k;
+    if (!editing)
+        return;
+    if (id >= A_LINE && id < A_LINE + RAW_MAX)
+        k = id - A_LINE;
+    else if (id >= A_CELL && id < A_CELL + RAW_MAX)
+        k = id - A_CELL;
+    else
+        return;
+    ecaret = k > elen ? elen : k;
+    while (ecaret && ecaret < elen && (ebuf[ecaret] & 0xC0) == 0x80)
+        ecaret--;
+    emode = M_EDIT;
+    pt_on = 0;
+    doc_dirty = 1;
 }
 
 static int busy(void) { return loading || parsing || head_h || job; }
 
-/* Input that arrives while the sheet is loading or a copy runs waits here. */
+/* Input that arrives while the sheet is loading or a copy runs waits here,
+ * with the frame it came in. */
 #define HELD_MAX 128
 static terse_event held[HELD_MAX];
+static uint32_t held_f[HELD_MAX];
 static uint32_t held_n, held_at;
 
 static void input(const terse_event *ev)
 {
     if (ev->type == EV_KEY_DOWN)
         key(ev->a, ev->b);
-    else if (ev->type == EV_TEXT) {
+    else if (ev->type == EV_KEY_UP) {
+        if (ev->a == KEY_LSHIFT || ev->a == KEY_RSHIFT)
+            shift_held = 0;
+    } else if (ev->type == EV_TEXT) {
+        uint32_t cp = EV_TEXT_CP(*ev);
+        if (cp == '\n' || cp == '\r') {
+            /* A line break in pasted text: as Enter. */
+            if (editing) {
+                commit();
+                enter_move(0);
+            }
+            return;
+        }
+        if (cp < 0x20 || (cp >= 0x7F && cp < 0xA0))
+            return;
         if (!editing) {
             new_armed = 0;
-            start_edit(0);
+            start_edit(0, M_ENTER);
         }
-        insert_cp(EV_TEXT_CP(*ev));
+        insert_cp(cp);
     } else if (ev->type == EV_POINTER)
         pointer(ev);
-    else if (ev->type == EV_WHEEL) {
+    else if (ev->type == EV_PAGE_ANCHOR) {
+        if (EV_ANCHOR_BUTTONS(*ev) & BUTTON_PRIMARY)
+            anchor_pressed(EV_ANCHOR_ID(*ev));
+    } else if (ev->type == EV_WHEEL) {
         int32_t t = (int32_t)top + 3 * EV_WHEEL_Y(*ev), max = NROWS - (int32_t)vrows();
         top = (uint32_t)(t < 0 ? 0 : t > max ? max : t);
         doc_dirty = 1;
@@ -2772,15 +3749,20 @@ int main(void)
                     located(&place);
                 continue;
             }
-            if (ev.type == EV_KEY_DOWN || ev.type == EV_TEXT || ev.type == EV_POINTER || ev.type == EV_WHEEL) {
+            if (ev.type == EV_KEY_DOWN || ev.type == EV_KEY_UP || ev.type == EV_TEXT || ev.type == EV_POINTER || ev.type == EV_WHEEL
+                || ev.type == EV_PAGE_ANCHOR) {
                 /* Kept in order until the sheet is free for them. */
-                if (held_n < HELD_MAX)
+                if (held_n < HELD_MAX) {
+                    held_f[held_n] = frame;
                     held[held_n++] = ev;
+                }
             }
         }
         /* At most 8 a frame, as a host spreads a paste. */
-        for (uint32_t k = 0; k < 8 && held_at < held_n && !busy(); k++)
+        for (uint32_t k = 0; k < 8 && held_at < held_n && !busy(); k++) {
+            ev_frame = held_f[held_at];
             input(&held[held_at++]);
+        }
         if (held_at == held_n)
             held_at = held_n = 0;
         if (parsing)
@@ -2805,6 +3787,7 @@ int main(void)
             vec_dirty = 0;
             build_vec();
         }
+        frame++;
         terse_wait_frame();
     }
 }

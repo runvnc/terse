@@ -21,7 +21,7 @@ use terse_net::{BlobStore, Consent, ContentService, FeedStore, Identity, Node, O
 
 const IMAGE: &[u8] = include_bytes!("../../../programs/sheet/sheet.terse");
 const ESTIMATE: &str = include_str!("../../../programs/sheet/estimate.tsv");
-const RAM_PAGES: u8 = 34;
+const RAM_PAGES: u8 = 38;
 /// The width of every column on the page, in screen units (sheet.c COLW).
 const COLW: u32 = 80;
 
