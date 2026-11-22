@@ -543,6 +543,9 @@ impl Relay {
             if ids.len() < COLLECT_BATCH {
                 return total;
             }
+            // The lock is not fair: give the connections waiting for it
+            // their turn between batches.
+            thread::sleep(Duration::from_micros(200));
         }
     }
 
