@@ -138,6 +138,10 @@ fn image(path: &Path) -> Image {
 
 /// The C terminal driver, built into `dir`, if clang is there.
 fn c_terminal(dir: &Path) -> Option<String> {
+    if cfg!(windows) {
+        eprintln!("skipped: c/terminal.c is a POSIX driver (poll.h, sys/socket.h); it is not built on Windows");
+        return None;
+    }
     let out = dir.join("terse-dev-terminal-c");
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("c/terminal.c");
     let ok = Command::new("clang").args(["-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", "-o"]).arg(&out).arg(&src).status().is_ok_and(|s| s.success());

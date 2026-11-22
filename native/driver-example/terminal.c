@@ -39,6 +39,9 @@
 #ifdef __linux__
 #include <sched.h>                      /* the test switches only (Linux) */
 #endif
+#ifdef __APPLE__
+#include <mach-o/dyld.h>                /* _NSGetExecutablePath */
+#endif
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -385,7 +388,13 @@ static void call(const uint8_t *m, size_t n, Buf *r)
 static char build[32] = "unknown";
 static void compute_build(void)
 {
+#ifdef __APPLE__
+    char self[4096];
+    uint32_t len = sizeof self;
+    FILE *f = _NSGetExecutablePath(self, &len) == 0 ? fopen(self, "rb") : NULL;
+#else
     FILE *f = fopen("/proc/self/exe", "rb");
+#endif
     if (!f) return;
     uint64_t h = 14695981039346656037ull;
     for (int c; (c = getc(f)) != EOF;) { h ^= (uint8_t)c; h *= 1099511628211ull; }

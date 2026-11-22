@@ -108,7 +108,7 @@ func ruleNode(t *testing.T, dir string, opt client.Options) (string, *node.Node)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sock := filepath.Join(t.TempDir(), "run", "node.sock")
+	sock := filepath.Join(socketDir(t), "run", "node.sock")
 	ln, err := local.Listen(sock)
 	if err != nil {
 		t.Fatal(err)

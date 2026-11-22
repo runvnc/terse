@@ -314,8 +314,11 @@ mod tests {
             step(&mut w, machine, render).unwrap();
         }
         w.shed(1, "late");
-        let path = w.rec.as_ref().unwrap().path().unwrap();
+        // Dropping the watch writes the record to its end. (Its file is
+        // named once the writer has hashed this test program, which a
+        // slow computer may not have done within `path`'s second.)
         drop(w);
+        let path = std::fs::read_dir(dir.path()).unwrap().flatten().map(|e| e.path()).find(|p| p.extension().is_some_and(|e| e == "log")).expect("the record");
         let lines = record::parse(&std::fs::read_to_string(path).unwrap());
         let late: Vec<(u64, Component, String)> =
             lines.iter().filter_map(|l| if let Line::Late { frame, component, image, .. } = l { Some((*frame, *component, image.clone())) } else { None }).collect();
