@@ -86,7 +86,9 @@ fn publish_sync_and_get_over_tls() {
     let file = author.store.path().join("post.txt");
     std::fs::write(&file, "Over TLS and not.\n").unwrap();
     let (_, err) = author.ok(&["feed", "publish", file.to_str().unwrap(), "--title", "Both"]);
-    assert!(err.contains(&format!("taken by 2 of 2 relays: {secure}, {plain}")), "{err}");
+    // In the order they answered.
+    let both = [format!("taken by 2 of 2 relays: {secure}, {plain}"), format!("taken by 2 of 2 relays: {plain}, {secure}")];
+    assert!(both.iter().any(|b| err.contains(b)), "{err}");
     assert_eq!((held(&ds), held(&dp)), (vec![1], vec![1]));
 
     // A relay with a certificate for another name: named, with the reason.
