@@ -130,6 +130,13 @@ fn handshake_failure(url: &str, e: tungstenite::Error, sniffed: Option<u8>, tls:
             if !tls && r.status().is_redirection() && (location.starts_with("https://") || location.starts_with("wss://")) {
                 return io::Error::new(io::ErrorKind::InvalidData, format!("{url}: {REQUIRES_TLS}"));
             }
+            // A TLS server's refusal of plain HTTP (nginx's and Cloudflare's
+            // "The plain HTTP request was sent to HTTPS port", Go's "Client
+            // sent an HTTP request to an HTTPS server").
+            let body = String::from_utf8_lossy(r.body().as_deref().unwrap_or_default()).to_ascii_lowercase();
+            if !tls && r.status() == 400 && ["https", "tls", "ssl"].iter().any(|w| body.contains(w)) {
+                return io::Error::new(io::ErrorKind::InvalidData, format!("{url}: {REQUIRES_TLS}"));
+            }
             // NETWORK 3: 429 and 503 are a relay refusing for its limits.
             let words = match r.status().as_u16() {
                 429 => "too many connections from this address; try again later".to_string(),

@@ -203,6 +203,17 @@ func DialStop(rawurl, addr string, timeout time.Duration, stop <-chan struct{}) 
 			return nil, ErrRequiresTLS
 		}
 	}
+	// A TLS server's refusal of plain HTTP (nginx's and Cloudflare's "The
+	// plain HTTP request was sent to HTTPS port", Go's "Client sent an HTTP
+	// request to an HTTPS server").
+	if u.Scheme == "ws" && resp.StatusCode == http.StatusBadRequest {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		b := strings.ToLower(string(body))
+		if strings.Contains(b, "https") || strings.Contains(b, "tls") || strings.Contains(b, "ssl") {
+			c.Close()
+			return nil, ErrRequiresTLS
+		}
+	}
 	if resp.StatusCode != http.StatusSwitchingProtocols ||
 		!strings.EqualFold(resp.Header.Get("Upgrade"), "websocket") ||
 		resp.Header.Get("Sec-WebSocket-Accept") != acceptKey(key) {
