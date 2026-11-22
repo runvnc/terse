@@ -182,7 +182,9 @@ pub fn manual(args: &[String]) -> Result<ExitCode, String> {
             }
             for (name, title, text) in terse_net::builtin::MANUAL.iter().rev() {
                 let draft = Draft { data: text.to_vec(), title: title.to_string(), reply_to: None, time: now() };
-                match node.publish_article(&draft) {
+                let done = node.publish_article(&draft);
+                crate::say_delivery(&mut node);
+                match done {
                     Done::Published { seq, blob } => println!("seq {seq} blob {} {name}", to_hex(&blob)),
                     Done::Refused => return Err(format!("{name}: the relays refused the entry")),
                     _ => return Err(format!("{name}: publish failed (store error, or no relay accepted it)")),
@@ -332,7 +334,9 @@ fn publish(args: &[String]) -> Result<ExitCode, String> {
     let relays = relay_urls(&args, true)?;
     let mut node = open_node(&args, &relays)?;
     node.set_identity(identity);
-    match node.publish_article(&Draft { data, title, reply_to, time: now() }) {
+    let done = node.publish_article(&Draft { data, title, reply_to, time: now() });
+    crate::say_delivery(&mut node);
+    match done {
         Done::Published { seq, blob } => {
             if relays.is_empty() {
                 eprintln!("terse: no relay: stored locally only");
@@ -365,7 +369,9 @@ fn publish_program(args: &Args) -> Result<ExitCode, String> {
     let relays = relay_urls(args, true)?;
     let mut node = open_node(args, &relays)?;
     node.set_identity(identity);
-    match node.publish_program(&image, &name, now()) {
+    let done = node.publish_program(&image, &name, now());
+    crate::say_delivery(&mut node);
+    match done {
         Done::Published { seq, blob } => {
             if relays.is_empty() {
                 eprintln!("terse: no relay: stored locally only");
@@ -835,7 +841,9 @@ fn profile_set(args: &[String]) -> Result<ExitCode, String> {
     let current = node.profile(&identity.feed_key()).and_then(|(_, d)| d);
     let listed = args.has("--listed") || (!args.has("--unlisted") && current.as_ref().is_some_and(|d| d.listed));
     node.set_identity(identity);
-    match node.publish_profile(name, listed, description, now()) {
+    let done = node.publish_profile(name, listed, description, now());
+    crate::say_delivery(&mut node);
+    match done {
         Done::Published { seq, blob } => {
             if relays.is_empty() {
                 eprintln!("terse: no relay: stored locally only");

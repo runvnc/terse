@@ -285,7 +285,9 @@ fn publish(args: &Args, r: &Report, doc: &[u8]) -> Result<ExitCode, String> {
     let mut node = crate::feed::open_node(args, &relays)?;
     node.set_identity(identity);
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs().min(u32::MAX as u64) as u32);
-    match node.publish_document(doc, &r.title(), now) {
+    let done = node.publish_document(doc, &r.title(), now);
+    crate::say_delivery(&mut node);
+    match done {
         terse_net::Done::Published { seq, blob } => {
             if relays.is_empty() {
                 eprintln!("terse: no relay: stored locally only");
