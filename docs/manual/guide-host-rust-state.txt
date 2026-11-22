@@ -169,5 +169,5 @@ This host runs `hello` and proves it, nothing more. The rest of a complete host,
 
 A host that runs Terse32 programs exactly as the reference does, and proves it: `state.rs`, 46 lines, `bin/step4.rs`, 50; 940 lines in all. Next, write a device as a separate program: [Make a device](terse:{guide-device}).
 
-- The same step in Go: "Make a host in Go, step 4: prove it exact".
+- The same step in Go: "Make a host in Go, step 4: prove it exact", the page before this one.
 - The rules: [State, replay and conformance](terse:{state}), sections "The state serialization", "The hash", "Snapshots" and "The conformance image"; the input in [Events and input](terse:{events}).

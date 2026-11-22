@@ -25,16 +25,16 @@ The manual has three parts. The user guide gets you from installing Tersenet to 
 - [Draw a line and read a key](terse:{guide-drawing}): the 2D vector display and keyboard events.
 - [Make a host](terse:{guide-host}): what a host is, and the four steps in Go and in Rust.
 - [Make a host in Go, step 1: run a program to its end](terse:{guide-host-go}): the program file, memory and the processor, until `exit`.
+- [Make a host in Rust, step 1: run a program to its end](terse:{guide-host-rust}): the same in Rust.
 - [Make a host in Go, step 2: frames and the budget](terse:{guide-host-go-frames}): 125,000 units a frame, `wait_frame` and the carry rule.
+- [Make a host in Rust, step 2: frames and the budget](terse:{guide-host-rust-frames}): the same in Rust.
 - [Make a host in Go, step 3: a driver shows hello](terse:{guide-host-go-driver}): the reference terminal over the device bus.
+- [Make a host in Rust, step 3: a driver shows hello](terse:{guide-host-rust-driver}): the same in Rust.
 - [Make a host in Go, step 4: prove it exact](terse:{guide-host-go-state}): the state hash, equal to the reference's.
-- [Make a host in Rust, step 1: run a program to its end](terse:{guide-host-rust}): the same four steps in Rust.
-- [Make a host in Rust, step 2: frames and the budget](terse:{guide-host-rust-frames}): the frame loop and the first System calls.
-- [Make a host in Rust, step 3: a driver shows hello](terse:{guide-host-rust-driver}): the core side of the device bus.
-- [Make a host in Rust, step 4: prove it exact](terse:{guide-host-rust-state}): the state serialization and its hash.
+- [Make a host in Rust, step 4: prove it exact](terse:{guide-host-rust-state}): the same in Rust.
 - [Make a device](terse:{guide-device}): a device as a separate program on the device bus.
-- [Make a device in Go](terse:{guide-device-go}): a terminal driver enough for `hello`, under the reference core.
-- [Make a device in Rust](terse:{guide-device-rust}): the same driver in Rust, and under the Go host.
+- [Make a device in Go](terse:{guide-device-go}): a terminal driver enough for `hello`, under the reference core and the example hosts.
+- [Make a device in Rust](terse:{guide-device-rust}): the same in Rust.
 - [Swap in your own part](terse:{guide-swap}): your reader, core or device with the reference for everything else.
 - [Make a shell](terse:{guide-shell}): the program that starts other machines and lays out their screens.
 

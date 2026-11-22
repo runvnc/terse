@@ -19,16 +19,14 @@ func check(err error) {
         os.Exit(3)
     }
 }
-```
-```go examples/host/go/machine/bus.go
+
 func (b *Bus) send(slot byte, body []byte) {
     message := le.AppendUint32(nil, uint32(8+len(body)))
     message = append(message, 0, 0, 0, 0, slot, 0, 0, 0)
     _, err := b.conn.Write(append(message, body...))
     check(err)
 }
-```
-```go examples/host/go/machine/bus.go
+
 func (b *Bus) request(slot, want byte, body []byte) []byte {
     b.send(slot, body)
     var length [4]byte
@@ -55,8 +53,7 @@ type Bus struct {
     tables map[uint32]map[uint32][]byte
     Grants []byte
 }
-```
-```go examples/host/go/machine/bus.go
+
 func Start(command string, m *Machine, file []byte,
     devices []Device) *Bus {
     dir, err := os.MkdirTemp("", "terse-bus")
@@ -203,6 +200,8 @@ A function the table does not have is a call the machine does not have: `FFFF_FF
 
 ## Frames
 
+BEGIN (`30h`) starts each frame: the frame counter, the time (0 here), no input events, an empty replay field. The reply, INPUTS, may charge the frame and bring events; the terminal does neither, and this host reads only the charge:
+
 ```go examples/host/go/machine/bus.go
 func (b *Bus) Begin(frame uint32) int64 {
     begin := le.AppendUint32([]byte{0x30, 0, 0, 0}, frame)
@@ -210,19 +209,20 @@ func (b *Bus) Begin(frame uint32) int64 {
     return int64(le.Uint32(b.request(0, 0xb0, begin)[4:]))
 }
 ```
+
+END (`31h`) ends the frame, with no reply. STATE (`40h`) asks for a slot's part of the machine's state; the terminal's starts with its 2,400 cells, 4 bytes each: a character (16 bits), a foreground and a background colour. SHUTDOWN (`60h`) stops the driver:
+
 ```go examples/host/go/machine/bus.go
 func (b *Bus) End() {
     stopped := byte(flag(b.m.Stopped != Running))
     end := []byte{0x31, stopped, 0, 0}
     b.send(0, le.AppendUint32(end, b.m.Frame))
 }
-```
-```go examples/host/go/machine/bus.go
+
 func (b *Bus) State(slot byte) []byte {
     return b.request(slot, 0xc0, []byte{0x40})[8:]
 }
-```
-```go examples/host/go/machine/bus.go
+
 func (b *Bus) Close() {
     b.send(0, []byte{0x60})
     b.conn.Close()
@@ -230,8 +230,6 @@ func (b *Bus) Close() {
     os.RemoveAll(b.dir)
 }
 ```
-
-BEGIN (`30h`) starts each frame: the frame counter, the time (0 here), no input events, an empty replay field. The reply, INPUTS, may charge the frame and bring events; the terminal does neither, and this host reads only the charge. END (`31h`) ends the frame, with no reply. STATE (`40h`) asks for a slot's part of the machine's state; the terminal's starts with its 2,400 cells, 4 bytes each: a character (16 bits), a foreground and a background colour. SHUTDOWN (`60h`) stops the driver.
 
 ## The program
 

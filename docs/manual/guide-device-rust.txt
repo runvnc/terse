@@ -132,8 +132,7 @@ At reset (`Terminal::new`) every cell is a space in colour 7 on 0, and the palet
         }
         (0, 0)
     }
-```
-```rust examples/device/rust/src/main.rs
+
     fn state(&self) -> Vec<u8> {
         let mut state = self.grid.clone();
         let (col, row) = (self.col as u8, self.row as u8);
@@ -168,8 +167,7 @@ fn hello(body: &[u8]) -> Vec<u8> {
     reply.extend([0, 0, 0]);
     reply
 }
-```
-```rust examples/device/rust/src/main.rs
+
 fn main() {
     let path = env::var("TERSE_BUS_SOCKET").unwrap();
     let mut stream = UnixStream::connect(path).unwrap();
@@ -279,4 +277,4 @@ All of that is in `native/driver-example/terminal.c`, 583 lines of C. The refere
 
 A device of your own, running under the reference core with the reference's hashes. Next, mix your parts with the reference's: [Swap in your own part](terse:{guide-swap}).
 
-The same driver in Go: "Make a device in Go". The rules: [The terminal (device 2)](terse:{device-terminal}); DEVICES.md sections 1, 5, 6 (batching) and 13 (a minimal driver).
+The same driver in Go: "Make a device in Go", the page before this one. The rules: [The terminal (device 2)](terse:{device-terminal}); DEVICES.md sections 1, 5, 6 (batching) and 13 (a minimal driver).

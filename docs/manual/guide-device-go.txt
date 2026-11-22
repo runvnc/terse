@@ -27,6 +27,22 @@ type entry struct {
     perByte                   uint16
     low, high, add            uint32
 }
+
+var table = []entry{
+    {fn: 0, flags: deferred | buffered, length: 1, scale: 1,
+        most: 4096, access: reads | inROM, checked: none,
+        rule: 2, ruleArg: 1, chargeArg: none, perByte: 2},
+    {fn: 1, flags: deferred, length: none, checked: none,
+        rule: 1, chargeArg: 0, low: 1, high: 3, add: 150},
+    {fn: 2, flags: deferred, length: none, checked: none,
+        rule: 1, chargeArg: none},
+    {fn: 4, flags: deferred, length: none, checked: none,
+        rule: 1, chargeArg: none},
+    {fn: 7, flags: deferred | buffered, buffer: 1, length: 2,
+        scale: 4, most: 9600, access: reads | inROM, checked: 0,
+        checkedMost: 2399, rule: 2, ruleArg: 2, perFour: 1,
+        chargeArg: none},
+}
 ```
 
 The five calls `hello` makes: `write` (0; a buffer at `a0` of `a1` bytes, at most 4,096, read, may be in ROM; returns `a1`; 2 units a byte), `command` (1; 150 units for commands 1 to 3), `set_cursor` (2), `set_colours` (4) and `cells_write` (7; a buffer at `a1` of `a2` cells of 4 bytes; `a0`, the first cell, at most 2,399; returns `a2`; a unit per 4 bytes). All five are deferred. `encode` writes an entry in DEVICES.md section 5's layout:
@@ -38,8 +54,7 @@ func words(b []byte, values ...uint32) []byte {
     }
     return b
 }
-```
-```go examples/device/go/main.go
+
 func (e entry) encode() []byte {
     b := []byte{e.fn, e.flags, e.buffer, e.length}
     b = words(b, e.scale, 0, e.most)
@@ -62,8 +77,13 @@ var xterm = []byte{
     127, 127, 127, 255, 0, 0, 0, 255, 0, 255, 255, 0,
     92, 92, 255, 255, 0, 255, 0, 255, 255, 255, 255, 255,
 }
-```
-```go examples/device/go/main.go
+
+type terminal struct {
+    grid                          [columns * rows * 4]byte
+    col, row, fg, bg, shown, wrap byte
+    palette                       [768]byte
+}
+
 func newTerminal() *terminal {
     t := &terminal{fg: 7, shown: 1}
     for cell := range columns * rows {
@@ -90,8 +110,7 @@ func (t *terminal) put(cell int, code uint16) {
     le.PutUint16(t.grid[4*cell:], code)
     t.grid[4*cell+2], t.grid[4*cell+3] = t.fg, t.bg
 }
-```
-```go examples/device/go/main.go
+
 func (t *terminal) newline() {
     t.col, t.wrap = 0, 0
     if t.row < rows-1 {
@@ -103,8 +122,7 @@ func (t *terminal) newline() {
         t.put((rows-1)*columns+col, ' ')
     }
 }
-```
-```go examples/device/go/main.go
+
 func (t *terminal) write(text []byte) {
     for _, r := range string(text) {
         if r == '\n' {
@@ -168,8 +186,7 @@ func (t *terminal) call(body []byte) (result, charge uint32) {
     }
     return 0, 0
 }
-```
-```go examples/device/go/main.go
+
 func (t *terminal) state() []byte {
     state := append(t.grid[:], t.col, t.row, t.fg, t.bg)
     state = append(state, t.shown, t.wrap)
@@ -199,8 +216,7 @@ func hello(body []byte) []byte {
     }
     return append(reply, 0, 0, 0)
 }
-```
-```go examples/device/go/main.go
+
 func main() {
     conn, err := net.Dial("unix", os.Getenv("TERSE_BUS_SOCKET"))
     if err != nil {

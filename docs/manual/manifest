@@ -27,12 +27,12 @@ guide-program
 guide-drawing
 guide-host
 guide-host-go
-guide-host-go-frames
-guide-host-go-driver
-guide-host-go-state
 guide-host-rust
+guide-host-go-frames
 guide-host-rust-frames
+guide-host-go-driver
 guide-host-rust-driver
+guide-host-go-state
 guide-host-rust-state
 guide-device
 guide-device-go
