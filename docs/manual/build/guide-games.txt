@@ -2,9 +2,13 @@
 
 Reading is the heart of Tersenet; programs are the optional part. A program is small, at most 1 MiB of memory, and runs on a tiny virtual machine of its own, Terse32, inside the window. It cannot read your files, and the window asks you before it publishes anything in your name.
 
-## The game that comes with Tersenet
+## The games that come with Tersenet
 
-The launcher lists the programs built into the window. One of them is a game: sparks. Choose it and press Enter:
+The launcher lists the programs built into the window. Two of them are games. Choose reef, Lumen Reef, and press Enter.
+
+You fly a lamp skiff at the edge of the Reef, drawn in glowing wireframe lines, and hold it against what comes out of the deep: kites that weave and fire sparks, rolling wheels, diving prongs and, every fourth stage, a Warden, a cube in a ring of four nodes. Between swarms you steer between slabs and through gates of light. Aiming is flying: the arrow keys or W A S D move the sight, and the skiff goes where it points, which is also how you dodge. Space, Z or Ctrl fires, as does the mouse button (the pointer aims); a game controller works too, the left stick aiming and A firing. Fire, or Enter, starts a game. Firing heats the guns. P or Esc pauses, V switches the display style. The game ends when your shields are gone.
+
+The other game is sparks:
 
 ```
   SPARKS    HIGH 0000         demo - Enter or Start to play
@@ -14,9 +18,11 @@ The launcher lists the programs built into the window. One of them is a game: sp
                      Enter or Start: play.        Esc: quit.
 ```
 
-Enter plays. Left and Right turn your craft, Up thrusts; a game controller works too. Your high score is kept on this computer, for the next time. F12 takes you back to the launcher while the game goes on in its tile; Enter on its line there, or a click on it, brings it back.
+Enter plays. Left and Right turn your craft, Up thrusts. Both games keep your high score on this computer, for the next time. F12 takes you back to the launcher while a game goes on in its tile; Enter on its line there, or a click on it, brings it back.
 
 The other built-in programs are small tools and demonstrations: sketch draws with the mouse, holo shows 3D scenes (try scene 6, a cockpit), hello and fetch show what a program can do, and reports gathers performance reports.
+
+Not built in, but in the Tersenet sources: sheet, a small spreadsheet. Start it with `terse-host programs/sheet/sheet.terse`. A cell holds a number, text or a formula starting with `=`: arithmetic, references such as `A1`, ranges such as `A1:A5`, and SUM, AVERAGE, MIN, MAX, COUNT, ROUND, ABS and IF. Numbers are exact to four decimal places, so sums of money come out right. Ctrl+G shows a bar chart of the selection, Ctrl+L a line chart; Ctrl+S keeps the sheet on this computer for the next start, and Ctrl+P publishes it in your feed, after the window asks you.
 
 ## Games from other people
 
@@ -47,6 +53,6 @@ Enter restores it; D discards it. Nothing is saved without S, except what a prog
 
 ## What you have now
 
-The whole of Tersenet from the user's side: your own feed, other people's, and the programs. That is the end of the user guide. If you want to see how it works by building a piece yourself, the implementation guide starts with a reader: [Make a reader, step 1: show an article](terse:84d022841e16996496eb0decb2306052b3dac92ccbce3f76b4943a46aa05136a).
+The whole of Tersenet from the user's side: your own feed, other people's, and the programs. That is the end of the user guide. If you want to see how it works by building a piece yourself, the implementation guide starts with a reader: [Make a reader](terse:b72fbc30f359c8a5ac8ae40abf547c909fa74b3141bc78d7eabb49f75e0c3eca).
 
-The launcher, sessions and every prompt are in [Using the shell](terse:9294766419c5492ad33ed9e6bdf471fa771093eadd375afad06674578a0fba59); publishing a program of your own is in [Running and publishing a program](terse:1dbf0a30991c396dca02176530125886a25af9df0c8e4fe770baef27b074dc8e).
+The launcher, sessions and every prompt are in [Using the shell](terse:95e3a595d660c8dfef95b3cdff069195525b5a429fc323e286c584518b05a02b); publishing a program of your own is in [Running and publishing a program](terse:d9928cc35c818abfa6255bdd21a1501f86ef54cbc9949f0a6318098063af9b52).

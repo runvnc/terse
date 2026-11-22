@@ -58,6 +58,14 @@ Its shape:
   event, content operation and status of the machine specification (SPEC.md and spec/;
   `--test spec` checks their ids, citations and tables); `--test reader` that
   the reader holds the current index's ID and shows every article whole.
+- A **listing** is a fence opened by a language word and a path, such as
+  "```c examples/program/c/hello.c" (optionally two more words between
+  slashes: the part of the file between the lines holding them). Its
+  lines are the file's: write the file (the implementation guide's
+  programs are in `examples/program`, each built and run by `cargo test
+  -p terse-cli --test examples`), then run `scripts/manual-listings.py`,
+  before `terse manual build`. The same test checks that every listing is
+  its file.
 - Keep each article under about 14 KB (built, with its links resolved, it
   must stay within the 16,384 bytes a host downloads automatically, which
   `--test reader` checks, so it opens at once), preformatted

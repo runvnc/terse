@@ -3,63 +3,29 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Make a reader, step 1: show an article - the Tersenet manual</title>
+<title>Make a reader - the Tersenet manual</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Contents</a></nav></header>
 <main>
 <article>
-<h1 id="make-a-reader-step-1-show-an-article">Make a reader, step 1: show an article</h1>
-<p>A Tersenet article is plain UTF-8 text that already reads well as it is. A reader&#39;s job is to show it a little better: headings larger, paragraphs wrapped to the window, links you can follow. You can write one in any language, with any way of putting text on a screen, and you do not need the Terse32 virtual machine at all: articles and the network are the whole of Tersenet&#39;s reading side.</p>
-<p>This first step needs no network either. You will show an article that is already a file on your computer.</p>
-<h2 id="an-article-to-start-with">An article to start with</h2>
-<p>Save this as <code>hello.txt</code>:</p>
-<pre># Hello
-
-My first article.
-Two lines, one paragraph.
-
-## A short list
-
-- one item
-- another, with `code` in it</pre>
-<h2 id="the-rules-you-need-first">The rules you need first</h2>
-<p>An article is a series of blocks. Blank lines separate them, and each block is known by how its first line starts:</p>
+<h1 id="make-a-reader">Make a reader</h1>
+<p>A Tersenet reader is any program that shows Tersenet articles to a person. An article is a plain text file that already reads well as it is; a reader shows it a little better, with headings that stand out and paragraphs wrapped to the window, and fetches articles and feeds from relays, checking that each is genuine. It needs no virtual machine: articles and the network are the whole of Tersenet&#39;s reading side.</p>
+<p>This guide builds a small reader in three steps, each a complete program you can run:</p>
 <ul>
-<li><code># </code> starts a heading, and <code>## </code> a subheading: one line each.</li>
-<li><code>- </code> or <code>* </code> starts a list item.</li>
-<li>Four spaces or a tab start a preformatted line, shown as written in a monospaced face.</li>
-<li>Three backquotes start a fence, which runs to the next line of three backquotes and is shown as written, like preformatted lines.</li>
-<li><code>|</code> starts a table row.</li>
-<li>Any other line starts a paragraph. Its lines are joined with spaces, then wrapped to your width.</li>
+<li>Step 1: show an article from a file, its headings and paragraphs.</li>
+<li>Step 2: fetch an article from a relay by its ID, and check its hash.</li>
+<li>Step 3: follow a feed: list its entries, check their signatures, open one.</li>
 </ul>
-<p>Inside a line, text between two backquotes is a code span, and a link is a <code>terse:</code> address, bare or written as <code>[text](address)</code>. An article&#39;s address is <code>terse:</code> and 64 hexadecimal digits. Only <code>terse:</code> addresses are links: a web address is ordinary text.</p>
-<p>That is enough for a first version. Anything that matches no rule is ordinary text, shown as written. A reader that does not lay tables out yet may show a table&#39;s lines as a paragraph, and one that does not draw figures may show a figure as its text: the format allows both, so leave them for later.</p>
-<h2 id="check-yourself">Check yourself</h2>
-<p>The Tersenet sources come with a test for exactly this. The folder <code>vectors/articles</code> holds 58 small articles, each <code>.txt</code> beside a <code>.dump</code> file that lists what a reader must find in it, one block or piece per line. For <code>hello.txt</code> it is:</p>
-<pre>heading
-  text &quot;Hello&quot;
-paragraph
-  text &quot;My first article. Two lines, one paragraph.&quot;
-subheading
-  text &quot;A short list&quot;
-item
-  text &quot;one item&quot;
-item
-  text &quot;another, with &quot;
-  code &quot;code&quot;
-  text &quot; in it&quot;</pre>
-<p>Make your program print the same, and compare. The reader <code>tersereader</code> (in the sources as <code>native/reader-go</code>) prints it for any file:</p>
-<pre>tersereader --dump hello.txt --tokens
-tersereader --dump hello.txt</pre>
-<p>The second command shows the article laid out as text, with its links numbered: a good picture of what yours should do.</p>
-<p><code>tersereader</code> is itself a reader written from the specifications alone. With the network left to a separate program, as step 2 shows, it is about 5,300 lines of Go. A reader is a project you can finish.</p>
-<h2 id="what-you-have-now">What you have now</h2>
-<p>A program that shows Tersenet articles from files. Next, get them from the network: <a href="guide-reader-fetch.html">Make a reader, step 2: fetch an article</a>.</p>
-<p>The complete rules, with every edge case, are in ARTICLE.md; <a href="writing-articles.html">Writing an article</a> shows each construct as source and as shown.</p>
+<p>The programs are in the Tersenet sources, in <code>examples/reader</code>, in Go and in Rust. Each step is a page or two of code, with a well-known library for each of WebSocket, BLAKE3 and Ed25519. Pick a language:</p>
+<ul>
+<li><a href="guide-reader-go.html">Make a reader in Go, step 1: show an article</a></li>
+<li><a href="guide-reader-rust.html">Make a reader in Rust, step 1: show an article</a></li>
+</ul>
+<p>These programs are a start, not a whole reader: each page says what its program leaves out and where the complete readers do it.</p>
 </article>
 </main>
-<footer><nav class="pn"><a rel="prev" href="guide-games.html">← Find and play a game</a><a rel="next" href="guide-reader-fetch.html">Make a reader, step 2: fetch an article →</a></nav></footer>
+<footer><nav class="pn"><a rel="prev" href="guide-games.html">← Find and play a game</a><a rel="next" href="guide-reader-go.html">Make a reader in Go, step 1: show an article →</a></nav></footer>
 </body>
 </html>

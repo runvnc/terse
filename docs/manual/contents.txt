@@ -1,6 +1,6 @@
 # Contents
 
-The manual has three parts. The user guide gets you from installing Tersenet to reading, publishing and following others, with no programming. The implementation guide builds the parts of Tersenet yourself: a reader, a program, a host, a device and a shell. Both are short steps, each one you can finish in a sitting. The reference is everything, complete and exact.
+The manual has three parts. The user guide gets you from installing Tersenet to reading, publishing and following others, with no programming. The implementation guide builds the parts of Tersenet yourself, from working source code: a reader, programs, a host, a device and a shell. Both are short steps, each one you can finish in a sitting. The reference is everything, complete and exact.
 
 ## User guide
 
@@ -14,18 +14,29 @@ The manual has three parts. The user guide gets you from installing Tersenet to 
 
 ## Implementation guide
 
-- [Make a reader, step 1: show an article](terse:{guide-reader}): the article format's first rules, and a test to check yourself.
-- [Make a reader, step 2: fetch an article](terse:{guide-reader-fetch}): get an article from a relay and check that it is genuine.
-- [Make a reader, step 3: links and feeds](terse:{guide-reader-feeds}): follow links, subscribe to a feed, check its signatures.
-- [Write a program](terse:{guide-program}): a first Terse32 program, built and run in three commands.
-- [Draw a line and read a key](terse:{guide-drawing}): the 2D vector display and keyboard events.
+- [Make a reader](terse:{guide-reader}): what a reader does, and a small one built in three steps, in Go or in Rust.
+- [Make a reader in Go, step 1: show an article](terse:{guide-reader-go}): an article file's headings and paragraphs, with the standard library alone.
+- [Make a reader in Rust, step 1: show an article](terse:{guide-reader-rust}): the same program in Rust.
+- [Make a reader in Go, step 2: fetch an article](terse:{guide-reader-fetch-go}): get an article from a relay by its ID and check its BLAKE3 hash.
+- [Make a reader in Rust, step 2: fetch an article](terse:{guide-reader-fetch-rust}): the same in Rust.
+- [Make a reader in Go, step 3: follow a feed](terse:{guide-reader-feed-go}): subscribe to a feed, check its entries' signatures strictly, open an article.
+- [Make a reader in Rust, step 3: follow a feed](terse:{guide-reader-feed-rust}): the same in Rust.
+- [Write a program in C](terse:{guide-program}): hello on the text grid, built, run in a window and tested without one; Go has no compiler for Terse32, so the program pages are in C and Rust.
+- [Write a program in Rust](terse:{guide-program-rust}): the same program with the Rust runtime.
+- [Draw a line and read a key](terse:{guide-drawing}): a line on the 2D vector display that the arrow keys move, in C.
+- [Draw a line and read a key in Rust](terse:{guide-drawing-rust}): the same with `VecList`.
+- [Make a small game](terse:{guide-game}): steer a dot to a ring, keep score; the way to sparks and Lumen Reef, in C.
+- [Make a small game in Rust](terse:{guide-game-rust}): the same game in Rust.
 - [Make a host, step 1: run a program to its end](terse:{guide-host}): the program file, memory and the processor, until `exit`.
 - [Make a host, step 2: frames and the budget](terse:{guide-host-frames}): 125,000 units a frame, `wait_frame` and the carry rule.
 - [Make a host, step 3: a driver shows hello](terse:{guide-host-driver}): the reference terminal over the device bus.
 - [Make a host, step 4: prove it exact](terse:{guide-host-state}): the state hash, snapshots and the conformance program.
 - [Make a device](terse:{guide-device}): a device as a separate program on the device bus.
 - [Swap in your own part](terse:{guide-swap}): your reader, core or device with the reference for everything else.
-- [Make a shell](terse:{guide-shell}): the program that starts other machines and lays out their screens.
+- [Make a shell](terse:{guide-shell}): a program that starts another machine and shows it (device 8), in C.
+- [Make a shell in Rust](terse:{guide-shell-rust}): the same shell with the runtime's calls of device 8.
+- [Invent a device](terse:{guide-invent}): an experimental device, its driver in C and a program in C that uses it.
+- [Invent a device: the program in Rust](terse:{guide-invent-rust}): the same program in Rust, with raw calls.
 
 ## Reference
 
@@ -73,3 +84,4 @@ The devices:
 - [Screens, panels and input (device 8)](terse:{device-machines-screens}): where machines' screens go, flat or as panels in 3D.
 - [The 3D vector display (device 9)](terse:{device-vector3}): lines, points and circles in a box, seen from the host's eye.
 - [Surfaces](terse:{device-vector3-surfaces}): a program's own screen placed in its 3D scene.
+- [Experimental devices](terse:{experimental}): slots 240 to 255, a name, optional only: a device tried out before it is specified.
