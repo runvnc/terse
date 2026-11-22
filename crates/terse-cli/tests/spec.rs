@@ -127,7 +127,8 @@ fn every_citation_resolves() {
     let mut count = 0;
     for f in files {
         let Ok(text) = std::fs::read_to_string(&f) else { continue };
-        let rel = f.strip_prefix(&root).unwrap().to_string_lossy().into_owned();
+        // With `/` between the parts on every system.
+        let rel = f.strip_prefix(&root).unwrap().to_string_lossy().replace('\\', "/");
         if rel.ends_with("tests/spec.rs") {
             continue;
         }
