@@ -174,6 +174,17 @@ pub struct ShmEnd {
     /// Time spent spinning, and waits that slept (measurements).
     pub spun: Duration,
     pub sleeps: u64,
+    /// The longest sleep before this end looks again ([`NAP`]; tests make
+    /// it long, so that a wake that did not come shows as a nap).
+    pub nap: Duration,
+    /// Counters of the hand-over (for tests): wakes this end sent (a
+    /// packet handed to an end that said it slept); packets that came while
+    /// this end slept (its sleeping word still said so when it saw the
+    /// packet, so the other end's send read it and woke it); sleeps that
+    /// lasted the whole nap by this end's clock (not woken).
+    pub wakes: u64,
+    pub came_asleep: u64,
+    pub naps: u64,
 }
 
 impl ShmEnd {
@@ -194,6 +205,10 @@ impl ShmEnd {
             sleep_on_socket: wake_by_socket(),
             spun: Duration::ZERO,
             sleeps: 0,
+            nap: NAP,
+            wakes: 0,
+            came_asleep: 0,
+            naps: 0,
         })
     }
 
@@ -238,8 +253,12 @@ impl ShmEnd {
                 // write means the other end has gone, which its next wait
                 // finds out.
                 let _ = self.socket.write_all(&[0]);
+                self.wakes += 1;
             }
-            _ => sys::address_wake(self.map.word(seq)),
+            _ => {
+                sys::address_wake(self.map.word(seq));
+                self.wakes += 1;
+            }
         }
         Ok(())
     }
@@ -274,11 +293,20 @@ impl ShmEnd {
             self.map.word(sleeping).store(how, Ordering::SeqCst);
             let mut gone = false;
             if self.map.word(seq).load(Ordering::SeqCst) == self.seen {
+                let asleep = Instant::now();
                 if self.sleep_on_socket {
                     // Woken by a byte, or by the end of the stream.
-                    gone = sys::wait_readable(&self.socket, NAP) && !sys::drain(&self.socket);
+                    gone = sys::wait_readable(&self.socket, self.nap) && !sys::drain(&self.socket);
                 } else {
-                    sys::address_wait(self.map.word(seq), self.seen, NAP);
+                    sys::address_wait(self.map.word(seq), self.seen, self.nap);
+                }
+                if asleep.elapsed() >= self.nap {
+                    self.naps += 1;
+                }
+                // Still saying it sleeps: a packet now here was sent after
+                // the look above, so its send read the sleeping word.
+                if self.map.word(seq).load(Ordering::SeqCst) != self.seen {
+                    self.came_asleep += 1;
                 }
             }
             self.map.word(sleeping).store(AWAKE, Ordering::SeqCst);
@@ -377,29 +405,18 @@ pub fn session_dir() -> Result<std::path::PathBuf, String> {
 mod tests {
     use super::*;
 
-    /// Whether the system says, for one thread, both its time on a CPU and
-    /// its time waiting for one (Linux with schedstats). macOS gives the
-    /// wait of the whole process only, and Windows' is inferred.
-    fn thread_wait_is_read(probe: &terse_perflog::probe::ProcProbe) -> bool {
-        cfg!(target_os = "linux") && probe.has_wait()
-    }
-
-    /// A thread's time on a CPU plus its time waiting for one, in ns, where
-    /// the system says both: the time it was not blocked.
-    fn unblocked_ns(probe: &mut terse_perflog::probe::ProcProbe) -> Option<u64> {
-        thread_wait_is_read(probe).then(|| probe.sample()).flatten().map(|s| s.run_ns + s.wait_ns)
-    }
-
     /// Packets go both ways through a bus file, sleeping and spinning,
     /// each end sleeping on the address (where the system has one) or on
-    /// the socket, in every combination. A lost wake costs a whole nap
-    /// with both ends blocked; a busy computer only makes an end wait for
-    /// a CPU. So where the system says how long each thread waited for a
-    /// CPU, a round trip counts as a nap only if, of its time, what neither
-    /// end spent on a CPU or waiting for one is most of a nap; elsewhere
-    /// its wall time is all there is to go by.
+    /// the socket, in every combination, and no wake is lost: every packet
+    /// that came while the other end slept was sent with a wake (the
+    /// sender read the sleeping word), and no sleep lasted its whole nap
+    /// (made 5 s here, by the sleeper's own clock: a wake that was not
+    /// sent, or sent and not felt, costs a nap). Counted by the ends
+    /// themselves, per packet, so a busy computer, which only makes an end
+    /// wait for a CPU, changes nothing in it.
     #[test]
     fn shared_memory_hand_over() {
+        const TEST_NAP: Duration = Duration::from_secs(5);
         for (core_socket, driver_socket) in [(false, false), (true, true), (false, true), (true, false)] {
             if !sys::address_wait_available() && !(core_socket && driver_socket) {
                 continue;
@@ -411,70 +428,68 @@ mod tests {
             let (a, b) = sys::pair().unwrap();
             let mut core = ShmEnd::new(m, true, Spin::fixed(Duration::from_micros(50)), a).unwrap();
             core.sleep_on_socket = core_socket;
+            core.nap = TEST_NAP;
             // The driver maps the file before the core's first packet, as
             // after the handshake.
             let mut d = ShmEnd::new(Mapping::open(&path, true).unwrap(), false, Spin { max: Duration::from_micros(200), adaptive: true }, b).unwrap();
             d.sleep_on_socket = driver_socket;
+            d.nap = TEST_NAP;
             let driver = std::thread::spawn(move || {
-                let mut probe = terse_perflog::probe::ProcProbe::this_thread();
+                // Whether each reply was sent with a wake.
+                let mut woke = Vec::new();
                 for i in 0..1000 {
-                    // Now and then the core is slow, so that this end sleeps.
+                    let (came, naps) = (d.came_asleep, d.naps);
                     let p = d.recv().unwrap().to_vec();
                     let mut reply: Vec<u8> = p.iter().map(|x| x.wrapping_add(1)).collect();
+                    // Now and then the core is slow, so that this end
+                    // sleeps; and this end is slow, so that the core does.
                     if i % 100 == 0 {
-                        std::thread::sleep(Duration::from_millis(2));
+                        std::thread::sleep(Duration::from_millis(10));
                     }
-                    // How long this end has not been blocked, so far.
-                    reply.extend(unblocked_ns(&mut probe).unwrap_or(u64::MAX).to_le_bytes());
+                    // Whether the request came while this end slept, and
+                    // whether it slept a whole nap for it.
+                    reply.push((d.came_asleep - came) as u8);
+                    reply.push((d.naps - naps) as u8);
+                    let wakes = d.wakes;
                     d.send(&reply).unwrap();
+                    woke.push(d.wakes > wakes);
                 }
-                // The core goes: the next wait says so.
+                // The core goes: the next wait says so (within a nap of
+                // the usual length where it sleeps on the address).
+                d.nap = NAP;
                 assert!(d.recv().is_err());
+                woke
             });
-            let mut probe = terse_perflog::probe::ProcProbe::this_thread();
-            let readings = thread_wait_is_read(&probe);
-            let mut driver_before: Option<u64> = None;
-            let (mut napped, mut slow) = (0, 0);
+            let mut came = Vec::new();
+            let (mut asleep, mut woken) = (0, 0);
             for i in 0..1000u32 {
                 if i % 100 == 50 {
-                    std::thread::sleep(Duration::from_millis(2));
+                    std::thread::sleep(Duration::from_millis(10));
                 }
                 let p = i.to_le_bytes();
-                let core_before = unblocked_ns(&mut probe);
-                let start = Instant::now();
+                let (wakes, came_before, naps) = (core.wakes, core.came_asleep, core.naps);
                 core.send(&p).unwrap();
+                let woke = core.wakes > wakes;
                 let r = core.recv().unwrap();
-                let took = start.elapsed();
                 assert_eq!(r[..4], p.map(|x| x.wrapping_add(1)));
-                let driver_now = u64::from_le_bytes(r[4..12].try_into().unwrap());
-                // Where the system says: the time neither end was on a CPU
-                // or waiting for one (the first round trip has no
-                // reading of the driver's to start from, and is not judged).
-                let both_blocked = match (core_before, unblocked_ns(&mut probe), driver_before) {
-                    (Some(a), Some(b), Some(d)) if driver_now != u64::MAX => {
-                        let unblocked = b.saturating_sub(a) + driver_now.saturating_sub(d);
-                        Some(Duration::from_nanos((took.as_nanos() as u64).saturating_sub(unblocked)))
-                    }
-                    _ if readings => None,
-                    _ => Some(took),
-                };
-                driver_before = Some(driver_now).filter(|&d| d != u64::MAX);
-                if took >= NAP - Duration::from_millis(5) {
-                    slow += 1;
-                }
-                if both_blocked.is_some_and(|b| b >= NAP - Duration::from_millis(5)) {
-                    napped += 1;
-                }
+                let (driver_came, driver_napped) = (r[4] != 0, r[5] != 0);
+                let tag = format!("core {core_socket}, driver {driver_socket}, round trip {i}");
+                assert!(!driver_came || woke, "{tag}: the request came while the driver slept, and the core did not wake it");
+                assert!(!driver_napped && core.naps == naps, "{tag}: a sleep lasted its whole nap (a wake was not felt)");
+                came.push(core.came_asleep > came_before);
+                asleep += (driver_came as u32) + came.last().copied().unwrap_or(false) as u32;
+                woken += woke as u32;
             }
-            // The sleeps (about 20) were woken: a lost wake would have cost
-            // a whole nap with both ends blocked. Without the readings, a
-            // few round trips as long as a nap are a busy computer.
-            eprintln!("core {core_socket}, driver {driver_socket}: {slow} round trips as long as a nap, {napped} judged naps");
-            let allowed = if readings { 0 } else { 4 };
-            assert!(napped <= allowed, "core {core_socket}, driver {driver_socket}: {napped} round trips took a nap");
             drop(core.socket.shutdown(std::net::Shutdown::Both));
             drop(core);
-            driver.join().unwrap();
+            let woke = driver.join().unwrap();
+            for (i, (&c, &w)) in came.iter().zip(&woke).enumerate() {
+                assert!(!c || w, "core {core_socket}, driver {driver_socket}, round trip {i}: the reply came while the core slept, and the driver did not wake it");
+            }
+            // The other end slept in most of the 10 ms pauses (20; it
+            // spins at most 0.2 ms first): the test saw what it is about.
+            eprintln!("core {core_socket}, driver {driver_socket}: {asleep} packets came to a sleeping end, the core sent {woken} wakes");
+            assert!(asleep >= 10, "core {core_socket}, driver {driver_socket}: only {asleep} packets came to a sleeping end");
             std::fs::remove_dir_all(dir).unwrap();
         }
     }
