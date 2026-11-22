@@ -11,9 +11,11 @@
  *
  * Aiming is flying: the sight is where the skiff heads, so the world
  * slides the other way (aim right and everything drifts left), which is
- * also how you dodge the sparks fired at you. The twin bolts cross at the
- * sight's depth (AIM_DEPTH). Firing heats the guns; past the top of the
- * gauge they lock until they cool.
+ * also how you dodge the sparks fired at you. The twin bolts cross on the
+ * sight's line, at AIM_DEPTH or, when a target is under the sight, where
+ * that target will be (the sight turns yellow and moves to its depth).
+ * Firing heats the guns; past the top of the gauge they lock until they
+ * cool.
  *
  * Stages go round SWARM, RUN, SWARM, WARDEN, each round faster. A stage's
  * hits on target (per cent of bolts) pay a bonus and a cleared stage
@@ -107,7 +109,7 @@ static struct game {
 typedef struct {
     int32_t x, y, z;
     int16_t vx, vy, vz;
-    uint8_t life, pad;
+    uint8_t life, volley; /* bolts of one volley share a number; 0 once it hit */
 } bolt_t;
 
 typedef struct {
@@ -460,12 +462,12 @@ static void spawn_reef(void)
 #define RING 200
 static void spawn_warden(void)
 {
-    obj_t *c = spawn(CORE, 0, -40 * U, 1500 * U);
+    obj_t *c = spawn(CORE, 0, -40 * U, 1100 * U);
     if (!c)
         return;
     c->hp = 10 + 2 * (g.stage / 4);
     for (uint8_t i = 0; i < 4; i++) {
-        obj_t *n = spawn(NODE, 0, 0, 1500 * U);
+        obj_t *n = spawn(NODE, 0, 0, 1100 * U);
         if (n) {
             n->phase = i * 64;
             n->hp = 3;
@@ -704,6 +706,9 @@ static void fire(void)
     int32_t tx = (int32_t)g.aim_x * U * (960 + AIM_DEPTH) / 960, ty = (int32_t)g.aim_y * U * (960 + AIM_DEPTH) / 960;
     int32_t tz = AIM_DEPTH * U;
     int32_t n = (AIM_DEPTH - MUZZLE_Z) / BOLT_SPEED;
+    static uint8_t volley;
+    if (++volley == 0)
+        volley = 1;
     if (lock) {
         obj_t *o = lock;
         n = (o->z - MUZZLE_Z * U) / (BOLT_SPEED * U - o->vz);
@@ -725,10 +730,11 @@ static void fire(void)
             b->vy = (int16_t)clamp((ty - b->y) / n, -2000, 2000);
             b->vz = (int16_t)clamp((tz - b->z) / n, 16 * U, 2000);
             b->life = (uint8_t)clamp((FAR * U - MUZZLE_Z * U) / b->vz, 1, 120);
-            g.shots++;
+            b->volley = volley;
             break;
         }
     }
+    g.shots++;
     g.heat += 36;
     if (g.heat >= HEAT_MAX) {
         g.heat = HEAT_MAX;
@@ -741,7 +747,6 @@ static void fire(void)
 
 static void hit(obj_t *o)
 {
-    g.hits++;
     if (o->type == CORE && g.nodes) {
         o->flag = 6; /* shielded: it flashes and takes nothing */
         return;
@@ -790,6 +795,13 @@ static void bolts_step(void)
             if (!r)
                 continue;
             if (iabs(b->x - o->x) < r * U && iabs(b->y - o->y) < r * U && iabs(b->z - o->z) < (r + 40) * U) {
+                /* A volley on target counts once (hits / shots is per volley). */
+                if (b->volley) {
+                    g.hits++;
+                    for (uint8_t j = 0; j < MAXBOLT; j++)
+                        if (bolts[j].volley == b->volley)
+                            bolts[j].volley = 0;
+                }
                 b->life = 0;
                 hit(o);
                 break;
@@ -958,7 +970,7 @@ static void fight_step(void)
 {
     uint16_t t = g.timer;
     if (g.kind == SWARM) {
-        uint8_t most = 3 + g.stage / 2;
+        uint8_t most = 4 + g.stage / 2;
         if (most > 7)
             most = 7;
         int32_t every = 40 - 3 * g.stage;
@@ -972,11 +984,11 @@ static void fight_step(void)
         int32_t every = 34 - g.stage;
         if (every < 16)
             every = 16;
-        if (t < 1380 && t % every == 0)
+        if (t < 1080 && t % every == 0)
             spawn_reef();
-        if (g.stage >= 5 && t % 150 == 75 && t < 1380)
+        if (g.stage >= 5 && t % 150 == 75 && t < 1080)
             spawn_enemy();
-        if (t >= 1500)
+        if (t >= 1200)
             stage_clear();
     } else {
         if (t == 1)
@@ -1436,20 +1448,28 @@ static void text(int16_t x, int16_t y, uint8_t s2, const char *s)
             c -= 32;
         if (c < 32 || c >= 96 || font_ascii[c - 32] == 0xFF)
             continue;
+        /* Written straight into the list (a glyph is at most 20 points). */
+        if (vec_overflow || vec_limit - vec_ptr < 100) {
+            vec_overflow = 1;
+            return;
+        }
         const uint8_t *p = &font_points[font_index[font_ascii[c - 32]]];
-        uint8_t pen = 0, b;
-        while ((b = *p++) != 0xFE) {
-            if (b == 0xFF) {
-                pen = 0;
+        uint8_t *w = vec_ptr, op = VEC_OP_MOVE, gx;
+        while ((gx = *p++) != 0xFE) {
+            if (gx == 0xFF) {
+                op = VEC_OP_MOVE;
                 continue;
             }
-            int16_t gx = ox + (b / 23) * s2, gy = oy + (b % 23) * s2;
-            if (pen)
-                vec_line(gx, gy);
-            else
-                vec_move(gx, gy);
-            pen = 1;
+            uint16_t X = (uint16_t)(ox + gx * s2), Y = (uint16_t)(oy + *p++ * s2);
+            w[0] = op;
+            w[1] = (uint8_t)X;
+            w[2] = (uint8_t)(X >> 8);
+            w[3] = (uint8_t)Y;
+            w[4] = (uint8_t)(Y >> 8);
+            w += 5;
+            op = VEC_OP_LINE;
         }
+        vec_ptr = w;
     }
 }
 

@@ -15,7 +15,12 @@ use terse_core::{FrameResult, Image, Machine, RAM_BASE, Script};
 use terse_net::service::Headless;
 use terse_net::{BlobStore, ContentService, Node, Records};
 
-const IMAGE: &[u8] = include_bytes!("../../../programs/reef/reef.terse");
+/// The image, read when a test starts (so that a rebuilt image needs no
+/// rebuilt test).
+static IMAGE_BYTES: std::sync::LazyLock<Vec<u8>> = std::sync::LazyLock::new(|| std::fs::read(dir().join("reef.terse")).unwrap());
+fn image() -> Image {
+    Image::parse(&IMAGE_BYTES).unwrap()
+}
 const RAM_PAGES: u8 = 3;
 /// The display lists' buffers in reef.c (list2, list3).
 const LIST2_BYTES: usize = 6144;
@@ -145,7 +150,7 @@ fn ink2(list: &[u8]) -> u64 {
 
 /// Runs `frames` frames as `terse run` does.
 fn session(script: &str, frames: u32, keep: &[u32], measure: bool) -> Session {
-    let mut m = Machine::new(&Image::parse(IMAGE).unwrap());
+    let mut m = Machine::new(&image());
     let (mut h, _dir) = headless_in(script, None);
     let mut s = Session {
         results: vec![],
@@ -222,7 +227,7 @@ fn recorded_session() {
 #[test]
 fn state_hashes() {
     let frames = [60, 1200, 2400, 3600];
-    let mut m = Machine::new(&Image::parse(IMAGE).unwrap());
+    let mut m = Machine::new(&image());
     let (mut h, _dir) = headless_in(&recorded("play.txt"), None);
     let mut got = String::new();
     for f in 1..=3600 {
@@ -331,7 +336,7 @@ fn pause_holds() {
 /// game is the same without them.
 #[test]
 fn devices() {
-    common::check_up_to_date(IMAGE, &["reef/reef.c"], true, "reef", RAM_PAGES, &[(2, 0x80), (3, 0), (4, 0x80), (6, 0x80), (9, 0)]);
+    common::check_up_to_date(&IMAGE_BYTES, &["reef/reef.c"], true, "reef", RAM_PAGES, &[(3, 0), (9, 0), (2, 0x80), (4, 0x80), (6, 0x80)]);
     let image = dir().join("reef.terse");
     let tmp = tempfile::tempdir().unwrap();
     let run = |extra: &[&str]| {
@@ -362,7 +367,7 @@ fn devices() {
 /// is optional, so the same game runs silent without it (`devices`).
 #[test]
 fn sound() {
-    let mut m = Machine::new(&Image::parse(IMAGE).unwrap());
+    let mut m = Machine::new(&image());
     let (mut h, _dir) = headless_in("30 press space\n160 down space\n", None);
     let mut loud = 0;
     for _ in 0..400 {
@@ -376,7 +381,7 @@ fn sound() {
 
 #[test]
 fn image_is_up_to_date() {
-    common::check_up_to_date(IMAGE, &["reef/reef.c"], true, "reef", RAM_PAGES, &[(2, 0x80), (3, 0), (4, 0x80), (6, 0x80), (9, 0)]);
+    common::check_up_to_date(&IMAGE_BYTES, &["reef/reef.c"], true, "reef", RAM_PAGES, &[(3, 0), (9, 0), (2, 0x80), (4, 0x80), (6, 0x80)]);
 }
 
 /// Records programs/reef/sessions/play.txt: a player that reads the game's
@@ -389,7 +394,7 @@ fn image_is_up_to_date() {
 #[ignore]
 fn record_sessions() {
     std::fs::create_dir_all(dir().join("sessions")).unwrap();
-    let script = bot::record(IMAGE, 7200, 5000);
+    let script = bot::record(&IMAGE_BYTES, 7200, 5000);
     std::fs::write(dir().join("sessions/play.txt"), &script).unwrap();
     let s = session(&script, 7200, &[], false);
     let mut last = Status::default();
