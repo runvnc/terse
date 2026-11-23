@@ -149,7 +149,7 @@ typedef uint64_t u64;
 #define NROWS 99
 #define NCELLS (NCOLS * NROWS)
 #define VCOLS 7
-#define VROWS_ALL 17
+#define VROWS_ALL 16
 #define VROWS_CHART 10
 #define COLW 80
 #define RAW_MAX 120
@@ -166,7 +166,7 @@ typedef uint64_t u64;
 #define PARSE_CELL 16
 #define SAVE_ROWS 6
 #define BARS_MAX 32
-#define CHART_H 90
+#define CHART_H 72
 #define STACK_MAX 40
 
 #define KEY_A 0x04
@@ -183,9 +183,25 @@ typedef uint64_t u64;
 #define KEY_X 0x1B
 #define KEY_Y 0x1C
 #define KEY_Z 0x1D
+#define KEY_E 0x08
+#define KEY_F_ 0x09
+#define KEY_H 0x0B
+#define KEY_O 0x12
+#define KEY_F10 0x43
+#define KEY_F1 0x3A
 #define KEY_F2 0x3B
 #define KEY_F4 0x3D
 #define KEY_DELETE 0x4C
+#define KEY_INSERT 0x49
+#define KEY_1 0x1E
+#define KEY_5 0x22
+#define KEY_MINUS 0x2D
+#define KEY_EQUAL 0x2E
+#define KEY_GRAVE 0x35
+#define KEY_COMMA 0x36
+#define KEY_PERIOD 0x37
+#define KEY_KP_MINUS 0x56
+#define KEY_KP_PLUS 0x57
 #define KEY_LSHIFT 0xE1
 #define KEY_RSHIFT 0xE5
 #define MOD_SHIFT 0x01
@@ -272,6 +288,7 @@ static uint8_t c_kind[NCELLS] __attribute__((aligned(4))), c_state[NCELLS] __att
 static i64 c_val[NCELLS];
 static uint8_t c_disp[NCELLS][DISP_MAX];
 static uint8_t c_dlen[NCELLS] __attribute__((aligned(4)));
+static uint8_t c_fmt[NCELLS] __attribute__((aligned(4))); /* the number format (FMT_*) */
 
 static uint16_t idx(uint32_t r, uint32_t c) { return (uint16_t)(r * NCOLS + c); }
 
@@ -447,12 +464,72 @@ static uint32_t put_int(u64 v, int commas, uint8_t *out)
     return k;
 }
 
-/* A number as shown in a cell of `width` tenths (0: no limit). */
-static uint32_t format_num(i64 v, int pct, uint32_t width, uint8_t *out)
+/* A cell's number format (c_fmt): 0 general (as typed: separators, the
+ * decimals it has, at least 2 if any; a number typed with % as a
+ * percentage); else FMT_SET with 0-4 fixed decimals, thousands
+ * separators or not, a percentage or not. */
+#define FMT_SET 0x80
+#define FMT_SEP 0x08
+#define FMT_PCT 0x10
+#define FMT_DEC 0x07
+
+/* A number in a fixed format; 0 if it does not fit in `width`. */
+static uint32_t format_fixed(i64 v, uint8_t fmt, uint32_t width, uint8_t *out)
+{
+    uint8_t buf[40];
+    uint32_t frac, dec = fmt & FMT_DEC, unit = 1, q, n, i, try;
+    u64 ip;
+    if (dec > 4)
+        dec = 4;
+    if (fmt & FMT_PCT && !mul_fix(v, 100 * SCALE, &v))
+        return 0;
+    for (i = dec; i < 4; i++)
+        unit *= 10;
+    ip = divs(mag(v), SCALE, &frac);
+    q = (frac + unit / 2) / unit;
+    if (q * unit >= SCALE) {
+        ip++;
+        q = 0;
+    }
+    for (try = fmt & FMT_SEP ? 0 : 1; try < 2; try++) {
+        n = 0;
+        if (v < 0 && (ip || q))
+            buf[n++] = '-';
+        n += put_int(ip, !try, buf + n);
+        if (dec) {
+            uint32_t d = q;
+            buf[n++] = '.';
+            for (i = 0; i < dec; i++) {
+                buf[n + dec - 1 - i] = (uint8_t)('0' + d % 10);
+                d /= 10;
+            }
+            n += dec;
+        }
+        if (fmt & FMT_PCT)
+            buf[n++] = '%';
+        if (!width || est_width(buf, n) <= width) {
+            memcpy(out, buf, n);
+            return n;
+        }
+    }
+    return 0;
+}
+
+/* A number as shown in a cell of `width` tenths (0: no limit), in format
+ * `fmt` (pct: typed with %, for the general format). */
+static uint32_t format_num(i64 v, uint8_t fmt, int pct, uint32_t width, uint8_t *out)
 {
     uint8_t buf[40];
     u64 m;
     uint32_t frac, n, i, try;
+    if (fmt & FMT_SET) {
+        n = format_fixed(v, fmt, width, out);
+        if (!n) {
+            memcpy(out, "####", 4);
+            n = 4;
+        }
+        return n;
+    }
     if (pct && !mul_fix(v, 100 * SCALE, &v))
         pct = 0;
     m = mag(v);
@@ -561,7 +638,7 @@ static void update_disp(uint16_t i)
                    : c_flag[i] & F_TEXT  ? K_STR
                                          : K_EMPTY;
     if (kind == K_NUM)
-        n = format_num(c_val[i], c_flag[i] & F_PCT, CELL_WIDTH, d);
+        n = format_num(c_val[i], c_fmt[i], c_flag[i] & F_PCT, CELL_WIDTH, d);
     else if (kind == K_BOOL) {
         p = (const uint8_t *)(c_val[i] ? "TRUE" : "FALSE");
         while (p[n]) {
@@ -1695,7 +1772,20 @@ static void say(const char *s)
     doc_dirty = 1;
 }
 
-static uint32_t vrows(void) { return chart_kind ? VROWS_CHART : VROWS_ALL; }
+static uint8_t help_on; /* F1: the keys in place of the chart */
+/* The menu bar and the named sheets (below). */
+#define NAME_MAX 24
+static uint8_t has_term, menu_on, prompting;
+static char pr_buf[NAME_MAX + 1];
+static uint32_t pr_n;
+static char rec_name[33] = "sheet";
+static content_req list_req;
+static uint32_t list_h;
+static void menu_shapes(void);
+static void listed(void);
+static uint32_t append(char *out, uint32_t n, const char *w);
+static int menus_shown(void) { return has_term && has_vec; }
+static uint32_t vrows(void) { return chart_kind || help_on ? VROWS_CHART : VROWS_ALL; }
 static uint32_t rmin(void) { return sr < ar ? sr : ar; }
 static uint32_t rmax(void) { return sr < ar ? ar : sr; }
 static uint32_t cmin(void) { return sc < ac ? sc : ac; }
@@ -1718,7 +1808,7 @@ static void default_geometry(void)
     /* The reference layout's: the entry line (4 + 18), 4 more above the
      * table, rows of 21. */
     for (uint32_t i = 0; i < VROWS_ALL + 2; i++)
-        g_y[i] = 26 + 21 * i;
+        g_y[i] = 40 + 21 * i;
 }
 
 static uint32_t name_of(uint32_t r, uint32_t c, uint8_t *out)
@@ -2009,6 +2099,8 @@ static void edit_window(uint32_t room, uint32_t *from, uint32_t *to)
 }
 
 static int can_point(void);
+static int whole_rows(void);
+static int whole_cols(void);
 
 static int pointed(uint32_t r, uint32_t c)
 {
@@ -2030,15 +2122,26 @@ static void build_doc(void)
      * on one puts the cursor there. */
     doc_colour(25, 25, 25);
     doc_size(14);
-    doc_paragraph(DOC_START, 6, 4, DOC_NOWRAP | DOC_ELLIPSIS);
+    /* Below the menu bar (16 units), where there is one. */
+    doc_paragraph(DOC_START, 6, menus_shown() ? 18 : 4, DOC_NOWRAP | DOC_ELLIPSIS);
     doc_font(DOC_SANS, DOC_BOLD);
     range_name(nm, &n, rmin(), cmin(), rmax(), cmax());
     if (editing)
         n = name_of(sr, sc, (uint8_t *)nm);
-    doc_text(nm, n);
+    if (prompting) {
+        text("Save as");
+        doc_font(DOC_SANS, 0);
+        text("   ");
+        doc_text(pr_buf, pr_n);
+        caret_mark();
+        doc_colour(120, 120, 120);
+        text("   Enter saves the sheet under this name \xC2\xB7 Esc cancels");
+    } else
+        doc_text(nm, n);
     doc_font(DOC_SANS, 0);
     text("   ");
-    if (editing) {
+    if (prompting) {
+    } else if (editing) {
         /* As much as the line holds around the cursor (estimated at size
          * 12: the line's width less the name, scaled from 14). */
         uint32_t s, e;
@@ -2063,7 +2166,7 @@ static void build_doc(void)
                 doc_colour(120, 120, 120);
                 text("= ");
                 if (c_kind[sel] == K_NUM)
-                    doc_text(b, format_num(c_val[sel], 0, 0, b));
+                    doc_text(b, format_num(c_val[sel], 0, 0, 0, b));
                 else if (c_kind[sel] == K_STR)
                     doc_text(str_p(c_val[sel]), STR_LEN(c_val[sel]));
                 else
@@ -2142,7 +2245,24 @@ static void build_doc(void)
     }
     padding_row(8, A_BOTTOM);
     doc_table_end();
-    if (chart_kind)
+    if (help_on) {
+        /* Every key, two to a line. */
+        static const char *const keys[] = {
+            "Type: fill a cell \xC2\xB7 = starts a formula: click or drag over cells to put them in",
+            "F2 or double-click: edit \xC2\xB7 Enter, Tab: keep \xC2\xB7 Esc: cancel, or forget a copy \xC2\xB7 F4: $A$1",
+            "Ctrl+C, X, V: copy, cut, paste \xC2\xB7 Ctrl+Z, Y: undo, redo \xC2\xB7 Delete: clear \xC2\xB7 Ctrl+D, R: fill",
+            "Ctrl+Plus, Minus: insert, delete the selected rows (columns: select them by their letters)",
+            "Ctrl+Shift+A, D: sort A to Z, Z to A by the active cell's column \xC2\xB7 Ctrl+A: all",
+            "Ctrl+Shift+1, 5, ~: number, percent, general \xC2\xB7 Ctrl+period, comma: more, fewer decimals",
+            "Ctrl+G, L: bar, line chart \xC2\xB7 Ctrl+S: save \xC2\xB7 Ctrl+P: publish \xC2\xB7 Ctrl+N twice: new \xC2\xB7 F1: close",
+        };
+        doc_size(10);
+        doc_colour(60, 60, 60);
+        for (k = 0; k < sizeof keys / sizeof keys[0]; k++) {
+            doc_paragraph(DOC_START, k ? 1 : 8, 0, DOC_NOWRAP | DOC_ELLIPSIS);
+            text(keys[k]);
+        }
+    } else if (chart_kind)
         chart_doc();
     /* The status line: while an entry is typed, its mode and keys; else
      * what happened last and how to begin an entry. */
@@ -2175,8 +2295,13 @@ static void build_doc(void)
             text("   ");
             doc_colour(130, 130, 130);
         }
-        text("Type to fill a cell, = to start a formula \xC2\xB7 F2 or double-click edits \xC2\xB7 Ctrl+Z undo \xC2\xB7 "
-             "Ctrl+C/X copy/cut, Ctrl+B paste \xC2\xB7 Ctrl+D/R fill \xC2\xB7 Ctrl+G/L chart \xC2\xB7 Ctrl+S save \xC2\xB7 Ctrl+P publish \xC2\xB7 Ctrl+N new");
+        if (rmin() != rmax() || cmin() != cmax())
+            text(whole_rows() || whole_cols() ? "Ctrl+Plus inserts, Ctrl+Minus deletes them \xC2\xB7 Ctrl+Shift+A/D sort \xC2\xB7 F1 all keys"
+                                              : "Ctrl+Shift+A/D sort \xC2\xB7 Ctrl+Shift+1/5 number/percent, Ctrl+period/comma decimals \xC2\xB7 "
+                                                "Ctrl+G/L chart \xC2\xB7 F1 all keys");
+        else
+            text("Type to fill a cell, = to start a formula \xC2\xB7 F2 or double-click edits \xC2\xB7 F1 all keys \xC2\xB7 Ctrl+Z undo \xC2\xB7 "
+                 "Ctrl+C/X/V copy, cut, paste \xC2\xB7 Ctrl+S save");
     }
     doc_end();
     page_submit(pdoc, doc_length(pdoc));
@@ -2223,7 +2348,8 @@ static void located(const page_place *p)
 
 /* --- The vector overlay --------------------------------------------------- */
 
-static uint8_t vlist[2048];
+static uint8_t vlist[4096];
+static uint8_t clip_on, clip_cut, cl_r0, cl_c0, cl_r1, cl_c1; /* what Ctrl+C or Ctrl+X took */
 
 static void vrect(int32_t x0, int32_t y0, int32_t x1, int32_t y1)
 {
@@ -2267,6 +2393,34 @@ static void build_vec(void)
         vec_colour(26, 100, 210, 36);
         vrect((c0 + 1) * COLW, (int32_t)g_y[1 + r0], (c1 + 2) * COLW, (int32_t)g_y[2 + r1]);
     }
+    if (clip_on) {
+        /* What was copied: a dashed edge, until Esc. */
+        int32_t a = (int32_t)cl_r0 - (int32_t)top, b = (int32_t)cl_r1 - (int32_t)top;
+        int32_t x = (int32_t)cl_c0 - (int32_t)left, y = (int32_t)cl_c1 - (int32_t)left;
+        a = a < 0 ? 0 : a;
+        b = b >= (int32_t)rows ? (int32_t)rows - 1 : b;
+        x = x < 0 ? 0 : x;
+        y = y >= VCOLS ? VCOLS - 1 : y;
+        if (a <= b && x <= y) {
+            int32_t x0 = (x + 1) * COLW * 16, x1 = (y + 2) * COLW * 16, ya = (int32_t)g_y[1 + a] * 16 + 24, yb = (int32_t)g_y[2 + b] * 16 - 24;
+            vec_colour(30, 150, 70, 255);
+            vec_width(24);
+            for (int32_t t = x0 + 24; t < x1 - 24; t += 160) {
+                int32_t e = t + 96 < x1 - 24 ? t + 96 : x1 - 24;
+                vec_move((int16_t)t, (int16_t)ya);
+                vec_line((int16_t)e, (int16_t)ya);
+                vec_move((int16_t)t, (int16_t)yb);
+                vec_line((int16_t)e, (int16_t)yb);
+            }
+            for (int32_t t = ya; t < yb; t += 160) {
+                int32_t e = t + 96 < yb ? t + 96 : yb;
+                vec_move((int16_t)(x0 + 24), (int16_t)t);
+                vec_line((int16_t)(x0 + 24), (int16_t)e);
+                vec_move((int16_t)(x1 - 24), (int16_t)t);
+                vec_line((int16_t)(x1 - 24), (int16_t)e);
+            }
+        }
+    }
     if (vis_v.pt) {
         /* The range a formula is pointing at: shaded, with an orange edge. */
         int32_t a = (int32_t)(vis_v.pr0 < vis_v.pr1 ? vis_v.pr0 : vis_v.pr1) - (int32_t)top;
@@ -2302,6 +2456,8 @@ static void build_vec(void)
         vec_line((int16_t)x0, (int16_t)yb);
         vec_line((int16_t)x0, (int16_t)ya);
     }
+    if (menus_shown())
+        menu_shapes();
     vec_end();
     vec_submit(vlist, vec_length(vlist));
 }
@@ -2390,12 +2546,14 @@ static void jump(int dr, int dc, int extend)
 
 /* Every change the user makes to cells (an entry kept, a paste, a fill, a
  * clear, a move) is a group in this log: a mark with the selection, then
- * one record per cell changed with its text before and after. Ctrl+Z puts
- * back the text before, Ctrl+Y the text after; a new change drops what
+ * one record per cell changed with its text and number format before and
+ * after (cell, 2 bytes; formats before and after; length and text before;
+ * length and text after). Ctrl+Z puts back the cell as it was before,
+ * Ctrl+Y as it was after; a new change drops what
  * was undone. Records are padded to 4 bytes and end in their size, so the
  * log is walked both ways; when it is full the oldest groups go. A single
  * change too large for it cannot be undone (and the log is emptied). */
-#define ULOG 16384
+#define ULOG 32768
 static uint8_t ulog[ULOG] __attribute__((aligned(4)));
 static uint32_t u_cur, u_end, u_group;
 static uint8_t u_off;
@@ -2407,9 +2565,9 @@ static uint32_t rec_size(uint32_t at)
     uint32_t ol, nl;
     if (is_mark(at))
         return 8;
-    ol = ulog[at + 2];
-    nl = ulog[at + 3 + ol];
-    return (2 + 1 + ol + 1 + nl + 2 + 3) & ~3u;
+    ol = ulog[at + 4];
+    nl = ulog[at + 5 + ol];
+    return (4 + 1 + ol + 1 + nl + 2 + 3) & ~3u;
 }
 
 /* Room for `size` more bytes, dropping the oldest groups (down to half the
@@ -2461,8 +2619,8 @@ static void ubegin(void)
     u_cur = u_end;
 }
 
-/* Cell i is about to become p[0, n). */
-static void ulog_put(uint16_t i, const uint8_t *p, uint32_t n)
+/* Cell i is about to become p[0, n) in format fmt. */
+static void ulog_put(uint16_t i, const uint8_t *p, uint32_t n, uint8_t fmt)
 {
     uint32_t ol = c_rlen[i], size;
     const uint8_t *o = pool + c_off[i];
@@ -2470,29 +2628,43 @@ static void ulog_put(uint16_t i, const uint8_t *p, uint32_t n)
         return;
     if (n > RAW_MAX)
         n = RAW_MAX;
-    if (ol == n && !memcmp(o, p, n))
+    if (ol == n && !memcmp(o, p, n) && fmt == c_fmt[i])
         return;
-    size = (2 + 1 + ol + 1 + n + 2 + 3) & ~3u;
+    size = (4 + 1 + ol + 1 + n + 2 + 3) & ~3u;
     if (!make_room(size))
         return;
     uint8_t *w = ulog + u_end;
     w[0] = (uint8_t)i;
     w[1] = (uint8_t)(i >> 8);
-    w[2] = (uint8_t)ol;
-    memcpy(w + 3, o, ol);
-    w[3 + ol] = (uint8_t)n;
-    memcpy(w + 4 + ol, p, n);
+    w[2] = c_fmt[i];
+    w[3] = fmt;
+    w[4] = (uint8_t)ol;
+    memcpy(w + 5, o, ol);
+    w[5 + ol] = (uint8_t)n;
+    memcpy(w + 6 + ol, p, n);
     w[size - 2] = (uint8_t)size;
     w[size - 1] = (uint8_t)(size >> 8);
     u_end += size;
     u_cur = u_end;
 }
 
-/* Changes the cell as the user asked: logged for undo. */
-static int put_cell(uint16_t i, const uint8_t *p, uint32_t n)
+/* Sets cell i's text and format (unchanged text is not compiled again). */
+static int set_cell_fmt(uint16_t i, const uint8_t *p, uint32_t n, uint8_t fmt)
 {
-    ulog_put(i, p, n);
-    return set_cell(i, p, n);
+    int same = c_rlen[i] == n && !memcmp(pool + c_off[i], p, n);
+    if (c_fmt[i] != fmt) {
+        c_fmt[i] = fmt;
+        update_disp(i);
+        doc_dirty = 1;
+    }
+    return same || set_cell(i, p, n);
+}
+
+/* Changes the cell as the user asked: logged for undo. */
+static int put_cell(uint16_t i, const uint8_t *p, uint32_t n, uint8_t fmt)
+{
+    ulog_put(i, p, n, fmt);
+    return set_cell_fmt(i, p, n, fmt);
 }
 
 /* --- Editing -------------------------------------------------------------- */
@@ -2550,7 +2722,7 @@ static void commit(void)
     if (c_rlen[i] == elen && !memcmp(pool + c_off[i], ebuf, elen))
         return;
     ubegin();
-    if (!put_cell(i, ebuf, elen))
+    if (!put_cell(i, ebuf, elen, c_fmt[i]))
         say("The sheet is full: no room for that entry");
     else if (c_flag[i] & F_BAD)
         say(c_val[i] == E_NAME ? "#NAME?: no function of that name (F2 edits the formula)" : c_val[i] == E_REF ? "#REF!: a reference outside A1:Z99" : "#ERROR!: the formula cannot be read (F2 edits it)");
@@ -2890,7 +3062,7 @@ static uint32_t shift_refs(const uint8_t *p, uint32_t n, int32_t dr, int32_t dc,
     return o;
 }
 
-static uint8_t clip_on, clip_cut, cl_r0, cl_c0, cl_r1, cl_c1;
+
 static uint8_t tmp[RAW_MAX];
 
 /* Copying, filling, clearing and undoing are a job over the target's
@@ -2904,7 +3076,7 @@ static uint8_t tmp[RAW_MAX];
  * the source cells outside the target. Undo and redo apply a group of
  * the log. */
 #define JOB_CELLS 6
-enum { JOB_NONE, JOB_COPY, JOB_CLEAR, JOB_UNDO, JOB_REDO };
+enum { JOB_NONE, JOB_COPY, JOB_CLEAR, JOB_UNDO, JOB_REDO, JOB_FMT, JOB_SHIFT, JOB_SORT, JOB_TEXT };
 static uint8_t job, job_full, j_cut, j_keep;
 static uint32_t js_r0, js_c0, js_h, js_w, jt_r0, jt_c0, jt_h, jt_w, j_at, jk_r0, jk_c0, jk_r1, jk_c1;
 static uint32_t j_pos, j_stop;
@@ -2935,9 +3107,15 @@ static void start_job(uint8_t kind, uint32_t sr0, uint32_t sc0, uint32_t sh, uin
     ubegin();
 }
 
+static void job_step2(void);
+
 static void job_step(void)
 {
     uint32_t k;
+    if (job >= JOB_FMT) {
+        job_step2();
+        return;
+    }
     if (job == JOB_UNDO || job == JOB_REDO) {
         for (k = 0; k < JOB_CELLS; k++) {
             uint32_t at;
@@ -2946,13 +3124,13 @@ static void job_step(void)
                     break;
                 j_pos -= (uint32_t)(ulog[j_pos - 2] | ulog[j_pos - 1] << 8);
                 at = j_pos;
-                set_cell((uint16_t)(ulog[at] | ulog[at + 1] << 8), ulog + at + 3, ulog[at + 2]);
+                set_cell_fmt((uint16_t)(ulog[at] | ulog[at + 1] << 8), ulog + at + 5, ulog[at + 4], ulog[at + 2]);
             } else {
                 if (j_pos >= j_stop)
                     break;
                 at = j_pos;
                 j_pos += rec_size(at);
-                set_cell((uint16_t)(ulog[at] | ulog[at + 1] << 8), ulog + at + 4 + ulog[at + 2], ulog[at + 3 + ulog[at + 2]]);
+                set_cell_fmt((uint16_t)(ulog[at] | ulog[at + 1] << 8), ulog + at + 6 + ulog[at + 4], ulog[at + 5 + ulog[at + 4]], ulog[at + 3]);
             }
         }
         if (job == JOB_UNDO ? j_pos > j_stop : j_pos < j_stop)
@@ -2969,14 +3147,15 @@ static void job_step(void)
         if (job == JOB_CLEAR) {
             if (j_keep && tr >= jk_r0 && tr <= jk_r1 && tc >= jk_c0 && tc <= jk_c1)
                 continue;
-            put_cell(idx(tr, tc), 0, 0);
+            /* A clear keeps the format; the source of a move loses it. */
+            put_cell(idx(tr, tc), 0, 0, j_keep ? 0 : c_fmt[idx(tr, tc)]);
             continue;
         }
         uint32_t r = js_r0 + y % js_h, c = js_c0 + x % js_w;
         uint16_t s = idx(r, c);
         int32_t dr = j_cut ? 0 : (int32_t)tr - (int32_t)r, dc = j_cut ? 0 : (int32_t)tc - (int32_t)c;
         uint32_t n = shift_refs(pool + c_off[s], c_rlen[s], dr, dc, tmp);
-        if (!put_cell(idx(tr, tc), tmp, n))
+        if (!put_cell(idx(tr, tc), tmp, n, c_fmt[s]))
             job_full = 1;
     }
     if (j_at < jt_h * jt_w)
@@ -3072,8 +3251,8 @@ static void copy(int cut)
     cl_c0 = (uint8_t)cmin();
     cl_r1 = (uint8_t)rmax();
     cl_c1 = (uint8_t)cmax();
-    say(cut ? "Cut: Ctrl+B moves it to the selected cell (Ctrl+V is the window's paste of text)"
-            : "Copied: Ctrl+B pastes at the selected cell (Ctrl+V is the window's paste of text)");
+    say(cut ? "Cut: Ctrl+V moves it to the selected cell (Esc forgets it)"
+            : "Copied: Ctrl+V pastes it at the selected cell (Esc forgets it; then Ctrl+V pastes text from other programs)");
 }
 
 /* Pastes what was copied at the selected cell; one cell copied fills a
@@ -3160,6 +3339,7 @@ static void clear_sheet(void)
     zero(c_flag, sizeof c_flag);
     zero(c_kind, sizeof c_kind);
     zero(c_dlen, sizeof c_dlen);
+    zero(c_fmt, sizeof c_fmt);
     zero(c_state, sizeof c_state);
     zero(row_f, sizeof row_f);
     pool_used = 0;
@@ -3220,6 +3400,32 @@ static void parse_chart(const uint8_t *p, uint32_t n)
     ch_c1 = c0 < c1 ? c1 : c0;
 }
 
+/* "format D3:D7 2s": decimals, s for separators, % for a percentage. */
+static void parse_format(const uint8_t *p, uint32_t n)
+{
+    uint32_t at = 7, r, c;
+    uint8_t r0, c0, r1 = 0, c1 = 0, f;
+    if (n < 10 || memcmp(p, "format ", 7) || !parse_name(p, n, &at, &r0, &c0))
+        return;
+    r1 = r0;
+    c1 = c0;
+    if (at < n && p[at] == ':') {
+        at++;
+        if (!parse_name(p, n, &at, &r1, &c1))
+            return;
+    }
+    if (at + 1 >= n || p[at] != ' ' || !is_digit(p[at + 1]) || p[at + 1] > '4')
+        return;
+    f = (uint8_t)(FMT_SET | (p[at + 1] - '0'));
+    for (at += 2; at < n; at++)
+        f |= p[at] == 's' ? FMT_SEP : p[at] == '%' ? FMT_PCT : 0;
+    for (r = r0; r <= r1; r++)
+        for (c = c0; c <= c1; c++) {
+            c_fmt[idx(r, c)] = f;
+            update_disp(idx(r, c));
+        }
+}
+
 static void parse_step(void)
 {
     int32_t budget = PARSE_WORK;
@@ -3230,8 +3436,10 @@ static void parse_step(void)
         len = e - parse_at;
         if (len && (e == flen || fdata[e] == '\n') && fdata[e - 1] == '\r')
             len--;
-        if (!parse_col && len && fdata[parse_at] == 0x0C)
+        if (!parse_col && len && fdata[parse_at] == 0x0C) {
             parse_chart(fdata + parse_at + 1, len - 1);
+            parse_format(fdata + parse_at + 1, len - 1);
+        }
         else if (parse_row < NROWS && parse_col < NCOLS) {
             if (len > RAW_MAX)
                 cut = 1;
@@ -3298,6 +3506,35 @@ static int serialize_step(void)
         flen += n;
         fdata[flen++] = '\n';
     }
+    /* The number formats: a line for each run of cells of a row in the
+     * same format ("format D3:D7 2s"). */
+    for (uint32_t r = 0; r < NROWS; r++)
+        for (uint32_t c = 0; c < NCOLS;) {
+            uint8_t f = c_fmt[idx(r, c)];
+            uint32_t e = c + 1, n;
+            char nm[8];
+            if (!f) {
+                c++;
+                continue;
+            }
+            while (e < NCOLS && c_fmt[idx(r, e)] == f)
+                e++;
+            if (flen + 32 > DATA_MAX)
+                return 1;
+            memcpy(fdata + flen, "\x0C" "format ", 8);
+            flen += 8;
+            range_name(nm, &n, r, c, r, e - 1);
+            memcpy(fdata + flen, nm, n);
+            flen += n;
+            fdata[flen++] = ' ';
+            fdata[flen++] = (uint8_t)('0' + (f & FMT_DEC));
+            if (f & FMT_SEP)
+                fdata[flen++] = 's';
+            if (f & FMT_PCT)
+                fdata[flen++] = '%';
+            fdata[flen++] = '\n';
+            c = e;
+        }
     return 1;
 }
 
@@ -3313,7 +3550,7 @@ static void header(void)
 static void finish_save(void)
 {
     if (saving == 1) {
-        save_h = record_save(&save_req, "sheet", fdata, flen);
+        save_h = record_save(&save_req, rec_name, fdata, flen);
         say(save_h ? "Saving\xE2\x80\xA6" : "Not saved");
     } else {
         /* The title: A1's text, else "Sheet". */
@@ -3359,7 +3596,7 @@ static void load_chunk(void)
     if (from_arg)
         load_h = content_get(&load_req, arg, HEAD + flen, want, fdata + flen);
     else
-        load_h = record_load(&load_req, "sheet", flen, want, fdata + flen);
+        load_h = record_load(&load_req, rec_name, flen, want, fdata + flen);
     if (!load_h) {
         loading = 0;
         say("Could not load the sheet");
@@ -3431,6 +3668,12 @@ static void loaded(void)
     start_parse();
     if (from_arg)
         say("A published sheet; Ctrl+S keeps it as your sheet");
+    else if (rec_name[5] == ':') {
+        static char m[48];
+        uint32_t n = append(m, 0, "Opened ");
+        append(m, n, rec_name + 6);
+        say(m);
+    }
 }
 
 /* The argument's header (fetched alone first). */
@@ -3458,7 +3701,9 @@ static void got_head(void)
 
 static void done(uint32_t h)
 {
-    if (h == head_h)
+    if (h == list_h)
+        listed();
+    else if (h == head_h)
         got_head();
     else if (h == load_h)
         loaded();
@@ -3494,24 +3739,1092 @@ static void done(uint32_t h)
     }
 }
 
+/* --- Jobs over many cells: formats, inserting and deleting, sorting,
+ * pasting text ------------------------------------------------------------ */
+
+/* The cells a job changes in a frame: each may compile a formula and
+ * format its value. Cells it only looks at cost a little (JOB_LOOK). */
+#define JOB_PUTS 12
+#define JOB_LOOK 400
+static uint8_t j_fmt_op, j_axis, j_del;
+static uint32_t j_at0, j_cnt, j_n, j_r0, j_c0, j_r1, j_c1;
+static uint8_t j_perm[NROWS];
+static uint16_t j_soff[NCELLS]; /* sort: each source cell's offset in the stash */
+static const char *j_msg2;
+static char msg_buf[96];
+
+/* The paste of text from other programs (between the paste key's down
+ * and up, SPEC §events): tabs split cells, line breaks rows. */
+#define PBUF_MAX 16384
+static uint8_t pbuf[PBUF_MAX];
+static uint32_t pbuf_n, pbuf_at;
+static uint8_t pbuf_cut;
+
+static uint32_t append(char *out, uint32_t n, const char *w)
+{
+    while (*w && n < sizeof msg_buf - 1)
+        out[n++] = *w++;
+    out[n] = 0;
+    return n;
+}
+
+static uint32_t append_num(char *out, uint32_t n, uint32_t v)
+{
+    uint8_t d[12];
+    uint32_t k = put_int(v, 0, d);
+    for (uint32_t i = 0; i < k && n < sizeof msg_buf - 1; i++)
+        out[n++] = (char)d[i];
+    out[n] = 0;
+    return n;
+}
+
+/* --- Number formats --- */
+
+enum { FO_GENERAL, FO_NUMBER, FO_PERCENT, FO_MORE, FO_FEWER };
+
+/* The format a cell gets from operation op. */
+static uint8_t new_format(uint8_t f, uint8_t op)
+{
+    uint8_t dec = f & FMT_SET ? f & FMT_DEC : 2;
+    switch (op) {
+    case FO_GENERAL: return 0;
+    case FO_NUMBER:
+        /* Two decimals with separators; again: without separators. */
+        if ((f & (FMT_SET | FMT_SEP | FMT_PCT)) == (FMT_SET | FMT_SEP))
+            return (uint8_t)(FMT_SET | dec);
+        return (uint8_t)(FMT_SET | FMT_SEP | (f & FMT_SET ? dec : 2));
+    case FO_PERCENT: return f & FMT_PCT ? 0 : FMT_SET | FMT_PCT;
+    case FO_MORE:
+        if (!(f & FMT_SET))
+            return FMT_SET | FMT_SEP | 3;
+        return (uint8_t)((f & ~FMT_DEC) | (dec < 4 ? dec + 1 : 4));
+    default:
+        if (!(f & FMT_SET))
+            return FMT_SET | FMT_SEP | 1;
+        return (uint8_t)((f & ~FMT_DEC) | (dec ? dec - 1 : 0));
+    }
+}
+
+static const char *const fmt_said[] = { "General format", "Number format", "Percent format", "One more decimal", "One decimal fewer" };
+
+/* Ctrl+Shift+~ general, Ctrl+Shift+1 number, Ctrl+Shift+5 percent,
+ * Ctrl+. and Ctrl+, one decimal more or fewer: the selection, as a job.
+ * The operation is decided by the active cell's format, so that every
+ * cell of the selection ends in the same format. */
+static void set_format(uint8_t op)
+{
+    j_fmt_op = new_format(c_fmt[idx(sr, sc)], op);
+    j_r0 = rmin();
+    j_c0 = cmin();
+    j_r1 = rmax();
+    j_c1 = cmax();
+    j_n = 0;
+    j_msg2 = fmt_said[op];
+    ubegin();
+    job = JOB_FMT;
+}
+
+/* --- Inserting and deleting rows and columns --- */
+
+/* A row or column number moved by an insertion (del 0) or deletion of cnt
+ * at `at`: -1 if it was deleted. */
+static int32_t moved(int32_t v, int del)
+{
+    if (!del)
+        return v >= (int32_t)j_at0 ? v + (int32_t)j_cnt : v;
+    if (v >= (int32_t)(j_at0 + j_cnt))
+        return v - (int32_t)j_cnt;
+    return v >= (int32_t)j_at0 ? -1 : v;
+}
+
+/* A reference (optional $, letter, optional $, digits) at p[i], not part
+ * of a longer name: 1, its end in *e, column, row (0-based) and its $s. */
+static int ref_at(const uint8_t *p, uint32_t n, uint32_t i, uint32_t *e, int32_t *col, int32_t *row, uint32_t *cabs, uint32_t *rabs)
+{
+    uint32_t j = i, v = 0;
+    if (i && (is_alpha(p[i - 1]) || is_digit(p[i - 1]) || p[i - 1] == '$'))
+        return 0;
+    *cabs = *rabs = 0;
+    if (j < n && p[j] == '$') {
+        *cabs = 1;
+        j++;
+    }
+    if (j >= n || !is_alpha(p[j]))
+        return 0;
+    *col = upper(p[j]) - 'A';
+    j++;
+    if (j < n && p[j] == '$') {
+        *rabs = 1;
+        j++;
+    }
+    if (j >= n || !is_digit(p[j]))
+        return 0;
+    while (j < n && is_digit(p[j])) {
+        if (v < 1000)
+            v = v * 10 + (p[j] - '0');
+        j++;
+    }
+    if (j < n && (p[j] == '(' || is_alpha(p[j])))
+        return 0;
+    *row = (int32_t)v - 1;
+    *e = j;
+    return 1;
+}
+
+/* A formula's text with its references moved for the insertion or
+ * deletion j_axis/j_at0/j_cnt/j_del, as spreadsheets move them: whatever
+ * is past the place moves (also after a $), a reference to a deleted cell
+ * becomes #REF!, a range that loses one end shrinks, one that loses all
+ * of itself is #REF!. */
+static uint32_t move_refs(const uint8_t *p, uint32_t n, uint8_t *out)
+{
+    uint32_t i = 0, o = 0;
+    int in_str = 0;
+    if (!n || p[0] != '=') {
+        memcpy(out, p, n);
+        return n;
+    }
+    while (i < n && o < RAW_MAX) {
+        uint32_t e, e2, ca, ra, ca2, ra2;
+        int32_t c1, r1, c2, r2;
+        if (p[i] == '"')
+            in_str = !in_str;
+        if (!in_str && ref_at(p, n, i, &e, &c1, &r1, &ca, &ra)) {
+            uint8_t w[16];
+            uint32_t len = 0, k;
+            int range = e < n && p[e] == ':' && ref_at(p, n, e + 1, &e2, &c2, &r2, &ca2, &ra2);
+            int32_t *v1 = j_axis ? &c1 : &r1, *v2 = j_axis ? &c2 : &r2, lim = j_axis ? NCOLS : NROWS;
+            int bad = 0;
+            if (!range) {
+                *v1 = moved(*v1, j_del);
+                bad = *v1 < 0 || *v1 >= lim;
+            } else {
+                int32_t lo = *v1 < *v2 ? *v1 : *v2, hi = *v1 < *v2 ? *v2 : *v1, nlo, nhi;
+                if (!j_del) {
+                    nlo = moved(lo, 0);
+                    nhi = moved(hi, 0);
+                } else {
+                    nlo = lo < (int32_t)j_at0 ? lo : lo < (int32_t)(j_at0 + j_cnt) ? (int32_t)j_at0 : lo - (int32_t)j_cnt;
+                    nhi = hi < (int32_t)j_at0 ? hi : hi < (int32_t)(j_at0 + j_cnt) ? (int32_t)j_at0 - 1 : hi - (int32_t)j_cnt;
+                }
+                bad = nlo > nhi || nlo < 0 || nhi >= lim;
+                if (*v1 <= *v2) {
+                    *v1 = nlo;
+                    *v2 = nhi;
+                } else {
+                    *v1 = nhi;
+                    *v2 = nlo;
+                }
+            }
+            if (bad || c1 < 0 || r1 < 0 || c1 >= NCOLS || r1 >= NROWS) {
+                memcpy(w, "#REF!", 5);
+                len = 5;
+            } else {
+                len = ref_text((uint32_t)r1, (uint32_t)c1, (int)ca, (int)ra, w);
+                if (range) {
+                    w[len++] = ':';
+                    len += ref_text((uint32_t)r2, (uint32_t)c2, (int)ca2, (int)ra2, w + len);
+                }
+            }
+            for (k = 0; k < len && o < RAW_MAX; k++)
+                out[o++] = w[k];
+            i = range ? e2 : e;
+            continue;
+        }
+        out[o++] = p[i++];
+    }
+    return o;
+}
+
+static int whole_rows(void) { return cmin() == 0 && cmax() == NCOLS - 1; }
+static int whole_cols(void) { return rmin() == 0 && rmax() == NROWS - 1; }
+
+/* Ctrl+Plus inserts (Ctrl+Minus deletes) the selected columns when whole
+ * columns are selected (their letters clicked), else the selection's rows. */
+static void insert_delete(int del)
+{
+    uint32_t i, lim;
+    j_axis = whole_cols() && !whole_rows();
+    j_del = (uint8_t)del;
+    j_at0 = j_axis ? cmin() : rmin();
+    j_cnt = j_axis ? cmax() - cmin() + 1 : rmax() - rmin() + 1;
+    lim = j_axis ? NCOLS : NROWS;
+    if (j_cnt >= lim) {
+        say("Select some rows (their numbers) or columns (their letters), not the whole sheet");
+        return;
+    }
+    if (!del)
+        /* What would be pushed off the sheet must be empty. */
+        for (i = 0; i < NCELLS; i++) {
+            uint32_t v = j_axis ? i % NCOLS : i / NCOLS;
+            if (v >= lim - j_cnt && c_rlen[i]) {
+                say(j_axis ? "No room: the last columns are not empty" : "No room: the last rows are not empty");
+                return;
+            }
+        }
+    /* The chart's range follows; a chart whose range is deleted goes. */
+    if (chart_kind) {
+        int32_t a = moved(j_axis ? ch_c0 : ch_r0, del), b = moved(j_axis ? ch_c1 : ch_r1, del);
+        if (del) {
+            int32_t lo = j_axis ? ch_c0 : ch_r0, hi = j_axis ? ch_c1 : ch_r1;
+            a = lo < (int32_t)j_at0 ? lo : lo < (int32_t)(j_at0 + j_cnt) ? (int32_t)j_at0 : lo - (int32_t)j_cnt;
+            b = hi < (int32_t)j_at0 ? hi : hi < (int32_t)(j_at0 + j_cnt) ? (int32_t)j_at0 - 1 : hi - (int32_t)j_cnt;
+        }
+        if (a > b || a < 0 || b >= (int32_t)lim)
+            chart_kind = 0;
+        else if (j_axis) {
+            ch_c0 = (uint8_t)a;
+            ch_c1 = (uint8_t)b;
+        } else {
+            ch_r0 = (uint8_t)a;
+            ch_r1 = (uint8_t)b;
+        }
+    }
+    clip_on = 0;
+    {
+        uint32_t n = append(msg_buf, 0, del ? "Deleted " : "Inserted ");
+        n = append_num(msg_buf, n, j_cnt);
+        n = append(msg_buf, n, j_axis ? (j_cnt > 1 ? " columns" : " column") : (j_cnt > 1 ? " rows" : " row"));
+        append(msg_buf, n, j_axis ? " (Ctrl+Z undoes)" : " (Ctrl+Z undoes; click column letters to work on columns)");
+        j_msg2 = msg_buf;
+    }
+    j_n = 0;
+    ubegin();
+    job = JOB_SHIFT;
+}
+
+/* --- Sorting --- */
+
+/* Sorting order: numbers (and TRUE/FALSE) by value, then text without
+ * regard to case, then errors, then empty cells, which stay last also in
+ * descending order. */
+static int sort_cmp(uint16_t a, uint16_t b, int desc)
+{
+    value x = cell_value(a), y = cell_value(b);
+    int kx = x.k == K_EMPTY ? 3 : x.k == K_ERR ? 2 : x.k == K_STR ? 1 : 0;
+    int ky = y.k == K_EMPTY ? 3 : y.k == K_ERR ? 2 : y.k == K_STR ? 1 : 0;
+    int c;
+    if (kx == 3 || ky == 3)
+        return kx - ky;
+    if (kx != ky)
+        c = kx - ky;
+    else if (kx == 1)
+        c = cmp_text(x, y);
+    else if (kx == 0)
+        c = x.v < y.v ? -1 : x.v > y.v;
+    else
+        c = 0;
+    return desc ? -c : c;
+}
+
+/* The block of filled cells around the active cell (as spreadsheets find
+ * the data to sort when one cell is selected). */
+static void current_region(uint32_t *r0, uint32_t *c0, uint32_t *r1, uint32_t *c1)
+{
+    int32_t a = (int32_t)sr, b = (int32_t)sc, c = (int32_t)sr, d = (int32_t)sc, grew = 1, k;
+    while (grew) {
+        grew = 0;
+        for (k = b - 1; k <= d + 1; k++)
+            if (filled(a - 1, k)) {
+                a--;
+                grew = 1;
+                break;
+            }
+        for (k = b - 1; k <= d + 1; k++)
+            if (filled(c + 1, k)) {
+                c++;
+                grew = 1;
+                break;
+            }
+        for (k = a; k <= c; k++)
+            if (filled(k, b - 1)) {
+                b--;
+                grew = 1;
+                break;
+            }
+        for (k = a; k <= c; k++)
+            if (filled(k, d + 1)) {
+                d++;
+                grew = 1;
+                break;
+            }
+    }
+    *r0 = (uint32_t)a;
+    *c0 = (uint32_t)b;
+    *r1 = (uint32_t)c;
+    *c1 = (uint32_t)d;
+}
+
+static uint32_t range_text(char *out, uint32_t n, uint32_t r0, uint32_t c0, uint32_t r1, uint32_t c1)
+{
+    uint32_t len;
+    range_name(out + n, &len, r0, c0, r1, c1);
+    out[n + len] = 0;
+    return n + len;
+}
+
+/* Ctrl+Shift+A sorts ascending, Ctrl+Shift+D descending: the selection (or
+ * the block of data around the active cell) by the active cell's column.
+ * A first row of text over a number in that column is a header and stays.
+ * Rows move whole, their relative references moving with them as in a
+ * copy (so =B3*C3 in row 3 becomes =B5*C5 in row 5). */
+static void sort_range(int desc)
+{
+    uint32_t r0 = rmin(), c0 = cmin(), r1 = rmax(), c1 = cmax(), key, i, k, n, at = 0, head = 0;
+    if (saving || recalcing || dirty_all) {
+        say("Busy: sort again in a moment");
+        return;
+    }
+    if (r0 == r1 && c0 == c1)
+        current_region(&r0, &c0, &r1, &c1);
+    key = sc >= c0 && sc <= c1 ? sc : c0;
+    if (r1 > r0 && cell_value(idx(r0, key)).k == K_STR && (cell_value(idx(r0 + 1, key)).k == K_NUM || cell_value(idx(r0 + 1, key)).k == K_BOOL)) {
+        head = 1;
+        r0++;
+    }
+    if (r0 >= r1) {
+        say("Nothing to sort: select the rows, or a cell in a block of data");
+        return;
+    }
+    /* The order: a stable insertion sort of the rows. */
+    for (i = 0; i <= r1 - r0; i++) {
+        uint8_t v = (uint8_t)(r0 + i);
+        k = i;
+        while (k && sort_cmp(idx(j_perm[k - 1], key), idx(v, key), desc) > 0) {
+            j_perm[k] = j_perm[k - 1];
+            k--;
+        }
+        j_perm[k] = v;
+    }
+    /* The cells as they are, in the stash (fdata: a sort waits while the
+     * sheet is saved or loaded): format, length, text. */
+    for (i = r0; i <= r1; i++)
+        for (k = c0; k <= c1; k++) {
+            uint16_t c = idx(i, k);
+            if (at + 2 + c_rlen[c] > DATA_MAX) {
+                say("Too much to sort at once");
+                return;
+            }
+            j_soff[(i - r0) * (c1 - c0 + 1) + (k - c0)] = (uint16_t)at;
+            fdata[at] = c_fmt[c];
+            fdata[at + 1] = c_rlen[c];
+            memcpy(fdata + at + 2, pool + c_off[c], c_rlen[c]);
+            at += 2 + c_rlen[c];
+        }
+    j_r0 = r0;
+    j_c0 = c0;
+    j_r1 = r1;
+    j_c1 = c1;
+    j_n = 0;
+    clip_on = 0;
+    n = append(msg_buf, 0, "Sorted ");
+    n = range_text(msg_buf, n, r0, c0, r1, c1);
+    n = append(msg_buf, n, " by column ");
+    msg_buf[n++] = (char)('A' + key);
+    msg_buf[n] = 0;
+    n = append(msg_buf, n, desc ? ", Z to A" : ", A to Z");
+    if (head) {
+        n = append(msg_buf, n, " (row ");
+        n = append_num(msg_buf, n, r0);
+        n = append(msg_buf, n, ", text over numbers, kept as the header)");
+    }
+    j_msg2 = msg_buf;
+    ubegin();
+    job = JOB_SORT;
+    if (head) {
+        /* The selection: the rows sorted. */
+        sr = r0;
+        ar = r1;
+    }
+}
+
+/* --- Pasting text --- */
+
+static void paste_text_start(void)
+{
+    if (!pbuf_n) {
+        say("Nothing to paste (Ctrl+C copies cells; the clipboard holds no text)");
+        return;
+    }
+    pbuf_at = 0;
+    j_r0 = rmin();
+    j_c0 = cmin();
+    j_r1 = j_r0;
+    j_c1 = j_c0;
+    sr = ar = j_r0;
+    sc = ac = j_c0;
+    j_n = 0;
+    j_msg2 = pbuf_cut ? "Pasted (cut at 16 KiB, Z or row 99)" : "Pasted";
+    ubegin();
+    job = JOB_TEXT;
+}
+
+/* --- The jobs --- */
+
+static void job_done(void)
+{
+    job = JOB_NONE;
+    say(job_full ? "The sheet is full" : u_off ? "Done; it is too large to undo" : j_msg2);
+    doc_dirty = 1;
+}
+
+static void job_step2(void)
+{
+    int32_t budget = JOB_LOOK;
+    uint32_t puts = 0;
+    if (job == JOB_FMT) {
+        uint32_t w = j_c1 - j_c0 + 1, total = (j_r1 - j_r0 + 1) * w;
+        for (; j_n < total && budget > 0; j_n++) {
+            uint16_t i = idx(j_r0 + j_n / w, j_c0 + j_n % w);
+            budget -= c_flag[i] ? 40 : 2;
+            if (c_fmt[i] != j_fmt_op)
+                put_cell(i, pool + c_off[i], c_rlen[i], j_fmt_op);
+        }
+        if (j_n >= total)
+            job_done();
+        return;
+    }
+    if (job == JOB_SHIFT) {
+        uint32_t lim = j_axis ? NCOLS : NROWS, other = j_axis ? NROWS : NCOLS;
+        for (; j_n < NCELLS && budget > 0 && puts < JOB_PUTS; j_n++) {
+            /* Inserting: from the far end back; deleting: from the start. */
+            uint32_t line = j_n / other, pos = j_n % other;
+            uint32_t v = j_del ? line : lim - 1 - line, r = j_axis ? pos : v, c = j_axis ? v : pos;
+            int32_t sv;
+            uint16_t t = idx(r, c), s;
+            if (!j_del)
+                sv = v >= j_at0 + j_cnt ? (int32_t)(v - j_cnt) : v >= j_at0 ? -1 : (int32_t)v;
+            else
+                sv = v + j_cnt >= lim ? -1 : v >= j_at0 ? (int32_t)(v + j_cnt) : (int32_t)v;
+            budget--;
+            if (sv < 0) {
+                if (c_rlen[t] || c_fmt[t]) {
+                    put_cell(t, 0, 0, 0);
+                    puts++;
+                }
+                continue;
+            }
+            s = j_axis ? idx(r, (uint32_t)sv) : idx((uint32_t)sv, c);
+            if (!c_rlen[s] && !c_rlen[t] && c_fmt[s] == c_fmt[t])
+                continue;
+            uint32_t n = c_flag[s] & F_FORMULA ? move_refs(pool + c_off[s], c_rlen[s], tmp) : c_rlen[s];
+            if (!(c_flag[s] & F_FORMULA))
+                memcpy(tmp, pool + c_off[s], n);
+            budget -= 10;
+            if (c_rlen[t] != n || memcmp(pool + c_off[t], tmp, n) || c_fmt[t] != c_fmt[s]) {
+                if (!put_cell(t, tmp, n, c_fmt[s]))
+                    job_full = 1;
+                puts++;
+            }
+        }
+        if (j_n >= NCELLS)
+            job_done();
+        return;
+    }
+    if (job == JOB_SORT) {
+        uint32_t w = j_c1 - j_c0 + 1, total = (j_r1 - j_r0 + 1) * w;
+        for (; j_n < total && puts < JOB_PUTS; j_n++) {
+            uint32_t row = j_r0 + j_n / w, col = j_c0 + j_n % w, from = j_perm[j_n / w];
+            const uint8_t *e = fdata + j_soff[(from - j_r0) * w + j_n % w];
+            uint32_t n = shift_refs(e + 2, e[1], (int32_t)row - (int32_t)from, 0, tmp);
+            uint16_t t = idx(row, col);
+            if (c_rlen[t] != n || memcmp(pool + c_off[t], tmp, n) || c_fmt[t] != e[0]) {
+                if (!put_cell(t, tmp, n, e[0]))
+                    job_full = 1;
+                puts++;
+            }
+        }
+        if (j_n >= total)
+            job_done();
+        return;
+    }
+    /* JOB_TEXT: the next cells of the pasted text. */
+    while (pbuf_at < pbuf_n && puts < JOB_PUTS) {
+        uint32_t e = pbuf_at, r = j_r0 + j_n, c = j_c1;
+        while (e < pbuf_n && pbuf[e] != '\t' && pbuf[e] != '\n')
+            e++;
+        if (r < NROWS && c < NCOLS) {
+            uint16_t t = idx(r, c);
+            uint32_t n = e - pbuf_at > RAW_MAX ? RAW_MAX : e - pbuf_at;
+            if (!put_cell(t, pbuf + pbuf_at, n, c_fmt[t]))
+                job_full = 1;
+            if (c > ac)
+                ac = c;
+            if (r > ar)
+                ar = r;
+            puts++;
+        }
+        if (e < pbuf_n && pbuf[e] == '\t')
+            j_c1++;
+        else {
+            j_n++;
+            j_c1 = j_c0;
+        }
+        pbuf_at = e + 1;
+        /* A last line break ends the last row, it starts none. */
+        if (pbuf_at == pbuf_n && e < pbuf_n && pbuf[e] == '\n')
+            break;
+    }
+    if (pbuf_at >= pbuf_n) {
+        sr = j_r0;
+        sc = j_c0;
+        show_selection();
+        job_done();
+    }
+}
+
+/* --- The menu bar ------------------------------------------------------------
+ *
+ * A row of titles at the top of the screen, and the open menu under its
+ * title, drawn in terminal characters (device 2: a fixed grid of 8 x 16
+ * screen units, so a press is placed exactly) over panels the 2D display
+ * draws over the page (SPEC §vector.layers: the page, then the shapes, then
+ * the terminal's characters). Opened by a press on a title, F10, or Alt and
+ * the title's letter; Left and Right go from menu to menu, Up and Down from
+ * item to item, Enter or a press chooses, Esc or a press elsewhere closes.
+ * Each item does what its key does (and shows the key). The same panel
+ * lists the saved sheets for File, Open. Without the terminal or the 2D
+ * display there is no menu bar; the keys and F1 still work. */
+
+static void key(uint8_t k, uint8_t mods);
+
+typedef struct {
+    const char *label, *keys;
+    uint8_t key, mods;
+} mitem;
+
+#define CTRL MOD_CTRL
+#define SHIFT MOD_SHIFT
+static const mitem m_file[] = {
+    { "New", "Ctrl+N", KEY_N, CTRL },
+    { "Open\xE2\x80\xA6", "Ctrl+O", KEY_O, CTRL },
+    { "Save", "Ctrl+S", KEY_S, CTRL },
+    { "Save as\xE2\x80\xA6", "Ctrl+Shift+S", KEY_S, CTRL | SHIFT },
+    { "Publish\xE2\x80\xA6", "Ctrl+P", KEY_P, CTRL },
+};
+static const mitem m_edit[] = {
+    { "Undo", "Ctrl+Z", KEY_Z, CTRL },
+    { "Redo", "Ctrl+Y", KEY_Y, CTRL },
+    { "Cut", "Ctrl+X", KEY_X, CTRL },
+    { "Copy", "Ctrl+C", KEY_C, CTRL },
+    { "Paste", "Ctrl+V", KEY_V, CTRL },
+    { "Clear", "Delete", KEY_DELETE, 0 },
+    { "Fill down", "Ctrl+D", KEY_D, CTRL },
+    { "Fill right", "Ctrl+R", KEY_R, CTRL },
+    { "Insert rows or columns", "Ctrl+Plus", KEY_EQUAL, CTRL | SHIFT },
+    { "Delete rows or columns", "Ctrl+Minus", KEY_MINUS, CTRL },
+    { "Select all", "Ctrl+A", KEY_A, CTRL },
+};
+static const mitem m_data[] = {
+    { "Sort A to Z", "Ctrl+Shift+A", KEY_A, CTRL | SHIFT },
+    { "Sort Z to A", "Ctrl+Shift+D", KEY_D, CTRL | SHIFT },
+};
+static const mitem m_format[] = {
+    { "General", "Ctrl+Shift+~", KEY_GRAVE, CTRL | SHIFT },
+    { "Number 1,234.50", "Ctrl+Shift+1", KEY_1, CTRL | SHIFT },
+    { "Percent", "Ctrl+Shift+5", KEY_5, CTRL | SHIFT },
+    { "More decimals", "Ctrl+.", KEY_PERIOD, CTRL },
+    { "Fewer decimals", "Ctrl+,", KEY_COMMA, CTRL },
+};
+static const mitem m_chart[] = {
+    { "Bar chart of the selection", "Ctrl+G", KEY_G, CTRL },
+    { "Line chart of the selection", "Ctrl+L", KEY_L, CTRL },
+};
+static const mitem m_help[] = {
+    { "Keys", "F1", KEY_F1, 0 },
+};
+static const struct {
+    const char *title;
+    uint8_t letter; /* Alt and this key opens it */
+    const mitem *items;
+    uint8_t n;
+} menus[] = {
+    { "File", KEY_F_, m_file, sizeof m_file / sizeof m_file[0] },
+    { "Edit", KEY_E, m_edit, sizeof m_edit / sizeof m_edit[0] },
+    { "Data", KEY_D, m_data, sizeof m_data / sizeof m_data[0] },
+    { "Format", KEY_O, m_format, sizeof m_format / sizeof m_format[0] },
+    { "Chart", KEY_C, m_chart, sizeof m_chart / sizeof m_chart[0] },
+    { "Help", KEY_H, m_help, sizeof m_help / sizeof m_help[0] },
+};
+#define MENUS (sizeof menus / sizeof menus[0])
+#define M_OPEN MENUS /* the list of saved sheets */
+#define OPEN_MAX 24
+static uint8_t menu_dirty, menu_drawn;
+static uint8_t menu_at, item_at; /* menu_on: 1 + the open menu */
+static char open_names[OPEN_MAX][NAME_MAX + 1];
+static uint8_t open_n;
+static uint32_t menu_col[MENUS + 1];
+static uint8_t menu_w; /* the open panel's width in cells */
+
+static int menu_items(void) { return menu_at == M_OPEN ? (open_n ? open_n : 1) : menus[menu_at].n; }
+
+/* The bar's titles from column 1, two cells apart. */
+static void menu_layout(void)
+{
+    uint32_t c = 1;
+    for (uint32_t m = 0; m < MENUS; m++) {
+        uint32_t n = 0;
+        while (menus[m].title[n])
+            n++;
+        menu_col[m] = c;
+        c += n + 3;
+    }
+    menu_col[M_OPEN] = 1;
+}
+
+static uint32_t utf8_len(const char *s)
+{
+    uint32_t n = 0;
+    for (; *s; s++)
+        n += ((uint8_t)*s & 0xC0) != 0x80;
+    return n;
+}
+
+/* Writes s at (col, row) of the cells in fg, at most max cells. */
+static void cells_put(uint8_t *row, uint32_t col, const char *s, uint8_t fg, uint32_t max)
+{
+    while (*s && max) {
+        uint32_t cp = (uint8_t)*s++, more = cp >= 0xF0 ? 3 : cp >= 0xE0 ? 2 : cp >= 0xC0 ? 1 : 0;
+        if (more)
+            cp &= 0x3F >> more;
+        while (more-- && *s)
+            cp = cp << 6 | ((uint8_t)*s++ & 0x3F);
+        if (col >= TERM_COLS)
+            return;
+        row[col * 4] = (uint8_t)cp;
+        row[col * 4 + 1] = (uint8_t)(cp >> 8);
+        row[col * 4 + 2] = fg;
+        col++;
+        max--;
+    }
+}
+
+#define FG_TEXT 235
+#define FG_DIM 244
+#define FG_ON 15
+
+/* The terminal's rows 0 to the panel's last: the bar, the open menu. */
+static void menu_draw(void)
+{
+    static uint8_t row[TERM_COLS * 4];
+    uint32_t rows = menu_on ? 1 + (uint32_t)menu_items() : 1, r, k;
+    if (menu_drawn > rows)
+        rows = menu_drawn;
+    menu_w = 0;
+    if (menu_on) {
+        uint32_t w = 0;
+        for (k = 0; k < (uint32_t)menu_items(); k++) {
+            uint32_t n;
+            if (menu_at == M_OPEN)
+                n = open_n ? utf8_len(open_names[k]) + 2 : 50;
+            else
+                n = utf8_len(menus[menu_at].items[k].label) + utf8_len(menus[menu_at].items[k].keys) + 5;
+            if (n > w)
+                w = n;
+        }
+        menu_w = (uint8_t)(w < 16 ? 16 : w);
+    }
+    for (r = 0; r < rows; r++) {
+        for (k = 0; k < TERM_COLS; k++) {
+            row[k * 4] = ' ';
+            row[k * 4 + 1] = 0;
+            row[k * 4 + 2] = FG_TEXT;
+            row[k * 4 + 3] = 0;
+        }
+        if (!r) {
+            for (k = 0; k < MENUS; k++)
+                cells_put(row, menu_col[k], menus[k].title, menu_on && menu_at == k ? FG_ON : FG_TEXT, 20);
+            /* The sheet's name, at the right. */
+            if (rec_name[5] == ':')
+                cells_put(row, TERM_COLS - 1 - utf8_len(rec_name + 6), rec_name + 6, FG_DIM, NAME_MAX);
+        } else if (menu_on && r - 1 < (uint32_t)menu_items()) {
+            uint32_t i = r - 1, c0 = menu_col[menu_at], on = i == item_at;
+            if (menu_at == M_OPEN) {
+                if (open_n)
+                    cells_put(row, c0 + 1, open_names[i], on ? FG_ON : FG_TEXT, menu_w - 1);
+                else
+                    cells_put(row, c0 + 1, "No saved sheets yet: File, Save as names one", FG_DIM, menu_w - 1);
+            } else {
+                const mitem *it = &menus[menu_at].items[i];
+                cells_put(row, c0 + 1, it->label, on ? FG_ON : FG_TEXT, menu_w);
+                cells_put(row, c0 + menu_w - 1 - utf8_len(it->keys), it->keys, on ? FG_ON : FG_DIM, 20);
+            }
+        }
+        term_cells_write(r * TERM_COLS, row, TERM_COLS);
+    }
+    menu_drawn = (uint8_t)(menu_on ? 1 + menu_items() : 1);
+    menu_dirty = 0;
+    vec_dirty = 1;
+}
+
+/* The panels under the characters, drawn last in the 2D list. */
+static void menu_shapes(void)
+{
+    vec_colour(242, 242, 242, 255);
+    vrect(0, 0, 640, 16);
+    vec_colour(0, 0, 0, 40);
+    vrect(0, 16, 640, 17);
+    if (!menu_on)
+        return;
+    int32_t x0 = (int32_t)menu_col[menu_at] * 8, x1 = x0 + menu_w * 8, y1 = 16 + 16 * menu_items();
+    if (menu_at < MENUS) {
+        vec_colour(ACC[0], ACC[1], ACC[2], 255);
+        vrect(x0 - 8, 0, x0 + (int32_t)utf8_len(menus[menu_at].title) * 8 + 8, 16);
+    }
+    vec_colour(0, 0, 0, 50);
+    vrect(x0 + 3, 19, x1 + 3, y1 + 3);
+    vec_colour(255, 255, 255, 255);
+    vrect(x0, 16, x1, y1);
+    vec_colour(190, 190, 190, 255);
+    vec_width(16);
+    vec_move((int16_t)(x0 * 16), (int16_t)(16 * 16));
+    vec_line((int16_t)(x0 * 16), (int16_t)(y1 * 16));
+    vec_line((int16_t)(x1 * 16), (int16_t)(y1 * 16));
+    vec_line((int16_t)(x1 * 16), (int16_t)(16 * 16));
+    if (menu_at != M_OPEN || open_n) {
+        vec_colour(ACC[0], ACC[1], ACC[2], 255);
+        vrect(x0 + 1, 16 + 16 * item_at, x1 - 1, 32 + 16 * item_at);
+    }
+}
+
+static void menu_open(uint32_t m)
+{
+    menu_on = 1;
+    menu_at = (uint8_t)m;
+    item_at = 0;
+    menu_dirty = 1;
+}
+
+static void menu_close(void)
+{
+    menu_on = 0;
+    menu_dirty = 1;
+}
+
+/* Chooses item i of the open menu. */
+static void menu_choose(uint32_t i);
+
+/* A key while a menu is open: 1 if it was the menu's. */
+static int menu_key(uint8_t k)
+{
+    uint32_t n = (uint32_t)menu_items();
+    switch (k) {
+    case KEY_ESCAPE:
+    case KEY_F10: menu_close(); return 1;
+    case KEY_LEFT:
+    case KEY_RIGHT:
+        if (menu_at < MENUS)
+            menu_open((menu_at + (k == KEY_LEFT ? MENUS - 1 : 1)) % MENUS);
+        return 1;
+    case KEY_UP: item_at = (uint8_t)((item_at + n - 1) % n); break;
+    case KEY_DOWN: item_at = (uint8_t)((item_at + 1) % n); break;
+    case KEY_HOME: item_at = 0; break;
+    case KEY_END: item_at = (uint8_t)(n - 1); break;
+    case KEY_ENTER:
+    case KEY_SPACE: menu_choose(item_at); return 1;
+    default: return 1; /* the menu has the keyboard */
+    }
+    menu_dirty = 1;
+    return 1;
+}
+
+/* A press at (x, y) while menus are shown: 1 if the menu took it. */
+static int menu_press(uint32_t x, uint32_t y)
+{
+    uint32_t col = x / 8, row = y / 16;
+    if (row == 0) {
+        for (uint32_t m = 0; m < MENUS; m++)
+            if (col + 1 >= menu_col[m] && col <= menu_col[m] + utf8_len(menus[m].title)) {
+                if (menu_on && menu_at == m)
+                    menu_close();
+                else
+                    menu_open(m);
+                return 1;
+            }
+        if (menu_on)
+            menu_close();
+        return 1;
+    }
+    if (!menu_on)
+        return 0;
+    if (row >= 1 && row <= (uint32_t)menu_items() && col >= menu_col[menu_at] && col < menu_col[menu_at] + menu_w) {
+        menu_choose(row - 1);
+        return 1;
+    }
+    menu_close(); /* a press elsewhere closes the menu, and is used up */
+    return 1;
+}
+
+/* --- Named sheets: File, Open and Save as --- */
+
+/* The record a sheet is kept in: "sheet" for the one that opens at start,
+ * "sheet:" and its name for one saved with Save as. */
+
+static void set_rec_name(const char *name)
+{
+    uint32_t n = 0;
+    menu_dirty = 1;
+    if (!*name) {
+        memcpy(rec_name, "sheet", 6);
+        return;
+    }
+    memcpy(rec_name, "sheet:", 6);
+    while (name[n] && n < NAME_MAX) {
+        rec_name[6 + n] = name[n];
+        n++;
+    }
+    rec_name[6 + n] = 0;
+}
+
+static const char *sheet_name(void) { return rec_name[5] == ':' ? rec_name + 6 : ""; }
+
+static void open_list(void)
+{
+    if (!keeps) {
+        say("Sheets are not kept on this host");
+        return;
+    }
+    if (list_h)
+        return;
+    list_h = record_list(&list_req, 0, 256 * 36 > PBUF_MAX ? PBUF_MAX / 36 * 36 : 256 * 36, pbuf);
+    if (!list_h)
+        say("Could not list the saved sheets");
+}
+
+/* The records listed: the sheets among them, in the Open panel. */
+static void listed(void)
+{
+    uint32_t n = list_req.status == STATUS_DONE ? list_req.length / 36 : 0, i;
+    list_h = 0;
+    open_n = 0;
+    for (i = 0; i < n && open_n < OPEN_MAX; i++) {
+        const char *nm = (const char *)pbuf + i * 36;
+        uint32_t k = 0;
+        if (memcmp(nm, "sheet", 5) || (nm[5] && nm[5] != ':'))
+            continue;
+        if (!nm[5])
+            memcpy(open_names[open_n], "(the sheet opened at start)", 28);
+        else {
+            for (k = 0; k < NAME_MAX && nm[6 + k] && 6 + k < 32; k++)
+                open_names[open_n][k] = nm[6 + k];
+            open_names[open_n][k] = 0;
+        }
+        open_n++;
+    }
+    menu_open(M_OPEN);
+}
+
+static void load_chunk(void);
+static void begin_save(uint8_t how);
+
+static void menu_choose(uint32_t i)
+{
+    if (menu_at == M_OPEN) {
+        menu_close();
+        if (!open_n)
+            return;
+        if (saving || save_h || put_h || pub_h || loading || parsing) {
+            say("Busy: try again in a moment");
+            return;
+        }
+        set_rec_name(open_names[i][0] == '(' ? "" : open_names[i]);
+        from_arg = 0;
+        loading = 1;
+        flen = 0;
+        load_chunk();
+        return;
+    }
+    const mitem *it = &menus[menu_at].items[i];
+    menu_close();
+    key(it->key, it->mods);
+}
+
+static void prompt_start(void)
+{
+    if (!keeps) {
+        say("No saving on this host");
+        return;
+    }
+    if (editing)
+        commit();
+    prompting = 1;
+    pr_n = 0;
+    const char *n = sheet_name();
+    while (n[pr_n] && pr_n < NAME_MAX) {
+        pr_buf[pr_n] = n[pr_n];
+        pr_n++;
+    }
+    pr_buf[pr_n] = 0;
+    doc_dirty = 1;
+}
+
+/* A key while the name is asked for. */
+static void prompt_key(uint8_t k)
+{
+    if (k == KEY_ESCAPE) {
+        prompting = 0;
+        say("Not saved");
+    } else if (k == KEY_BACKSPACE && pr_n) {
+        do
+            pr_n--;
+        while (pr_n && ((uint8_t)pr_buf[pr_n] & 0xC0) == 0x80);
+        pr_buf[pr_n] = 0;
+    } else if (k == KEY_ENTER) {
+        if (!pr_n) {
+            say("Type a name, or Esc");
+            return;
+        }
+        prompting = 0;
+        set_rec_name(pr_buf);
+        begin_save(1);
+    }
+    doc_dirty = 1;
+}
+
+static void prompt_text(uint32_t cp)
+{
+    uint8_t b[4];
+    uint32_t n = 1;
+    if (cp < 0x20 || (cp >= 0x7F && cp < 0xA0))
+        return;
+    if (cp < 0x80)
+        b[0] = (uint8_t)cp;
+    else if (cp < 0x800) {
+        b[0] = (uint8_t)(0xC0 | cp >> 6);
+        b[1] = (uint8_t)(0x80 | (cp & 0x3F));
+        n = 2;
+    } else if (cp < 0x10000) {
+        b[0] = (uint8_t)(0xE0 | cp >> 12);
+        b[1] = (uint8_t)(0x80 | (cp >> 6 & 0x3F));
+        b[2] = (uint8_t)(0x80 | (cp & 0x3F));
+        n = 3;
+    } else
+        return;
+    if (pr_n + n > NAME_MAX)
+        return;
+    memcpy(pr_buf + pr_n, b, n);
+    pr_n += n;
+    pr_buf[pr_n] = 0;
+    doc_dirty = 1;
+}
+
 /* --- Input ---------------------------------------------------------------- */
 
-static uint8_t buttons, shift_held, sel_drag;
+static uint8_t buttons, shift_held, ctrl_held, alt_held, sel_drag;
 static uint32_t frame, ev_frame, press_frame, press_r = 0xFFFF, press_c;
+
+/* A paste (SPEC §events: the paste key's down, the text, its up): into
+ * the entry being typed, ignored for the sheet's own copied cells, or
+ * gathered and put into cells at its end. */
+enum { P_NONE, P_TEXT, P_SKIP, P_EDIT };
+static uint8_t pasting, paste_key;
+
+static void paste_down(uint8_t k)
+{
+    if (pasting)
+        return; /* the key repeating */
+    paste_key = k;
+    if (editing)
+        pasting = P_EDIT;
+    else if (clip_on) {
+        paste();
+        pasting = P_SKIP;
+    } else {
+        pasting = P_TEXT;
+        pbuf_n = 0;
+        pbuf_cut = 0;
+    }
+}
+
+static void paste_text(uint32_t cp)
+{
+    if (pasting == P_EDIT)
+        insert_cp(cp == '\t' || cp == '\n' ? ' ' : cp);
+    else if (pasting == P_TEXT) {
+        uint8_t b[4];
+        uint32_t n = 1;
+        if (cp < 0x80)
+            b[0] = (uint8_t)cp;
+        else if (cp < 0x800) {
+            b[0] = (uint8_t)(0xC0 | cp >> 6);
+            b[1] = (uint8_t)(0x80 | (cp & 0x3F));
+            n = 2;
+        } else if (cp < 0x10000) {
+            b[0] = (uint8_t)(0xE0 | cp >> 12);
+            b[1] = (uint8_t)(0x80 | (cp >> 6 & 0x3F));
+            b[2] = (uint8_t)(0x80 | (cp & 0x3F));
+            n = 3;
+        } else {
+            b[0] = (uint8_t)(0xF0 | cp >> 18);
+            b[1] = (uint8_t)(0x80 | (cp >> 12 & 0x3F));
+            b[2] = (uint8_t)(0x80 | (cp >> 6 & 0x3F));
+            b[3] = (uint8_t)(0x80 | (cp & 0x3F));
+            n = 4;
+        }
+        if ((cp < 0x20 && cp != '\t' && cp != '\n') || (cp >= 0x7F && cp < 0xA0))
+            return;
+        if (pbuf_n + n > PBUF_MAX) {
+            pbuf_cut = 1;
+            return;
+        }
+        memcpy(pbuf + pbuf_n, b, n);
+        pbuf_n += n;
+    }
+}
+
+static void paste_up(void)
+{
+    if (pasting == P_TEXT)
+        paste_text_start();
+    pasting = P_NONE;
+}
 
 static void key(uint8_t k, uint8_t mods)
 {
     int shift = mods & MOD_SHIFT, ctrl = mods & MOD_CTRL;
     press_r = 0xFFFF; /* a key between two presses: not a double-click */
     /* The modifier keys themselves (a window sends them as keys too): only
-     * the keys they modify count, but Shift is followed for Shift+click. */
+     * the keys they modify count, but Shift is followed for Shift+click,
+     * and Control so that the text of Ctrl+Shift+1 is not typed. */
     if (k >= 0xE0 && k <= 0xE7) {
         if (k == KEY_LSHIFT || k == KEY_RSHIFT)
             shift_held = 1;
+        if (k == 0xE0 || k == 0xE4)
+            ctrl_held = 1;
+        if (k == 0xE2 || k == 0xE6)
+            alt_held = 1;
         return;
     }
     if (!shift)
         shift_held = 0; /* its release was missed */
+    if (!ctrl)
+        ctrl_held = 0;
+    if (!(mods & 0x04))
+        alt_held = 0;
+    if (prompting) {
+        prompt_key(k);
+        return;
+    }
+    if (menu_on) {
+        menu_key(k);
+        return;
+    }
+    if (menus_shown() && (k == KEY_F10 || ((mods & 0x04) && !ctrl))) {
+        /* F10 opens File; Alt and a title's letter its menu (and the
+         * letter's text, which a window may send too, is not typed). */
+        for (uint32_t m = 0; m < MENUS; m++)
+            if (k == KEY_F10 ? !m : k == menus[m].letter) {
+                if (editing)
+                    commit();
+                menu_open(m);
+                return;
+            }
+        return;
+    }
+    if ((ctrl && !(mods & 0x04) && k == KEY_V) || (shift && !ctrl && k == KEY_INSERT)) {
+        paste_down(k);
+        return;
+    }
     if (editing) {
         if (ctrl && (k == KEY_S || k == KEY_P))
             commit();
@@ -3526,21 +4839,52 @@ static void key(uint8_t k, uint8_t mods)
         switch (k) {
         case KEY_C: copy(0); return;
         case KEY_X: copy(1); return;
-        case KEY_V:
-        case KEY_B: paste(); return;
         case KEY_Z: undo(shift); return;
         case KEY_Y: undo(1); return;
         case KEY_A:
+            if (shift) {
+                sort_range(0);
+                return;
+            }
             sr = sc = 0;
             ar = NROWS - 1;
             ac = NCOLS - 1;
             doc_dirty = 1;
             return;
-        case KEY_D: fill(1); return;
+        case KEY_D:
+            if (shift)
+                sort_range(1);
+            else
+                fill(1);
+            return;
+        case KEY_EQUAL:
+        case KEY_KP_PLUS: insert_delete(0); return;
+        case KEY_MINUS:
+        case KEY_KP_MINUS: insert_delete(1); return;
+        case KEY_GRAVE:
+            if (shift)
+                set_format(FO_GENERAL);
+            return;
+        case KEY_1:
+            if (shift)
+                set_format(FO_NUMBER);
+            return;
+        case KEY_5:
+            if (shift)
+                set_format(FO_PERCENT);
+            return;
+        case KEY_PERIOD: set_format(FO_MORE); return;
+        case KEY_COMMA: set_format(FO_FEWER); return;
         case KEY_R: fill(0); return;
         case KEY_G: set_chart(1); return;
         case KEY_L: set_chart(2); return;
-        case KEY_S: begin_save(1); return;
+        case KEY_S:
+            if (shift)
+                prompt_start();
+            else
+                begin_save(1);
+            return;
+        case KEY_O: open_list(); return;
         case KEY_P: begin_save(2); return;
         case KEY_N:
             if (!new_armed) {
@@ -3550,7 +4894,8 @@ static void key(uint8_t k, uint8_t mods)
             }
             new_armed = 0;
             clear_sheet();
-            say("A new sheet");
+            set_rec_name(""); /* saved as the sheet that opens at start, until Save as names it */
+            say("A new sheet (File, Save as names it)");
             return;
         case KEY_HOME: move_to(0, 0, shift); return;
         case KEY_END: {
@@ -3584,12 +4929,21 @@ static void key(uint8_t k, uint8_t mods)
     case KEY_PAGE_DOWN: step((int32_t)vrows(), 0, shift); return;
     case KEY_HOME: move_to((int32_t)(shift ? ar : sr), 0, shift); return;
     case KEY_F2: start_edit(1, M_EDIT); return;
+    case KEY_F1:
+        help_on = !help_on;
+        show_selection();
+        return;
     case KEY_DELETE:
     case KEY_BACKSPACE: clear_range(); return;
     case KEY_ESCAPE:
         ar = sr;
         ac = sc;
-        say("");
+        if (clip_on) {
+            clip_on = 0;
+            vec_dirty = 1;
+            say("Copy forgotten: Ctrl+V now pastes text from other programs");
+        } else
+            say("");
         return;
     default: return;
     }
@@ -3626,6 +4980,15 @@ static void pointer(const terse_event *e)
         pt_drag = sel_drag = 0;
         return;
     }
+    if (!(was & BUTTON_PRIMARY) && menus_shown() && (menu_on || EV_POINTER_Y(*e) < 16)) {
+        if (editing && !menu_on)
+            commit();
+        menu_press(EV_POINTER_X(*e), EV_POINTER_Y(*e));
+        press_r = 0xFFFF;
+        return;
+    }
+    if (menu_on)
+        return;
     h = hit(EV_POINTER_X(*e), EV_POINTER_Y(*e), &r, &c);
     if (was & BUTTON_PRIMARY) {
         /* A drag: over the range a formula points at, or the selection. */
@@ -3742,8 +5105,28 @@ static void input(const terse_event *ev)
     else if (ev->type == EV_KEY_UP) {
         if (ev->a == KEY_LSHIFT || ev->a == KEY_RSHIFT)
             shift_held = 0;
+        if (ev->a == 0xE0 || ev->a == 0xE4)
+            ctrl_held = 0;
+        if (ev->a == 0xE2 || ev->a == 0xE6)
+            alt_held = 0;
+        if (pasting && ev->a == paste_key)
+            paste_up();
     } else if (ev->type == EV_TEXT) {
         uint32_t cp = EV_TEXT_CP(*ev);
+        if (pasting) {
+            paste_text(cp);
+            return;
+        }
+        /* The text a window may send with Ctrl+Shift+1, Alt+F and the like
+         * is not typing (AltGr, Control with Alt, still types). */
+        if (ctrl_held != alt_held)
+            return;
+        if (prompting) {
+            prompt_text(cp);
+            return;
+        }
+        if (menu_on)
+            return;
         if (cp == '\n' || cp == '\r') {
             /* A line break in pasted text: as Enter. */
             if (editing) {
@@ -3779,6 +5162,9 @@ int main(void)
     if (terse_has_device(2))
         term_cmd(TERM_CURSOR_OFF);
     has_vec = terse_has_device(3);
+    has_term = terse_has_device(2);
+    menu_layout();
+    menu_dirty = 1;
     keeps = terse_has_device(4);
     default_geometry();
     if (has_vec)
@@ -3810,6 +5196,12 @@ int main(void)
                     located(&place);
                 continue;
             }
+            if (ev.type == EV_TEXT && (pasting == P_TEXT || pasting == P_SKIP) && held_at == held_n) {
+                /* The text of a paste being gathered: at once, so that a
+                 * long paste never fills the queue below. */
+                paste_text(EV_TEXT_CP(ev));
+                continue;
+            }
             if (ev.type == EV_KEY_DOWN || ev.type == EV_KEY_UP || ev.type == EV_TEXT || ev.type == EV_POINTER || ev.type == EV_WHEEL
                 || ev.type == EV_PAGE_ANCHOR) {
                 /* Kept in order until the sheet is free for them. */
@@ -3819,8 +5211,11 @@ int main(void)
                 }
             }
         }
-        /* At most 8 a frame, as a host spreads a paste. */
-        for (uint32_t k = 0; k < 8 && held_at < held_n && !busy(); k++) {
+        /* At most 8 a frame, as a host spreads a paste; the text of a
+         * paste the sheet gathers is cheap and does not count. */
+        for (uint32_t k = 0; k < 8 && held_at < held_n && !busy();) {
+            if (!(pasting == P_TEXT || pasting == P_SKIP) || held[held_at].type != EV_TEXT)
+                k++;
             ev_frame = held_f[held_at];
             input(&held[held_at++]);
         }
@@ -3848,6 +5243,8 @@ int main(void)
             vec_dirty = 0;
             build_vec();
         }
+        if (menu_dirty && menus_shown())
+            menu_draw();
         frame++;
         terse_wait_frame();
     }

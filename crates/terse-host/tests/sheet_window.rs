@@ -106,7 +106,7 @@ fn the_example_is_still_and_its_chart_never_blinks_while_typing() {
         let y0: f32 = xy.split(',').nth(1).unwrap().parse().unwrap();
         let h: f32 = rest.split_whitespace().next().unwrap().split(',').next().unwrap().split('x').nth(1).unwrap().parse().unwrap();
         let s = h / 480.0;
-        let (band0, band1) = (y0 + top * s, y0 + (top + 90.0) * s);
+        let (band0, band1) = (y0 + top * s, y0 + (top + 72.0) * s);
         for l in out.lines().filter(|l| l.contains(": blink in ")) {
             let y = l.split("y ").nth(1).unwrap();
             let (a, b) = y.split_once("..").unwrap();
@@ -159,7 +159,15 @@ fn the_selection_box_is_where_the_page_shows_the_selection() {
         let entry = page.lines().find(|l| l.contains("|A")).unwrap_or("");
         let row: u32 = entry.split('|').nth(1).unwrap_or("").split_whitespace().next().unwrap_or("A0")[1..].parse().unwrap_or(0);
         let top = row_top(&page, row).unwrap_or_else(|| panic!("picture {i}: row {row} not on the page:\n{page}"));
-        assert_eq!(box_y(&vectors), Some(top - 3), "picture {i}: the page shows A{row} (its row at y {top}), the box is elsewhere:\n{vectors}");
+        // (The page's first line names the document generation and the one
+        // shown: if this fails, it tells whether the host showed an older
+        // layout than the one the sheet's locates were answered from.)
+        assert_eq!(
+            box_y(&vectors),
+            Some(top - 3),
+            "picture {i}: the page shows A{row} (its row at y {top}), the box is elsewhere:\n{}\n{vectors}\n{page}",
+            page.lines().next().unwrap_or("")
+        );
     }
 }
 
@@ -172,7 +180,7 @@ fn control_keys_from_a_keyboard_work() {
         return;
     }
     let dir = tempfile::tempdir().unwrap();
-    let script = "settle max 300\nexpect page contains -- figure 640x90\npress g ctrl\nwait 20\nexpect page contains Chart removed\nexpect page lacks -- figure\nexpect page lacks Select the values first\npress n ctrl\nwait 5\npress n ctrl\nwait 30\nexpect page contains A new sheet\nexpect page lacks Estimate\nquit\n";
+    let script = "settle max 300\nexpect page contains -- figure 640x72\npress g ctrl\nwait 20\nexpect page contains Chart removed\nexpect page lacks -- figure\nexpect page lacks Select the values first\npress n ctrl\nwait 5\npress n ctrl\nwait 30\nexpect page contains A new sheet\nexpect page lacks Estimate\nquit\n";
     let o = drive(dir.path(), script, "software", "880x660");
     assert!(o.status.success(), "{}", text(&o));
 }
@@ -389,8 +397,8 @@ fn pointing_at_cells_in_a_formula() {
     );
 }
 
-/// Shift+click extends the selection; Ctrl+C and Ctrl+B paste (the window
-/// keeps Ctrl+V for text from other programs); a click on a column letter
+/// Shift+click extends the selection; Ctrl+C and Ctrl+V paste the copied
+/// cells (the window delivers the paste key, SPEC §events); a click on a column letter
 /// or a row number selects it; Delete clears; Ctrl+Z and Ctrl+Y undo and
 /// redo; Ctrl+X and a paste over a dragged range move the cells.
 #[test]
@@ -410,7 +418,7 @@ fn selecting_copying_and_undoing() {
             "expect page contains Copied",
             "click 520 236",
             "wait 3",
-            "press b ctrl",
+            "press v ctrl",
             "wait 15",
             "expect page contains Pasted",
             "expect page contains F9:G12",
@@ -440,7 +448,7 @@ fn selecting_copying_and_undoing() {
             "drag 200 104 280 148",
             "wait 8",
             "expect page contains B3:C5",
-            "press b ctrl",
+            "press v ctrl",
             "wait 20",
             "expect page contains Moved",
             "expect page contains 45.50",

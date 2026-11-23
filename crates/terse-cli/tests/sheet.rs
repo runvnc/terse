@@ -21,7 +21,7 @@ use terse_net::{BlobStore, Consent, ContentService, FeedStore, Identity, Node, O
 
 const IMAGE: &[u8] = include_bytes!("../../../programs/sheet/sheet.terse");
 const ESTIMATE: &str = include_str!("../../../programs/sheet/estimate.tsv");
-const RAM_PAGES: u8 = 38;
+const RAM_PAGES: u8 = 42;
 /// The width of every column on the page, in screen units (sheet.c COLW).
 const COLW: u32 = 80;
 
@@ -279,7 +279,7 @@ fn the_example_is_an_estimate_with_a_chart() {
     assert!(run.status().starts_with("An example estimate: column D is formulas"), "{}", run.status());
     assert!(run.status().contains("= to start a formula"), "{}", run.status());
     // The chart: a figure across the page, then the labels and values.
-    assert_eq!(run.figures(), vec![(640, 90)]);
+    assert_eq!(run.figures(), vec![(640, 72)]);
     let text: String = run.layout().lines.iter().map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>() + "\n").collect();
     assert!(text.contains("Posts\nConcrete\nLabour (h)\nDelivery\n"), "{text}");
     // The example in the program is programs/sheet/estimate.tsv.
@@ -322,21 +322,21 @@ fn formulas() {
     for (t, _) in &entries {
         k = k.enter(t);
     }
-    // Rows 1-17 are shown from A1.
+    // Rows 1-16 are shown from A1.
     let k1 = Keys { lines: k.lines.clone(), f: k.f }.goto("A1");
     let mut run = Run::new(&k1);
     run.finish(&k1);
     let g = run.grid();
-    for (i, (t, want)) in entries.iter().enumerate().take(17) {
+    for (i, (t, want)) in entries.iter().enumerate().take(16) {
         let name = format!("A{}", i + 1);
         assert_eq!(g.get(&name).map(String::as_str).unwrap_or(""), *want, "{name} = {t}: {g:?}");
     }
-    // The rest where the typing left the view (rows 9-25).
+    // The rest where the typing left the view (rows 10-25).
     let k2 = Keys { lines: k.lines.clone(), f: k.f };
     let mut run = Run::new(&k2);
     run.finish(&k2);
     let g = run.grid();
-    for (i, (t, want)) in entries.iter().enumerate().skip(17) {
+    for (i, (t, want)) in entries.iter().enumerate().skip(16) {
         let name = format!("A{}", i + 1);
         assert_eq!(g.get(&name).map(String::as_str).unwrap_or(""), *want, "{name} = {t}: {g:?}");
     }
@@ -522,7 +522,7 @@ fn undo_and_redo() {
         .press("down shift")
         .press("c ctrl")
         .goto("B1")
-        .press("b ctrl")
+        .press("v ctrl")
         .wait(3)
         .goto("B1")
         .press("right shift")
@@ -569,28 +569,28 @@ fn absolute_references_cut_and_paste_into_a_range() {
         .goto("B1")
         .press("c ctrl")
         .goto("C2")
-        .press("b ctrl")
+        .press("v ctrl")
         .wait(3);
     let mut run = Run::new(&k);
     run.finish(&k);
     assert_eq!(run.entry(), "C2   =B2*$A$1   = 0");
-    let k = Keys { lines: k.lines.clone(), f: k.f }.goto("B2").press("b ctrl").wait(3).goto("B2");
+    let k = Keys { lines: k.lines.clone(), f: k.f }.goto("B2").press("v ctrl").wait(3).goto("B2");
     let mut run = Run::new(&k);
     run.finish(&k);
     assert_eq!(run.entry(), "B2   =A2*$A$1   = 6");
     // A$1 and $A1.
-    let k = Keys::new().new_sheet().enter("=A$1+$A1").press("up").press("c ctrl").goto("C3").press("b ctrl").wait(3).goto("C3");
+    let k = Keys::new().new_sheet().enter("=A$1+$A1").press("up").press("c ctrl").goto("C3").press("v ctrl").wait(3).goto("C3");
     let mut run = Run::new(&k);
     run.finish(&k);
     assert_eq!(run.entry(), "C3   =C$1+$A3   = 0");
     // Cut and paste: moved, the source emptied, the formula as it was.
-    let k = Keys::new().new_sheet().enter("4").enter("=A1*2").press("up").press("x ctrl").goto("C5").press("b ctrl").wait(4);
+    let k = Keys::new().new_sheet().enter("4").enter("=A1*2").press("up").press("x ctrl").goto("C5").press("v ctrl").wait(4);
     let mut run = Run::new(&k);
     run.finish(&k);
     assert_eq!((run.cell("A2").as_str(), run.cell("C5").as_str()), ("", "8"));
     assert_eq!(run.entry(), "C5   =A1*2   = 8");
     // One cell into a range.
-    let k = Keys::new().new_sheet().enter("7").press("up").press("c ctrl").goto("B1").press("down shift").press("down shift").press("b ctrl").wait(4);
+    let k = Keys::new().new_sheet().enter("7").press("up").press("c ctrl").goto("B1").press("down shift").press("down shift").press("v ctrl").wait(4);
     let mut run = Run::new(&k);
     run.finish(&k);
     assert_eq!((run.cell("B1").as_str(), run.cell("B2").as_str(), run.cell("B3").as_str()), ("7", "7", "7"));
@@ -629,6 +629,209 @@ fn more_functions() {
         let name = format!("A{}", i + 1);
         assert_eq!(g.get(&name).map(String::as_str).unwrap_or(""), *want, "{name} = {t}: {g:?}");
     }
+}
+
+/// A paste as a window delivers it (SPEC §events: the paste key down, the
+/// text, the key up): with cells copied in the sheet, Ctrl+V pastes them
+/// (the text is not typed); after Esc it pastes the text, a tab starting
+/// the next cell; while an entry is typed, the text goes into it.
+#[test]
+fn pasting_cells_and_text() {
+    let base = Keys::new().new_sheet().enter("5").enter("=A1*2").goto("A1").press("down shift").press("c ctrl");
+    // The sheet's own cells: references adjusted; the clipboard's text ignored.
+    let k = Keys { lines: base.lines.clone(), f: base.f }.goto("C3").at("down v ctrl").text("stale\ttext").at("up v ctrl").wait(4).goto("C4");
+    let mut run = Run::new(&k);
+    run.finish(&k);
+    assert_eq!(run.entry(), "C4   =C3*2   = 10");
+    assert_eq!(run.cell("D3"), "");
+    // Esc forgets the copy: the text from another program goes into cells.
+    let k = Keys { lines: base.lines.clone(), f: base.f }.press("esc").goto("C3").at("down v ctrl").text("7\t8\tPears").at("up v ctrl").wait(4);
+    let mut run = Run::new(&k);
+    run.finish(&k);
+    assert_eq!((run.cell("C3").as_str(), run.cell("D3").as_str(), run.cell("E3").as_str()), ("7", "8", "Pears"));
+    assert!(run.status().starts_with("Pasted"), "{}", run.status());
+    assert!(run.entry().starts_with("C3:E3 "), "{}", run.entry());
+    // Undone as one change.
+    let k = Keys { lines: k.lines.clone(), f: k.f }.press("z ctrl").wait(4);
+    let mut run = Run::new(&k);
+    run.finish(&k);
+    assert_eq!((run.cell("C3").as_str(), run.cell("E3").as_str()), ("", ""));
+    // Into an entry being typed: the text joins it, a tab as a space.
+    let k = Keys::new().new_sheet().text("=1+").at("down v ctrl").text("2\t").at("up v ctrl").press("enter").press("up");
+    let mut run = Run::new(&k);
+    run.finish(&k);
+    assert_eq!(run.entry(), "A1   =1+2    = 3");
+    // Text typed while Control is held (a window's text for Ctrl+Shift+1)
+    // is not an entry.
+    let k = Keys::new().new_sheet().at("down lctrl").text("!").at("up lctrl").wait(2);
+    let mut run = Run::new(&k);
+    run.finish(&k);
+    assert_eq!(run.entry(), "A1   ");
+}
+
+/// Ctrl+Plus and Ctrl+Minus insert and delete the selected rows (or the
+/// columns, when whole columns are selected): every formula's references
+/// move as in other spreadsheets, a reference to a deleted cell becomes
+/// #REF!, ranges grow and shrink, the chart follows; undone at once.
+#[test]
+fn inserting_and_deleting_rows_and_columns() {
+    // The example: insert a row above row 5 (select row 5 by its number).
+    let k = Keys::new().wait(4).goto("A5").press("0x2e ctrl shift").wait(40).goto("D9");
+    let mut run = Run::new(&k);
+    run.finish(&k);
+    assert_eq!(run.entry(), "D9   =SUM(D3:D8)   = 1,518.35", "the subtotal's range grew");
+    assert_eq!(run.cell("A6"), "Concrete");
+    assert_eq!(run.cell("A5"), "");
+    assert!(run.status().contains("Bar chart") || run.figures() == vec![(640, 72)]);
+    let k = Keys { lines: k.lines.clone(), f: k.f }.goto("D6");
+    let mut run = Run::new(&k);
+    run.finish(&k);
+    assert_eq!(run.entry(), "D6   =B6*C6   = 80.60", "moved rows keep their own references");
+    // Delete rows 3 and 4: the sum shrinks; a formula on a deleted row is #REF!.
+    let k = Keys::new().wait(4).goto("A11").enter("=D3+1").goto("A3").press("down shift").press("0x2d ctrl").wait(40);
+    let mut run = Run::new(&k);
+    run.finish(&k);
+    let k2 = Keys { lines: k.lines.clone(), f: k.f }.goto("D6");
+    let mut run = Run::new(&k2);
+    run.finish(&k2);
+    assert_eq!(run.entry(), "D6   =SUM(D3:D5)   = 728.60");
+    let k2 = Keys { lines: k.lines.clone(), f: k.f }.goto("A9");
+    let mut run = Run::new(&k2);
+    run.finish(&k2);
+    assert!(run.entry().starts_with("A9   =#REF!+1"), "{}", run.entry());
+    // Undo puts the rows back.
+    let k2 = Keys { lines: k.lines.clone(), f: k.f }.press("z ctrl").wait(40).goto("D8");
+    let mut run = Run::new(&k2);
+    run.finish(&k2);
+    assert_eq!(run.entry(), "D8   =SUM(D3:D7)   = 1,518.35");
+    // Columns: select column B by its letter (a click), insert one.
+    let mut first = Run::new(&Keys::new());
+    first.frames(8);
+    let l = first.layout();
+    let head = l.lines.iter().find(|l| l.spans.iter().any(|s| s.style.anchor == 2000)).unwrap().y;
+    let k = Keys::new()
+        .wait(4)
+        .at(&format!("pointer {} {} 1", 2 * COLW + 10, head + 2))
+        .at(&format!("pointer {} {} 0", 2 * COLW + 10, head + 2))
+        .press("0x2e ctrl shift")
+        .wait(40);
+    let mut run = Run::new(&k);
+    run.finish(&k);
+    let k2 = Keys { lines: k.lines.clone(), f: k.f }.goto("E3");
+    let mut run = Run::new(&k2);
+    run.finish(&k2);
+    assert_eq!(run.entry(), "E3   =C3*D3   = 546", "B and C moved right");
+    assert_eq!(run.cell("B3"), "");
+    // Rows pushed off the sheet must be empty.
+    let k = Keys::new().new_sheet().goto("A1").enter("x").goto("A99").enter("y").goto("A1").press("0x2e ctrl shift").wait(4);
+    let mut run = Run::new(&k);
+    run.finish(&k);
+    assert!(run.status().starts_with("No room"), "{}", run.status());
+}
+
+/// Ctrl+Shift+A and Ctrl+Shift+D sort by the active cell's column: numbers
+/// before text, empty cells last, stable; a header row of text over numbers
+/// stays; rows move with their formulas; undone at once.
+#[test]
+fn sorting() {
+    // The example's items with their header (A2:D7, the active cell in
+    // column D): by amount, the header row kept.
+    let select = |k: Keys| k.goto("D2").press("left shift").press("left shift").press("left shift").press("down shift").press("down shift").press("down shift").press("down shift").press("down shift");
+    let k = select(Keys::new().wait(4)).press("a ctrl shift").wait(30);
+    let mut run = Run::new(&k);
+    run.finish(&k);
+    assert!(run.status().contains("kept as the header"), "{}", run.status());
+    let g = run.grid();
+    let items: Vec<&str> = (3..=7).map(|r| g.get(&format!("A{r}")).map(String::as_str).unwrap_or("")).collect();
+    assert_eq!(items, ["Delivery", "Concrete", "Posts", "Panels", "Labour (h)"]);
+    assert_eq!(g["A2"], "Item");
+    let k2 = Keys { lines: k.lines.clone(), f: k.f }.goto("D3");
+    let mut run = Run::new(&k2);
+    run.finish(&k2);
+    assert_eq!(run.entry(), "D3   =B3*C3   = 40", "the formula moved with its row");
+    // Descending; then undo.
+    let k = select(Keys::new().wait(4)).press("d ctrl shift").wait(30);
+    let mut run = Run::new(&k);
+    run.finish(&k);
+    assert_eq!(run.cell("A3"), "Labour (h)");
+    let k = Keys { lines: k.lines.clone(), f: k.f }.press("z ctrl").wait(30);
+    let mut run = Run::new(&k);
+    run.finish(&k);
+    assert_eq!(run.cell("A3"), "Panels");
+    // Mixed values in a selected range: numbers, then text, then empty;
+    // equal keys keep their order.
+    let mut k = Keys::new().new_sheet();
+    for (a, b) in [("10", "1"), ("pear", "2"), ("", "3"), ("Apple", "4"), ("2", "5"), ("apple", "6")] {
+        k = k.text(a).press("tab").enter(b).press("left");
+    }
+    let k = k.goto("A1").press("down shift").press("down shift").press("down shift").press("down shift").press("down shift").press("right shift");
+    let k = k.press("a ctrl shift").wait(30);
+    let mut run = Run::new(&k);
+    run.finish(&k);
+    let g = run.grid();
+    let col: Vec<String> = (1..=6).map(|r| format!("{}{}", g.get(&format!("A{r}")).cloned().unwrap_or_default(), g.get(&format!("B{r}")).cloned().unwrap_or_default())).collect();
+    assert_eq!(col, ["25", "101", "Apple4", "apple6", "pear2", "3"]);
+}
+
+/// Number formats: Ctrl+Shift+1 two decimals with separators, Ctrl+period
+/// and Ctrl+comma one decimal more or fewer, Ctrl+Shift+5 percent,
+/// Ctrl+Shift+~ general; formats copy with cells, survive undo and sort,
+/// and are kept in the saved sheet (which a sheet without formats still
+/// loads).
+#[test]
+fn number_formats() {
+    let base = Keys::new().new_sheet().enter("1234.5").enter("0.125").enter("=A1*2").goto("A1").press("down shift").press("down shift");
+    let k = Keys { lines: base.lines.clone(), f: base.f }.press("1 ctrl shift").wait(4);
+    let mut run = Run::new(&k);
+    run.finish(&k);
+    assert_eq!((run.cell("A1").as_str(), run.cell("A2").as_str(), run.cell("A3").as_str()), ("1,234.50", "0.13", "2,469.00"));
+    let k = Keys { lines: k.lines.clone(), f: k.f }.press("0x36 ctrl").press("0x36 ctrl").wait(4);
+    let mut run = Run::new(&k);
+    run.finish(&k);
+    assert_eq!((run.cell("A1").as_str(), run.cell("A2").as_str()), ("1,235", "0"));
+    let k = Keys { lines: k.lines.clone(), f: k.f }.press("0x37 ctrl").press("0x37 ctrl").press("0x37 ctrl").wait(4);
+    let mut run = Run::new(&k);
+    run.finish(&k);
+    assert_eq!(run.cell("A2"), "0.125");
+    let k = Keys { lines: base.lines.clone(), f: base.f }.press("5 ctrl shift").wait(4);
+    let mut run = Run::new(&k);
+    run.finish(&k);
+    assert_eq!(run.cell("A2"), "13%");
+    let k = Keys { lines: k.lines.clone(), f: k.f }.press("z ctrl").wait(4);
+    let mut run = Run::new(&k);
+    run.finish(&k);
+    assert_eq!(run.cell("A2"), "0.125", "undone: as typed");
+    // Copied with the cell; a clear keeps it; saved and loaded.
+    let k = Keys { lines: base.lines.clone(), f: base.f }
+        .press("1 ctrl shift")
+        .wait(4)
+        .goto("A1")
+        .press("c ctrl")
+        .goto("C1")
+        .press("v ctrl")
+        .wait(3)
+        .press("esc")
+        .goto("A2")
+        .press("delete")
+        .wait(3)
+        .enter("7")
+        .press("s ctrl")
+        .wait(6);
+    let mut run = Run::with(&k.lines, Consent::Deny, None, None, |_| {});
+    run.finish(&k);
+    assert_eq!((run.cell("C1").as_str(), run.cell("A2").as_str()), ("1,234.50", "7.00"));
+    let saved = String::from_utf8(record(&run.data(), "sheet").unwrap()).unwrap();
+    assert!(saved.ends_with("\x0Cformat A1 2s\n\x0Cformat C1 2s\n\x0Cformat A2 2s\n\x0Cformat A3 2s\n"), "{saved:?}");
+    let data = run.data();
+    let mut run2 = Run::with("", Consent::Deny, Some(&data), None, |_| {});
+    run2.frames(8);
+    assert_eq!((run2.cell("A1").as_str(), run2.cell("C1").as_str(), run2.cell("A3").as_str()), ("1,234.50", "1,234.50", "2,469.00"));
+    // Ctrl+Shift+~ back to general.
+    let k = Keys { lines: base.lines.clone(), f: base.f }.press("1 ctrl shift").wait(4).press("0x35 ctrl shift").wait(4);
+    let mut run = Run::new(&k);
+    run.finish(&k);
+    assert_eq!(run.cell("A1"), "1,234.50");
+    assert_eq!(run.cell("A2"), "0.125");
 }
 
 /// Ctrl+arrows go to the edges of the filled cells, Ctrl+A selects the
@@ -710,7 +913,7 @@ fn copy_paste_and_fill() {
         .goto("B3")
         .press("c ctrl")
         .goto("D5")
-        .press("b ctrl");
+        .press("v ctrl");
     let mut run = Run::new(&k);
     run.finish(&k);
     let g = run.grid();
@@ -746,7 +949,7 @@ fn charts() {
     let k2 = Keys { lines: k.lines.clone(), f: k.f }.goto("B3").press("down shift").press("down shift").press("l ctrl");
     let mut run = Run::new(&k2);
     run.finish(&k2);
-    assert_eq!(run.figures(), vec![(640, 90)]);
+    assert_eq!(run.figures(), vec![(640, 72)]);
     assert!(run.status().contains("Line chart of B3:B5"), "{}", run.status());
     // A single cell is not a range.
     let k3 = Keys::new().new_sheet().press("g ctrl");
@@ -766,7 +969,7 @@ fn charts() {
     let k4 = k4.press("g ctrl");
     let mut run = Run::new(&k4);
     run.finish(&k4);
-    assert_eq!(run.figures(), vec![(640, 90)]);
+    assert_eq!(run.figures(), vec![(640, 72)]);
     assert!(run.status().contains("(labels for at most 8)"), "{}", run.status());
 }
 
@@ -796,7 +999,7 @@ fn saves_and_reopens() {
     run2.frames(8);
     let g = run2.grid();
     assert_eq!((g["A1"].as_str(), g["B2"].as_str(), g["B3"].as_str()), ("Rent", "350.50", "1,550.50"));
-    assert_eq!(run2.figures(), vec![(640, 90)]);
+    assert_eq!(run2.figures(), vec![(640, 72)]);
 }
 
 #[test]

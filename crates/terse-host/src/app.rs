@@ -175,6 +175,7 @@ pub fn run(
         title,
         shell_title: program.image.title_lossy(),
         paste: VecDeque::new(),
+        paste_key: None,
         swallowed: Vec::new(),
         clipboard: None,
         gfx: None,
@@ -751,8 +752,12 @@ struct App {
     shell_title: String,
     /// Pasted text not yet delivered, fed in as the event queue has room.
     paste: VecDeque<char>,
-    /// Keys (HID usages) whose presses went to the host (the prompt, a
-    /// paste, the home key), so their releases do too.
+    /// The paste key (HID usage) while its press has reached the program:
+    /// its release, which brackets the paste (SPEC §events), waits until
+    /// the pasted text has gone; `true` once the user has let go.
+    paste_key: Option<(u8, bool)>,
+    /// Keys (HID usages) whose presses went to the host (the prompt, the
+    /// home key), so their releases do too.
     swallowed: Vec<u8>,
     clipboard: Option<arboard::Clipboard>,
     gfx: Option<Gfx>,
@@ -912,6 +917,13 @@ impl App {
             let room = QUEUE_CAPACITY.saturating_sub(m.system().queue().len() + self.pending.len() + waiting + 1);
             let n = room.min(self.paste.len());
             self.pending.extend(self.paste.drain(..n).map(Event::text));
+        }
+        // The paste key's release, after the last of the pasted text.
+        if self.paste.is_empty()
+            && let Some((usage, true)) = self.paste_key
+        {
+            self.paste_key = None;
+            self.pending.push(Event::key_up(usage, modifier_bits(self.modifiers)));
         }
         let mut driver = FrameDriver {
             io: &mut self.io,
@@ -1167,23 +1179,37 @@ impl App {
             }
             return;
         }
-        // Paste: Ctrl+V or Shift+Insert gives the clipboard's text as text events.
+        // Paste (SPEC §events): Ctrl+V or Shift+Insert reaches the program
+        // as a key, and the clipboard's text follows as text events; the
+        // key's release waits until the text has gone.
         let ctrl_v = self.modifiers.control_key()
             && !self.modifiers.alt_key()
             && !self.modifiers.super_key()
             && physical_key == PhysicalKey::Code(KeyCode::KeyV);
         let shift_insert = self.modifiers.shift_key() && physical_key == PhysicalKey::Code(KeyCode::Insert);
-        if pressed && (ctrl_v || shift_insert) {
-            swallow(&mut self.swallowed, usage);
-            self.paste_clipboard();
-            return;
+        if let Some(u) = usage {
+            if pressed && (ctrl_v || shift_insert) {
+                self.pending.push(Event::key_down(u, modifier_bits(self.modifiers)));
+                self.paste_clipboard();
+                self.paste_key = Some((u, false));
+                return;
+            }
+            if !pressed && let Some((k, _)) = self.paste_key.filter(|&(k, _)| k == u) {
+                if self.paste.is_empty() {
+                    self.paste_key = None;
+                    self.pending.push(Event::key_up(k, modifier_bits(self.modifiers)));
+                } else {
+                    self.paste_key = Some((k, true));
+                }
+                return;
+            }
         }
         if let Some(usage) = usage {
             let mods = modifier_bits(self.modifiers);
             self.pending.push(if pressed { Event::key_down(usage, mods) } else { Event::key_up(usage, mods) });
         }
-        if pressed && let Some(text) = text {
-            self.pending.extend(text.chars().filter(|c| !c.is_control()).map(Event::text));
+        if pressed {
+            self.pending.extend(crate::keymap::typed_text(text, self.modifiers).into_iter().map(Event::text));
         }
     }
 
@@ -1253,7 +1279,7 @@ impl App {
     }
 
     /// Queues the clipboard's text for delivery as text events (SPEC §events):
-    /// newlines kept, other control characters dropped.
+    /// tabs and newlines kept, other control characters dropped.
     fn paste_clipboard(&mut self) {
         if self.clipboard.is_none() {
             match arboard::Clipboard::new() {
@@ -1599,12 +1625,31 @@ impl ApplicationHandler for App {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn pasted_text_keeps_newlines_only() {
-        let got: String = super::paste_chars("a\tb\r\nc\rd\ne\u{1b}[0m\u{7f}é日").collect();
-        assert_eq!(got, "ab\nc\nd\ne[0mé日");
+    /// A chord with Control or the logo key types nothing, whatever text
+    /// the window system gives it (Wayland: "c" for Ctrl+C; others: U+0003);
+    /// AltGr (Control+Alt) and Shift still type; control characters never.
+    #[test]
+    fn chords_type_no_text() {
+        use winit::keyboard::ModifiersState as M;
+        let t = |text: Option<&str>, m: M| super::typed_text(text, m).into_iter().collect::<String>();
+        assert_eq!(t(Some("c"), M::CONTROL), "");
+        assert_eq!(t(Some("\u{3}"), M::CONTROL), "");
+        assert_eq!(t(Some("C"), M::CONTROL | M::SHIFT), "");
+        assert_eq!(t(Some("v"), M::SUPER), "");
+        assert_eq!(t(Some("@"), M::CONTROL | M::ALT), "@");
+        assert_eq!(t(Some("C"), M::SHIFT), "C");
+        assert_eq!(t(Some("\u{3}"), M::empty()), "");
+        assert_eq!(t(Some("é"), M::empty()), "é");
+        assert_eq!(t(None, M::empty()), "");
     }
 
-    /// A key the host takes (paste, the consent prompt) held down: its
+    #[test]
+    fn pasted_text_keeps_tabs_and_newlines_only() {
+        let got: String = super::paste_chars("a\tb\r\nc\rd\ne\u{1b}[0m\u{7f}é日").collect();
+        assert_eq!(got, "a\tb\nc\nd\ne[0mé日");
+    }
+
+    /// A key the host takes (the consent prompt) held down: its
     /// auto-repeated presses are noted once, so its one release is taken
     /// and nothing is left to swallow a later release.
     #[test]

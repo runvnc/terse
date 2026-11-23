@@ -84,6 +84,10 @@ struct App {
     wheel: (f64, f64),
     modifiers: ModifiersState,
     paste: VecDeque<char>,
+    /// The paste key while its press has reached the program, and whether
+    /// the user has let go: its release waits for the pasted text (SPEC
+    /// §events).
+    paste_key: Option<(u8, bool)>,
     clipboard: Option<arboard::Clipboard>,
     eye: (f32, f32),
     next: Instant,
@@ -146,6 +150,13 @@ impl App {
             let room = QUEUE_CAPACITY.saturating_sub(events.len() + 8);
             let n = room.min(self.paste.len());
             events.extend(self.paste.drain(..n).map(Event::text));
+            // The paste key's release, after the last of the pasted text.
+            if self.paste.is_empty()
+                && let Some((usage, true)) = self.paste_key
+            {
+                self.paste_key = None;
+                events.push(Event::key_up(usage, modifier_bits(self.modifiers)));
+            }
         }
         // SPEC §content.feeds: while a question is asked the keyboard is the host's.
         let events = self.bs.input(events)?;
@@ -342,21 +353,35 @@ impl App {
             }
             return;
         }
-        // Paste: Ctrl+V or Shift+Insert gives the clipboard's text as text events.
+        // Paste (SPEC §events): Ctrl+V or Shift+Insert reaches the program
+        // as a key, the clipboard's text follows as text events, and the
+        // key's release waits until the text has gone.
         let m = self.modifiers;
         let ctrl_v = m.control_key() && !m.alt_key() && !m.super_key() && event.physical_key == PhysicalKey::Code(KeyCode::KeyV);
         let shift_insert = m.shift_key() && event.physical_key == PhysicalKey::Code(KeyCode::Insert);
-        if pressed && (ctrl_v || shift_insert) {
-            self.bs.swallow(usage);
-            self.paste_clipboard();
-            return;
+        if let Some(u) = usage {
+            if pressed && (ctrl_v || shift_insert) {
+                self.pending.push(Event::key_down(u, modifier_bits(m)));
+                self.paste_clipboard();
+                self.paste_key = Some((u, false));
+                return;
+            }
+            if !pressed && let Some((k, _)) = self.paste_key.filter(|&(k, _)| k == u) {
+                if self.paste.is_empty() {
+                    self.paste_key = None;
+                    self.pending.push(Event::key_up(k, modifier_bits(m)));
+                } else {
+                    self.paste_key = Some((k, true));
+                }
+                return;
+            }
         }
         if let Some(usage) = usage {
             let mods = modifier_bits(self.modifiers);
             self.pending.push(if pressed { Event::key_down(usage, mods) } else { Event::key_up(usage, mods) });
         }
-        if pressed && let Some(text) = &event.text {
-            self.pending.extend(text.chars().filter(|c| !c.is_control()).map(Event::text));
+        if pressed {
+            self.pending.extend(terse_host::keymap::typed_text(event.text.as_deref(), self.modifiers).into_iter().map(Event::text));
         }
     }
 
@@ -619,6 +644,7 @@ pub fn run(bs: BusSystem, script: Script, native: (u32, u32), opts: Options) -> 
         wheel: (0.0, 0.0),
         modifiers: ModifiersState::empty(),
         paste: VecDeque::new(),
+        paste_key: None,
         clipboard: None,
         eye,
         next: Instant::now(),

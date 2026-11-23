@@ -668,21 +668,32 @@ full is dropped.
   input, after keyboard layout and input-method composition. A host
   sends no text event for a control character (U+0000–U+001F,
   U+007F–U+009F): Enter, Tab, Backspace, Escape and Control-letter
-  combinations arrive only as key events. Text the user pastes arrives the
-  same way, one event per character, with no key events: a CR LF pair or
-  a lone CR becomes U+000A, U+000A is kept, and every other control
+  combinations arrive only as key events. Nor does a key pressed with
+  Control held (unless Alt is held too: Control+Alt is AltGr on some
+  systems, and AltGr types its character) or with Meta held: such a
+  chord is its key event with the modifiers, and no text, whatever text
+  the host's window system reports for it. Text the user pastes arrives the
+  same way, one event per character: a CR LF pair or a lone CR becomes
+  U+000A, U+0009 (tab) and U+000A are kept, and every other control
   character is dropped; it comes no faster than the queue has room for,
   and goes to whichever machine has the focus as each part is sent. How
   the user pastes is up to the host (the reference host: Control+V, or
-  Shift+Insert).
+  Shift+Insert). The paste key reaches the program like any other key,
+  and brackets the paste: its key-down comes before the pasted text and
+  its key-up after the last of it (held back until then if the user
+  lets go sooner), so a program can tell a paste from typing and may use
+  something of its own instead of the text (a spreadsheet, its copied
+  cells). A paste key pressed with nothing to paste still sends its
+  key-down and key-up. A program never reads what the user has not
+  pasted.
 - **Keys a host keeps.** Besides the home key of a system (§machines.input)
   and the keyboard while a consent prompt is shown (§content.feeds), a host
-  may keep a few keys for its own functions, such as a paste key; such a
-  key's press and its release reach no program (the modifier keys held
-  with it are still delivered). A host should keep as few as it can and
-  say which. (The reference host keeps its paste keys and, for its
-  volume, Control+Alt with minus, equals or M, and the keyboard's volume
-  keys: README "Sound".)
+  may keep a few keys for its own functions; such a key's press and its
+  release reach no program (the modifier keys held with it are still
+  delivered). A paste key is not kept: it is delivered as above. A host
+  should keep as few as it can and say which. (The reference host keeps,
+  for its volume, Control+Alt with minus, equals or M, and the keyboard's
+  volume keys: README "Sound".)
 - **Pointer** positions are in screen units (§screen): x is 0–639 and y
   is 0–479. It is sent when the position or a button changes, at most once
   per frame for movement; a button change is sent at once, with the current
