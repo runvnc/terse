@@ -23,7 +23,6 @@ import (
 	"tersereader/internal/nodeapi"
 	"tersereader/internal/render"
 	"tersereader/internal/terse"
-	"tersereader/internal/ws"
 )
 
 const usage = `tersereader: a native Terse reader (no virtual machine)
@@ -155,7 +154,7 @@ func parseArgs(args []string) (*config, error) {
 		case "--relay":
 			v, err = val()
 			if err == nil {
-				r, opts, ok := ws.SplitLine(v)
+				r, opts, ok := terse.SplitRelayLine(v)
 				if u := terse.TypedRelay(r); ok && u != "" {
 					v = strings.Join(append([]string{u}, opts...), " ")
 				} else {
@@ -398,7 +397,7 @@ func cmdRelay(n nodeapi.Node, args []string) error {
 	}
 	var out []string
 	for _, x := range n.ConfiguredRelays() {
-		if r, _, ok := ws.SplitLine(x); ok && terse.TypedRelay(r) != url {
+		if r, _, ok := terse.SplitRelayLine(x); ok && terse.TypedRelay(r) != url {
 			out = append(out, x)
 		}
 	}

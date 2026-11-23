@@ -359,6 +359,17 @@ func TypedRelay(s string) string {
 	return "wss://" + s
 }
 
+// SplitRelayLine splits a relay line (of the relay list, or a --relay
+// value) at blanks: the relay, then its options (authority=, pin=...).
+// ok is false for an empty line or a # comment.
+func SplitRelayLine(line string) (relay string, options []string, ok bool) {
+	w := strings.Fields(line)
+	if len(w) == 0 || strings.HasPrefix(w[0], "#") {
+		return "", nil, false
+	}
+	return w[0], w[1:], true
+}
+
 // NetworkRelayUsable reports whether a relay URL named by the network (a
 // profile's relay line, a hint) whose host is host may be used: it is
 // encrypted (a plain relay named by the network is not used unless it is

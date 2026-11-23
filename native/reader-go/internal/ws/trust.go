@@ -14,6 +14,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"tersereader/internal/terse"
 )
 
 // What the reader trusts for wss:// relays besides the system's
@@ -130,11 +132,7 @@ func (t *Trust) AddAll(path string) error {
 // SplitLine splits a relay line at blanks: the relay, then its options.
 // ok is false for an empty line or a # comment.
 func SplitLine(line string) (relay string, options []string, ok bool) {
-	w := strings.Fields(line)
-	if len(w) == 0 || strings.HasPrefix(w[0], "#") {
-		return "", nil, false
-	}
-	return w[0], w[1:], true
+	return terse.SplitRelayLine(line)
 }
 
 // AddLine takes the options of a relay line for the relay url (already a
