@@ -1624,14 +1624,13 @@ impl ApplicationHandler for App {
 
 #[cfg(test)]
 mod tests {
-    #[test]
     /// A chord with Control or the logo key types nothing, whatever text
     /// the window system gives it (Wayland: "c" for Ctrl+C; others: U+0003);
     /// AltGr (Control+Alt) and Shift still type; control characters never.
     #[test]
     fn chords_type_no_text() {
         use winit::keyboard::ModifiersState as M;
-        let t = |text: Option<&str>, m: M| super::typed_text(text, m).into_iter().collect::<String>();
+        let t = |text: Option<&str>, m: M| crate::keymap::typed_text(text, m).into_iter().collect::<String>();
         assert_eq!(t(Some("c"), M::CONTROL), "");
         assert_eq!(t(Some("\u{3}"), M::CONTROL), "");
         assert_eq!(t(Some("C"), M::CONTROL | M::SHIFT), "");
