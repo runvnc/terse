@@ -41,7 +41,7 @@ Ed25519 works on the points of a curve over the integers modulo p = 2^255 − 19
 
 The eight canonical encodings of the points of small order, in hexadecimal: order 1 (the neutral point), order 2, two of order 4, four of order 8:
 
-```
+```text
 0100000000000000000000000000000000000000000000000000000000000000
 ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f
 0000000000000000000000000000000000000000000000000000000000000000
@@ -100,7 +100,7 @@ The SDK's tests run both files: `go test ./...` in `sdk/go`, `cargo test -p ters
 
 `sdk/go` (package `tersenet`) and `sdk/rust` (crate `tersenet`) make every check on this page, with no options. Go:
 
-```
+```go
 e, err := tersenet.VerifyEntry(b)
 if err != nil {
     return err // names the rule: tersenet.ErrKey, ...
@@ -110,7 +110,7 @@ fmt.Println(e.Seq, e.Title)
 
 Rust:
 
-```
+```rust
 let e = tersenet::verify_entry(&bytes)?;
 println!("{} {}", e.seq, e.title);
 ```

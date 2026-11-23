@@ -8,7 +8,7 @@ The program is in the Tersenet sources, in `examples/reader/go`, so you can run 
 
 This is `examples/reader/hello.txt`:
 
-```
+```article
 # Hello
 
 My first article. It has a heading, and this paragraph,
@@ -27,7 +27,7 @@ A line that starts with `# ` is a heading, and one that starts with `## ` a subh
 
 `article/article.go` shows an article:
 
-```
+```go
 package article
 
 import (
@@ -109,7 +109,7 @@ func Visible(text string) string {
 
 `show/main.go` is the program:
 
-```
+```go
 // Step 1: show an article from a file.
 package main
 
@@ -145,14 +145,14 @@ Then it reads the article a line at a time. A blank line, one of only spaces, ta
 
 Run it:
 
-```
+```sh
 cd examples/reader/go
 go run ./show ../hello.txt
 ```
 
 It prints:
 
-```
+```text
 Hello
 =====
 

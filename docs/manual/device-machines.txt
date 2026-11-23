@@ -130,7 +130,7 @@ The order in which a system runs its machines each frame, what a snapshot holds 
 
 ## Example: a minimal shell
 
-```
+```c
 #include "terse.h"
 
 static uint8_t id[32], req[82];

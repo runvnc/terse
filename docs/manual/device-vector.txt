@@ -117,7 +117,7 @@ The device sends no events and takes no input from the host. Its state is the st
 
 ## Example
 
-```
+```c
 #include "terse.h"
 
 static uint8_t list[256];

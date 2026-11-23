@@ -8,7 +8,7 @@ It never opens a window on your desktop: on Linux it starts a hidden display of 
 
 `line.drive`:
 
-```text examples/program/line.drive
+```drive examples/program/line.drive
 settle
 expect vectors contains line 5120 6400 5120 1280
 shot start.png
@@ -30,11 +30,11 @@ One command a line, in order:
 
 ## Run it
 
-```
+```sh
 terse-host line.terse --drive line.drive --renderer software
 ```
 
-```
+```text
 frame 3-13: settle: 10 pictures, 0 changed,
     settled (10 unchanged)
 frame 14: ok: vectors contains "line 5120 6400 5120 1280"

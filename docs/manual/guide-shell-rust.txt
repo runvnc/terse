@@ -30,7 +30,7 @@ The runtime has three calls of device 8, the ones a first shell needs, with the 
 
 ## Build it and run it
 
-```
+```sh
 terse build myshell.rs --device 8:0
 terse run --shell myshell.terse --frames 30 --dump
 terse-host --shell myshell.terse

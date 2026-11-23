@@ -37,7 +37,7 @@ A test compares its screen after 30 frames with `expected-30-frames.txt`.
 
 `programs/hello/hello.c` is the whole hello program in C. Its core, typing and Esc, is this:
 
-```
+```c
 #include "terse.h"
 
 int main(void)

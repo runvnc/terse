@@ -138,7 +138,7 @@ The terminal sends no events (keyboard input arrives as system events) and takes
 
 ## Example
 
-```
+```c
 #include "terse.h"
 
 int main(void)

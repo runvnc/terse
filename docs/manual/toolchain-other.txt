@@ -6,7 +6,7 @@
 
 `terse build --show` prints the commands it runs; `terse build --write-lib lib` writes the files they use. With those, in fish:
 
-```
+```sh
 terse build --write-lib lib
 set CFLAGS --target=riscv32-unknown-elf -march=rv32imc \
     -mabi=ilp32 -Os -ffreestanding -nostdlib -fno-builtin \
@@ -23,7 +23,7 @@ terse pack --rom hello.bin --title hello --ram-pages 2 \
 
 (In sh, `CFLAGS="..."`.) The `build.sh` of each program in `programs/` is such a script. For Rust:
 
-```
+```sh
 terse build --write-lib lib
 rustc --edition 2024 --target riscv32imc-unknown-none-elf \
     -C opt-level=s -Cpanic=abort --crate-type rlib \

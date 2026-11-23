@@ -107,7 +107,7 @@ Where lines are cut at the near plane, how much one list may draw, how the displ
 
 A square that turns about its vertical axis, in front of a circle it partly hides:
 
-```
+```c
 #include "terse.h"
 
 #define U V3_UNIT

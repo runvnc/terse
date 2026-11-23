@@ -346,7 +346,7 @@ HELLO answers for the slots asked: 2 with its table, 10 (full text) with none. O
 
 Build it, then run `hello` under the reference core with it, from the top folder of the sources (`cargo build --release -p terse-bus -p terse-devices` builds the core and the reference drivers):
 
-```
+```sh
 cargo build --release \
     --manifest-path examples/device/rust/Cargo.toml
 target/release/terse-bus programs/hello/hello.terse \
@@ -354,18 +354,18 @@ target/release/terse-bus programs/hello/hello.terse \
     --driver 2=$PWD/examples/device/rust/target/release/terminal
 ```
 
-```
+```text
 819432152b38626f8fc54b43f50d5d4c501dc99e6904315b61dc78b796c611e2
 ```
 
 the hash the reference terminal gives, and with `--hash-every 1`, the same 30 hashes. The hosts of "Make a host" take it too: this is a Go core with a Rust driver, from `examples/host/go` after `go build -o bin/ ./...`:
 
-```
+```sh
 bin/step4 ../../../programs/hello/hello.terse 30 \
     ../../device/rust/target/release/terminal
 ```
 
-```
+```text
 819432152b38626f8fc54b43f50d5d4c501dc99e6904315b61dc78b796c611e2
 ```
 

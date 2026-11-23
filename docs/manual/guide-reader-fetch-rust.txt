@@ -6,7 +6,7 @@ Articles travel through relays: servers that keep blobs (any bytes, up to 1 MiB)
 
 `Cargo.toml` names the package and the libraries steps 2 and 3 use:
 
-```
+```toml
 [package]
 name = "reader"
 version = "0.1.0"
@@ -31,7 +31,7 @@ The empty `[workspace]` keeps the package apart from the Tersenet sources around
 
 `src/relay.rs` gets a blob from a relay:
 
-```
+```rust
 use std::error::Error;
 use std::io::{Read, Write};
 use tungstenite::{Message, WebSocket};
@@ -87,7 +87,7 @@ pub fn hex32(hex: &str) -> Result<Id, Box<dyn Error>> {
 
 `src/bin/fetch.rs` is the program:
 
-```
+```rust
 // Step 2: fetch an article from a relay by its ID.
 use reader::{article, relay};
 
@@ -137,36 +137,36 @@ The hash check is the important line. Relays are not trusted, the hash is: if th
 
 You need a relay. `terse-relay` comes with every Tersenet download. In another terminal, start one of your own on port 7979, apart from the one a running Tersenet host keeps on 7878:
 
-```
+```sh
 terse-relay --listen 127.0.0.1:7979 --store try-relay
 ```
 
 It prints `listening on ws://127.0.0.1:7979` and keeps what it is given in the folder `try-relay`. Put the article on it, from `examples/reader/rust`:
 
-```
+```sh
 terse put ../hello.txt --relay ws://127.0.0.1:7979
 ```
 
-```
+```text
 terse: taken by 1 of 1 relays: ws://127.0.0.1:7979
 e01027372f56996fa53fde7ae45aed656e196ccb4e7d79d3b66a51d9590be3a8
 ```
 
 The last line is the article's ID. `terse hash` prints the same ID without asking a relay, which saves typing it:
 
-```
+```sh
 cargo run -q --bin fetch ws://127.0.0.1:7979 \
   $(terse hash ../hello.txt)
 ```
 
 It prints the article exactly as step 1 did. Ask for a blob the relay does not hold, such as `Cargo.toml`, and it says so:
 
-```
+```sh
 cargo run -q --bin fetch ws://127.0.0.1:7979 \
   $(terse hash Cargo.toml)
 ```
 
-```
+```text
 Error: "the relay does not have it"
 ```
 

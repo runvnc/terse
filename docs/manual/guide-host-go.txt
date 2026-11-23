@@ -325,14 +325,14 @@ func main() {
 
 Build all four steps at once, into `bin`. The first build downloads the BLAKE3 package:
 
-```
+```sh
 cd examples/host/go
 go build -o bin/ ./...
 ```
 
 A program that exits with code 7, `c.li a0, 7`, `addi a7, x0, 106h` and `ecall`, as a file:
 
-```
+```sh
 xxd -r -p > exit.terse <<EOF
 5445525300010a000001000000000000657869740000
 000000000000000000001d459308601073000000
@@ -343,7 +343,7 @@ echo $?
 
 prints `7`. This one adds 100 + 99 + ... + 1 and exits with the sum's low byte:
 
-```
+```sh
 xxd -r -p > sum.terse <<EOF
 544552530001160000010000000000007375
 6d0000000000000000000000000001459302

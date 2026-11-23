@@ -52,21 +52,21 @@ The screen is 640 by 480 units, (0, 0) at the top left, and a list's coordinates
 
 Save two presses of Left as `keys.txt`:
 
-```
+```events
 5 press left
 6 press left
 ```
 
 and run
 
-```
+```sh
 terse run line.terse --frames 10 --events keys.txt \
     --dump --dump-vectors
 ```
 
 After the text grid (empty here) it prints the display list as the host draws it, one shape per line:
 
-```
+```text
 -- vectors: 11 list bytes --
 line 5120 6400 4800 1280 w 16 c ffffffff
 ```

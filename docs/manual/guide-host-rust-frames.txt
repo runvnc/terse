@@ -142,7 +142,7 @@ It takes the program and the most frames to run; `|_, _, _, _| (u32::MAX, 4)` an
 
 This program calls `frame_count` 100,000 times, then waits for the next frame and exits with what `wait_frame` returned:
 
-```
+```asm
 _start: li   t0, 100000
         li   a7, 0x102      # frame_count
 1:      ecall
@@ -156,7 +156,7 @@ _start: li   t0, 100000
 
 From `examples/host/rust`, after `cargo build --release`:
 
-```
+```sh
 xxd -r -p > frames.terse <<EOF
 544552530001240000010000000000006672616d657300
 000000000000000000e1629382026a9308201073000000

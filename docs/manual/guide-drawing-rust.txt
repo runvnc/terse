@@ -50,14 +50,14 @@ Build it with `terse build line.rs` and run it with `terse-host line.terse`.
 
 With the `keys.txt` of the last page (Left at frames 5 and 6),
 
-```
+```sh
 terse run line.terse --frames 10 --events keys.txt \
     --dump --dump-vectors
 ```
 
 prints the same list as the C program, byte for byte:
 
-```
+```text
 -- vectors: 11 list bytes --
 line 5120 6400 4800 1280 w 16 c ffffffff
 ```

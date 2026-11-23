@@ -4,7 +4,7 @@
 
 ## Starting
 
-```
+```sh
 cargo run --release -p terse-host -- --demo
 ```
 

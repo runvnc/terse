@@ -359,14 +359,14 @@ HELLO answers for the slots asked: 2 with its table, 10 (full text) with none. O
 
 Build it, then run `hello` under the reference core with it, from the top folder of the sources (`cargo build --release -p terse-bus -p terse-devices` builds the core and the reference drivers):
 
-```
+```sh
 go build -C examples/device/go
 target/release/terse-bus programs/hello/hello.terse \
     --frames 30 --hash \
     --driver 2=$PWD/examples/device/go/terminal
 ```
 
-```
+```text
 819432152b38626f8fc54b43f50d5d4c501dc99e6904315b61dc78b796c611e2
 ```
 
@@ -374,12 +374,12 @@ target/release/terse-bus programs/hello/hello.terse \
 
 The hosts of "Make a host" take it too, the Rust one as well as the Go one: this is a Rust core with a Go driver, from `examples/host/rust` after `cargo build --release`:
 
-```
+```sh
 target/release/step4 ../../../programs/hello/hello.terse 30 \
     ../../device/go/terminal
 ```
 
-```
+```text
 819432152b38626f8fc54b43f50d5d4c501dc99e6904315b61dc78b796c611e2
 ```
 

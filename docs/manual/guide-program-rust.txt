@@ -35,7 +35,7 @@ A Terse32 machine has no operating system under it, so a program is `#![no_std]`
 
 ## Build it and run it
 
-```
+```sh
 terse new hello.rs
 terse build hello.rs
 terse run hello.terse --frames 60 --dump

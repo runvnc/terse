@@ -4,7 +4,7 @@ Text on a Terse32 screen comes from device 2, the terminal: 80 by 30 character c
 
 The reference drivers are in the downloads' `bus` folder, for Linux, macOS and Windows. Or build them from the top folder of the sources:
 
-```
+```sh
 cargo build --release -p terse-devices
 ```
 
@@ -347,14 +347,14 @@ func screen(grid []byte) string {
 
 From `examples/host/go`, after `go build -o bin/ ./...`:
 
-```
+```sh
 bin/step3 ../../../programs/hello/hello.terse 30 \
     ../../../target/release/terse-dev-terminal
 ```
 
 prints `hello`'s screen after 30 frames, 30 lines, which begins
 
-```
+```text
  Tersenet · hello
 
   héllo, wörld — привет, мир

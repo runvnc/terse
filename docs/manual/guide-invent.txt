@@ -89,7 +89,7 @@ Function `f` of the device on slot 240 is the call `(240 << 8) | f`, made with `
 
 The image names the device on a slot, as optional: an experimental device is never required, and a host without its driver runs the program without it.
 
-```
+```sh
 cc -std=c11 -O2 -o dice native/driver-experimental/dice.c
 terse build roll.c --optional 240:0=example.dice
 terse-bus roll.terse --driver example.dice=$PWD/dice \
@@ -98,7 +98,7 @@ terse-bus roll.terse --driver example.dice=$PWD/dice \
 
 `terse-bus` is the host that runs every device as a driver, from the downloads' `bus` folder or built from the sources; the C driver needs Linux or macOS. It prints:
 
-```
+```text
 You rolled 1.
 You rolled 2.
 You rolled 5.

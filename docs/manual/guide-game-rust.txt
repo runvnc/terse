@@ -76,14 +76,14 @@ Build it with `terse build chase.rs` and play it with `terse-host chase.terse`.
 
 With the `chase.txt` of the last page (left at frame 1, up at frame 81),
 
-```
+```sh
 terse run chase.terse --frames 150 --events chase.txt \
     --dump --dump-vectors
 ```
 
 prints `Score 1` at the top of the grid and the same list as the C program:
 
-```
+```text
 -- vectors: 17 list bytes --
 disc 2560 1632 r 64 c ffffffff
 circle 640 640 r 160 w 16 c ffffffff
