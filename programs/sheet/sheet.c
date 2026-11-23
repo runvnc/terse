@@ -87,11 +87,49 @@
  * in. The range pointed at is shaded orange. Anywhere else in an entry, a
  * press on another cell keeps the entry and selects that cell.
  *
- * Delete clears the selection. Ctrl+C copies it, Ctrl+X cuts it, Ctrl+B
- * pastes at the selection's top left (one cell copied fills a selected
- * range; after a cut, moves the cells, their formulas unchanged). Ctrl+V
- * pastes too where the host passes it on; a window keeps Ctrl+V for the
- * text of other programs, which arrives as typing (a line break as Enter).
+ * Delete clears the selection (keeping its number formats). Ctrl+C copies
+ * it, Ctrl+X cuts it, Ctrl+V pastes at the selection's top left (one cell
+ * copied fills a selected range; after a cut, moves the cells, their
+ * formulas unchanged), until Esc forgets what was copied (a dashed green
+ * edge shows it meanwhile). A paste arrives as the paste key's down, the
+ * text, its up (SPEC §events): with cells copied, the text is ignored;
+ * else it goes into cells from the selection's top left, a tab to the
+ * next cell and a line break to the next row (at most 16 KiB); while an
+ * entry is typed it joins the entry. The sheet cannot put its copied
+ * cells on the system clipboard (no call does that). Text that arrives
+ * while Control (without Alt) or Alt (without Control) is held is not
+ * typing.
+ *
+ * Rows and columns. Ctrl+Plus (Ctrl+Shift+=, or the keypad's +) inserts
+ * as many rows as the selection has, above it; Ctrl+Minus deletes them;
+ * with whole columns selected (their letters clicked), columns. Every
+ * formula's references move as in other spreadsheets: what lies past the
+ * place moves (also after a $); a reference to a deleted cell is #REF!;
+ * a range that loses an end shrinks, one wholly deleted is #REF!. The
+ * chart's range follows. What an insertion would push off the sheet must
+ * be empty. A job: JOB_PUTS cells a frame.
+ *
+ * Sorting. Ctrl+Shift+A (A to Z) and Ctrl+Shift+D (Z to A) sort the
+ * selection, or the block of filled cells around the active cell, by the
+ * active cell's column: numbers (and TRUE, FALSE) by value, then text
+ * without regard to case, then errors; empty cells last either way; equal
+ * keys keep their order. If the first row is text over a number in that
+ * column it is a header and stays (the status line says so). Rows move
+ * whole, with their relative references moved as a copy moves them, so a
+ * row's own formula (=B3*C3) stays right.
+ *
+ * Number formats (c_fmt, per cell): general (as typed); Ctrl+Shift+1 two
+ * decimals with thousands separators (again: without separators);
+ * Ctrl+Shift+5 a percentage; Ctrl+period and Ctrl+comma one decimal more
+ * or fewer (0 to 4); Ctrl+Shift+~ general again. They apply to the
+ * selection, copy and move with cells, survive undo, insertions and
+ * sorting, and are saved.
+ *
+ * Menus. A menu bar at the top (File, Edit, Data, Format, Chart, Help:
+ * terminal characters over panels of the 2D display, as below) opens with
+ * a press on a title, F10 or Alt and its letter; every item shows its
+ * key. File, Open lists the saved sheets; File, Save as asks for a name
+ * on the content line. F1 lists every key in place of the chart.
  * Ctrl+D fills the selection down from its top row and Ctrl+R right from
  * its left column (references move with the copy, except after a $).
  * Ctrl+Z undoes and Ctrl+Y (or Ctrl+Shift+Z) redoes every change of cells
@@ -112,14 +150,22 @@
  * 1 to the last row used, the row's cells up to its last one used
  * separated by tabs, each exactly as typed (formulas with their "=").
  * After the rows, a chart is one more line: a form feed (0Ch), "chart",
- * a space, "bar" or "line", a space and the range ("chart bar D3:D7").
+ * a space, "bar" or "line", a space and the range ("chart bar D3:D7");
+ * then a line for each run of cells of a row with the same number format:
+ * a form feed, "format", a space, the range, a space, the decimals, "s"
+ * for separators, "%" for a percentage ("format D3:D7 2s"). (An older
+ * sheet without these lines loads as general; an older reader ignores
+ * them, as it ignores any line that starts with a form feed.)
  * Lines end in LF (a CR before it is ignored); rows past 99 and cells past
  * Z are ignored on reading; cells longer than 120 bytes are cut. At most
  * 65,536 bytes.
  *
  * Documents. Ctrl+S saves the sheet as the record "sheet" (SPEC
  * §content.records), which is loaded at start (if there is none, the
- * example, an estimate for a service, is shown). Ctrl+P publishes it as a
+ * example, an estimate for a service, is shown); a sheet named with Save
+ * as is the record "sheet:" and its name (at most 24 bytes), and Ctrl+S
+ * then saves it there; File, Open lists these records (op 11h) and loads
+ * the one chosen. Ctrl+P publishes it as a
  * document (SPEC §content.documents: "TDOC", 0, 32 zero bytes, 5,
  * "sheet", then the saved form) titled with A1's text (or "Sheet"), after
  * the host asks the user. Started with a sheet document as its argument,
@@ -128,8 +174,9 @@
  * kept, and Ctrl+S and Ctrl+P say so. The 2D display (device 3) is
  * optional too: without it there are no grid lines and the selected cell
  * is shown by its colour (and that of its row number and column letter).
- * The terminal (device 2) is optional and unused; where it is there, its
- * cursor is hidden, since terminal characters are drawn over the page.
+ * The terminal (device 2) is optional; where it is there (with the 2D
+ * display) it draws the menu bar's characters, its cursor hidden; without
+ * either there is no menu bar, and the keys still work.
  *
  * Budget. Recalculation counts its steps in work units of roughly 40
  * budget units (WORK_PER_FRAME a frame), reading a saved sheet likewise

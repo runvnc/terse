@@ -194,8 +194,8 @@ fn the_pointer_selects_the_cell_under_it_at_any_window_size() {
         return;
     }
     let dir = tempfile::tempdir().unwrap();
-    // Screen units: column C is x 240..320; row 5's number is at y 140 in this host's layout.
-    let script = "settle max 300\nclick 280 145\nwait 15\nexpect page contains C5\ndrag 200 100 360 150\nwait 20\nexpect page contains B3:D5\nquit\n";
+    // Screen units: column C is x 240..320; row 5's number is at y 154 in this host's layout (below the menu bar).
+    let script = "settle max 300\nclick 280 159\nwait 15\nexpect page contains C5\ndrag 200 114 360 164\nwait 20\nexpect page contains B3:D5\nquit\n";
     for size in ["1900x1000", "640x480"] {
         let o = drive(dir.path(), script, "software", size);
         assert!(o.status.success(), "{size}: {}", text(&o));
@@ -205,8 +205,8 @@ fn the_pointer_selects_the_cell_under_it_at_any_window_size() {
 /// Runs an editing script (its lines joined) with both renderers at the
 /// owner's window size: every expectation holds and it ends still.
 /// Screen units used: columns B to F are x 160..560 in steps of 80; row r's
-/// middle is y 60 + 22 (r − 1) in this host's layout; the content line is
-/// y 4..23, its text from x 41.
+/// middle is y 74 + 22 (r − 1) in this host's layout (below the menu bar,
+/// 16 units); the content line is y 18..37, its text from x 41.
 fn editing_script(name: &str, lines: &[&str]) {
     let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
     if !have_weston() {
@@ -237,10 +237,10 @@ fn typing_entries_and_formulas() {
         &[
             "settle max 300",
             "expect page contains An example estimate: column D is formulas",
-            "click 360 214",
+            "click 360 228",
             "wait 8",
             "expect page contains D8   =SUM(D3:D7)   = 1,518.35",
-            "click 440 104",
+            "click 440 118",
             "wait 5",
             "type 42",
             "wait 5",
@@ -289,9 +289,9 @@ fn editing_in_place() {
         "edit",
         &[
             "settle max 300",
-            "click 360 104",
+            "click 360 118",
             "wait 5",
-            "click 360 104",
+            "click 360 118",
             "wait 8",
             "expect page contains D3   =B3*C3|",
             "expect page contains Edit",
@@ -303,7 +303,7 @@ fn editing_in_place() {
             "press esc",
             "wait 8",
             "expect page contains D3   =B3*C3   = 546",
-            "click 74 12",
+            "click 74 26",
             "wait 8",
             "expect page contains D3   =B3|*C3",
             "type +1",
@@ -316,7 +316,7 @@ fn editing_in_place() {
             "wait 5",
             "press end",
             "wait 5",
-            "click 385 104",
+            "click 385 118",
             "wait 8",
             "expect page contains D3   =B3+1*C|3",
             "press backspace",
@@ -340,35 +340,35 @@ fn pointing_at_cells_in_a_formula() {
         "point",
         &[
             "settle max 300",
-            "click 440 104",
+            "click 440 118",
             "wait 5",
             "type =",
-            "click 200 104",
+            "click 200 118",
             "wait 8",
             "expect page contains E3   =B3|",
             "expect page contains Point",
-            "click 280 104",
+            "click 280 118",
             "wait 8",
             "expect page contains E3   =C3|",
             "type *",
-            "click 200 104",
+            "click 200 118",
             "wait 8",
             "press enter",
             "wait 10",
             "press up",
             "wait 8",
             "expect page contains E3   =C3*B3   = 546",
-            "click 440 126",
+            "click 440 140",
             "wait 5",
             "type =sum(",
-            "pointer 360 104 1",
+            "pointer 360 118 1",
             "wait 3",
-            "pointer 360 150 1",
+            "pointer 360 164 1",
             "wait 3",
-            "pointer 360 192 1",
+            "pointer 360 206 1",
             "wait 8",
             "expect page contains E4   =sum(D3:D7|",
-            "pointer 360 192 0",
+            "pointer 360 206 0",
             "wait 3",
             "press up",
             "wait 3",
@@ -382,15 +382,15 @@ fn pointing_at_cells_in_a_formula() {
             "type )",
             "press enter",
             "wait 10",
-            "click 440 126",
+            "click 440 140",
             "wait 8",
             "expect page contains E4   =SUM(D6)   = 608",
             "type abc",
-            "click 120 236",
+            "click 120 250",
             "wait 10",
             "expect page contains A9",
             "expect page lacks Point",
-            "click 440 126",
+            "click 440 140",
             "wait 8",
             "expect page contains E4   abc",
         ],
@@ -407,28 +407,28 @@ fn selecting_copying_and_undoing() {
         "select",
         &[
             "settle max 300",
-            "click 200 104",
+            "click 200 118",
             "down lshift",
-            "click 280 170",
+            "click 280 184",
             "up lshift",
             "wait 8",
             "expect page contains B3:C6",
             "press c ctrl",
             "wait 3",
             "expect page contains Copied",
-            "click 520 236",
+            "click 520 250",
             "wait 3",
             "press v ctrl",
             "wait 15",
             "expect page contains Pasted",
             "expect page contains F9:G12",
-            "click 520 236",
+            "click 520 250",
             "wait 5",
             "expect page contains F9   12",
-            "click 360 38",
+            "click 360 52",
             "wait 8",
             "expect page contains D1:D99",
-            "click 40 192",
+            "click 40 206",
             "wait 8",
             "expect page contains A7:Z7",
             "press delete",
@@ -445,7 +445,7 @@ fn selecting_copying_and_undoing() {
             "wait 15",
             "expect page contains Redone",
             "press x ctrl",
-            "drag 200 104 280 148",
+            "drag 200 118 280 162",
             "wait 8",
             "expect page contains B3:C5",
             "press v ctrl",
@@ -467,7 +467,7 @@ fn long_formulas_and_errors() {
         "errors",
         &[
             "settle max 300",
-            "click 440 104",
+            "click 440 118",
             &typed,
             "wait 5",
             "expect page contains D6+D7-1|",
@@ -476,19 +476,19 @@ fn long_formulas_and_errors() {
             "expect page contains E3   |=D3+D4",
             "press enter",
             "wait 10",
-            "click 440 104",
+            "click 440 118",
             "wait 5",
             "expect page contains 10,627.45",
-            "click 440 148",
+            "click 440 162",
             "type =1/0",
             "press enter",
             "type =foo(1)",
             "press enter",
             "wait 10",
-            "click 440 148",
+            "click 440 162",
             "wait 5",
             "expect page contains #DIV/0! division by zero",
-            "click 440 170",
+            "click 440 184",
             "wait 5",
             "expect page contains #NAME? no function of that name",
             "type =E7+1",
@@ -496,9 +496,157 @@ fn long_formulas_and_errors() {
             "type =E6",
             "press enter",
             "wait 10",
-            "click 440 192",
+            "click 440 206",
             "wait 5",
             "expect page contains #CYCLE! circular reference",
+        ],
+    );
+}
+
+/// Control chords type nothing (the owner saw Ctrl+C put a "c" in the
+/// cell: a window reports the chord's character too, and the host now
+/// keeps it from the program, SPEC §events); Ctrl+V pastes the cells copied
+/// in the sheet; after Esc it pastes the text of a paste, a tab starting
+/// the next cell (the drive's `down v ctrl`, `text`, `up v ctrl` are a
+/// paste as the window delivers it: the key, the text, then the key's
+/// release, held back until the text is in).
+#[test]
+fn chords_and_pasting() {
+    editing_script(
+        "paste",
+        &[
+            "settle max 300",
+            "press c ctrl",
+            "wait 5",
+            "expect page contains Copied",
+            "expect page lacks A1   c|",
+            "click 520 118",
+            "press v ctrl",
+            "wait 10",
+            "expect page contains F3   Estimate",
+            "press esc",
+            "wait 3",
+            "expect page contains Copy forgotten",
+            "click 520 140",
+            "down v ctrl",
+            "text 7\t8",
+            "up v ctrl",
+            "wait 12",
+            "expect page contains F4:G4   7",
+            "click 600 140",
+            "wait 5",
+            "expect page contains G4   8",
+            "press 1 ctrl shift",
+            "wait 8",
+            "expect page contains 8.00",
+            "expect page lacks G4   !",
+        ],
+    );
+}
+
+/// Ctrl+Plus inserts a row above the selection, the subtotal's range
+/// grows; Ctrl+Minus deletes it again; a click on a column letter and
+/// Ctrl+Plus inserts a column; Ctrl+Shift+A sorts the items by amount
+/// with the header kept; Ctrl+Shift+5 shows a percentage; each undone with
+/// Ctrl+Z.
+#[test]
+fn rows_columns_sorting_and_formats() {
+    editing_script(
+        "rows",
+        &[
+            "settle max 300",
+            "click 120 162",
+            "press 0x2e ctrl shift",
+            "wait 40",
+            "click 360 250",
+            "wait 5",
+            "expect page contains D9   =SUM(D3:D8)   = 1,518.35",
+            "click 120 162",
+            "press 0x2d ctrl",
+            "wait 40",
+            "click 360 228",
+            "wait 5",
+            "expect page contains D8   =SUM(D3:D7)   = 1,518.35",
+            "click 200 52",
+            "press 0x2e ctrl shift",
+            "wait 40",
+            "expect page contains Inserted 1 column",
+            "press z ctrl",
+            "wait 40",
+            "drag 360 96 120 206",
+            "wait 5",
+            "press a ctrl shift",
+            "wait 40",
+            "expect page contains kept as the header",
+            "click 120 118",
+            "wait 5",
+            "expect page contains A3   Delivery",
+            "press z ctrl",
+            "wait 40",
+            "click 280 206",
+            "press 5 ctrl shift",
+            "wait 8",
+            "expect page contains 4000%",
+            "press z ctrl",
+            "wait 10",
+        ],
+    );
+}
+
+/// The menu bar: a click on File opens it (still afterwards), Esc closes
+/// it; F10 and the arrows reach Format, Enter applies an item; File, Save
+/// as asks for a name on the content line and keeps the sheet under it;
+/// File, Open lists it, and a click on it opens it.
+#[test]
+fn menus_save_as_and_open() {
+    editing_script(
+        "menus",
+        &[
+            "settle max 300",
+            "expect terminal contains File",
+            "click 20 8",
+            "wait 5",
+            "expect terminal contains Save as",
+            "expect idle 30",
+            "press esc",
+            "wait 5",
+            "expect terminal lacks Save as",
+            "expect idle 30",
+            "click 280 206",
+            "press f10",
+            "press right",
+            "press right",
+            "press right",
+            "wait 3",
+            "expect terminal contains Percent",
+            "press down",
+            "press down",
+            "press enter",
+            "wait 8",
+            "expect page contains 4000%",
+            "press f10",
+            "press down",
+            "press down",
+            "press down",
+            "press enter",
+            "wait 5",
+            "expect page contains Save as",
+            "type Budget",
+            "press enter",
+            "wait 20",
+            "expect page contains Saved",
+            "expect terminal contains Budget",
+            "press n ctrl",
+            "press n ctrl",
+            "wait 20",
+            "expect page lacks Estimate",
+            "press o ctrl",
+            "wait 10",
+            "expect terminal contains Budget",
+            "click 30 24",
+            "wait 30",
+            "expect page contains Opened Budget",
+            "expect page contains Estimate",
         ],
     );
 }
