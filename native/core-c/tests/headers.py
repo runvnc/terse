@@ -14,6 +14,9 @@ def image(devs, rom=ROM, version=0, profile=1, pages=1, reserved=bytes(5), extra
         h += bytes([s, v])
     return h + rom + extra
 
+def words(*ws):
+    return b"".join(w.to_bytes(4, "little") for w in ws)
+
 CASES = {
     "ok-none": image([]),
     "ok-system-listed": image([(1, 0)]),
@@ -32,6 +35,17 @@ CASES = {
     "bad-long": image([], extra=b"\0"),
     "bad-profile": image([], profile=2),
     "bad-pages": image([], pages=0),
+    # SPEC §profile: ROM up to 262,144 bytes, RAM up to 96 pages.
+    "ok-rom-max": image([], rom=ROM.ljust(262144, b"\0")),
+    "bad-rom-over": image([], rom=ROM.ljust(262145, b"\0")),
+    "ok-pages-96": image([], pages=96),
+    "bad-pages-97": image([], pages=97),
+    "bad-pages-112": image([], pages=112),
+    "bad-pages-128": image([], pages=128),
+    # sp starts at the end of RAM (001C_0000h for 96 pages): its last byte
+    # is written and read back (exit 5Ah); the byte after faults.
+    "ok-ram-last": image([], pages=96, rom=words(0x05A00513, 0xFEA10FA3, 0xFFF14503, 0x10600893, 0x73)),
+    "fault-ram-past": image([], pages=96, rom=words(0x05A00513, 0x00A10023, 0x10600893, 0x73)),
 }
 for name, data in CASES.items():
     with open(os.path.join(out, name + ".terse"), "wb") as f:

@@ -435,7 +435,7 @@ received first is kept.
   once a subscribed feed is caught up (section 4.3), and after that
   whenever one of its program entries arrives, the client gets the image
   of the current version of each of the feed's programs that it does not
-  hold, whatever the article limit, if its size is at most 131,136 bytes
+  hold, whatever the article limit, if its size is at most 262,208 bytes
   (the largest image); not older versions. The user may turn this off. A
   client that does not run programs does not download them.
 - **Prefetch:** when the client stores an article blob through automatic

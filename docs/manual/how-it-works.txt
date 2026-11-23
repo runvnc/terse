@@ -87,8 +87,8 @@ programs: they link to them.
 
 ## The machine
 
-A program is a file of RISC-V machine code, at most 128 KiB, identified by
-the hash of its bytes. It runs in a machine with at most 1 MiB of RAM and a
+A program is a file of RISC-V machine code, at most 256 KiB, identified by
+the hash of its bytes. It runs in a machine with at most 768 KiB of RAM and a
 fixed amount of work per frame, and it reaches the outside world only
 through a handful of host devices. The same program, given the same inputs,
 does exactly the same thing on every host. A host that runs only the
@@ -121,8 +121,8 @@ M 368 16 L 384 16 L 376 32 Z
 |---|---|---|
 | grey | everything else | any load, store or fetch faults |
 | red mark | `0000_0000h` | address 0, so a null pointer faults |
-| blue bar | `0001_0000h` to `0001_0000h` + rom_len − 1 | ROM (1 to 131,072 bytes): read and execute |
-| green bar | `0010_0000h` to `0010_0000h` + 8,192 × ram_pages − 1 | RAM (8 KiB to 1 MiB): read, write and execute |
+| blue bar | `0001_0000h` to `0001_0000h` + rom_len − 1 | ROM (1 to 262,144 bytes): read and execute |
+| green bar | `0010_0000h` to `0010_0000h` + 8,192 × ram_pages − 1 | RAM (8 KiB to 768 KiB): read, write and execute |
 | blue triangle | `0001_0000h` | where `pc` starts |
 | orange triangle | end of RAM | where `sp` starts |
 

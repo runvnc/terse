@@ -11,8 +11,8 @@ const (
 	romLenAt    = 6
 	ramPagesAt  = 9
 	devicesAt   = 10
-	maxROM      = 131072
-	maxRAMPages = 128
+	maxROM      = 262144
+	maxRAMPages = 96
 	maxDevices  = 16
 	deviceSize  = 2
 	PageSize    = 8192

@@ -32,9 +32,9 @@ pub const KIND_RESERVED_255: u8 = 255;
 pub fn known_kind(kind: u8) -> bool {
     matches!(kind, KIND_ARTICLE | KIND_PROFILE | KIND_PROGRAM | KIND_DOCUMENT)
 }
-/// The largest Terse image (SPEC §image): a header, 16 device pairs and 128 KiB
+/// The largest Terse image (SPEC §image): a header, 16 device pairs and 256 KiB
 /// of ROM. Programs are downloaded automatically up to this size.
-pub const MAX_IMAGE: u32 = 32 + 2 * 16 + 131_072;
+pub const MAX_IMAGE: u32 = 32 + 2 * 16 + 262_144;
 pub const MAX_TITLE: usize = 120;
 /// Bytes before the title.
 const HEAD: usize = 109;

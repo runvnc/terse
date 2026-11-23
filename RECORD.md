@@ -160,7 +160,7 @@ and the `readings` lines say which were there:
 | The frame loop's `wait` (`core`) | no starvation | |
 | Any `wait` | | `starved` is given only if the starvation that was read suffices; a frame that a busy computer made late may be `blamed` instead |
 | `stall` | no stall | `memory` is never given |
-| A component's `cpu` | not known | `cpu-ms` and `blocked-ms` are `-` (the record does not state a reading it does not have); a memory stall of a quarter of a frame excuses it whatever its own time (as if it were blocked) |
+| A component's `cpu` | not known | `cpu-ms` and `blocked-ms` are `-` (the record does not state a reading it does not have); under a memory stall all of its own time is taken as time on a CPU, so the stall excuses no more of it than the stall lasted (a missing reading excuses nothing) |
 
 So a host on Linux with schedstats and PSI gives every verdict; on macOS
 (no memory stall) and on Windows (below) never `memory`. In a host with

@@ -273,8 +273,8 @@ int main(int argc, char **argv)
     if (!image) { fputs(usage, stderr); return 2; }
     FILE *f = fopen(image, "rb");
     if (!f) die(2, "cannot open %s", image);
-    uint8_t *file = malloc(131072 + 64 + 1);
-    size_t len = fread(file, 1, 131072 + 64 + 1, f);
+    uint8_t *file = malloc(262144 + 64 + 1);
+    size_t len = fread(file, 1, 262144 + 64 + 1, f);
     fclose(f);
     static M m;
     char err[256];
