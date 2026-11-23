@@ -21,7 +21,7 @@ use terse_net::{BlobStore, Consent, ContentService, FeedStore, Identity, Node, O
 
 const IMAGE: &[u8] = include_bytes!("../../../programs/sheet/sheet.terse");
 const ESTIMATE: &str = include_str!("../../../programs/sheet/estimate.tsv");
-const RAM_PAGES: u8 = 34;
+const RAM_PAGES: u8 = 38;
 /// The width of every column on the page, in screen units (sheet.c COLW).
 const COLW: u32 = 80;
 
@@ -276,8 +276,8 @@ fn the_example_is_an_estimate_with_a_chart() {
         assert_eq!(g.get(cell).map(String::as_str), Some(want), "{cell}: {g:?}");
     }
     assert_eq!(run.entry(), "A1   Estimate");
-    assert!(run.status().starts_with("An example: an estimate"), "{}", run.status());
-    assert!(run.status().contains("Bar chart of D3:D7"), "{}", run.status());
+    assert!(run.status().starts_with("An example estimate: column D is formulas"), "{}", run.status());
+    assert!(run.status().contains("= to start a formula"), "{}", run.status());
     // The chart: a figure across the page, then the labels and values.
     assert_eq!(run.figures(), vec![(640, 90)]);
     let text: String = run.layout().lines.iter().map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>() + "\n").collect();
@@ -307,8 +307,8 @@ fn formulas() {
         ("=2^10-ABS(-5)", "1,019"),
         ("=2^-2", "0.25"),
         ("=IF(A1>1,\"big\",\"small\")", "big"),
-        ("=IF(A1<>2,1)", "0"),
-        ("=A1=2", "1"),
+        ("=IF(A1<>2,1)", "FALSE"),
+        ("=A1=2", "TRUE"),
         ("=ROUND(1234.5,-2)", "1,200"),
         ("1,250.50", "1,250.50"),
         ("-7", "-7"),
@@ -344,26 +344,27 @@ fn formulas() {
     let k3 = k.goto("A3");
     let mut run = Run::new(&k3);
     run.finish(&k3);
-    assert_eq!(run.entry(), "A3   =A1+A2*2   9");
+    assert_eq!(run.entry(), "A3   =A1+A2*2   = 9");
     report("typing formulas", &run.used);
 }
 
 #[test]
 fn errors() {
     let entries = [
-        ("=1/0", "#DIV/0"),
-        ("=A1+1", "#DIV/0"),
-        ("=1+", "#ERR"),
-        ("=FOO(1)", "#ERR"),
-        ("=SUM(1", "#ERR"),
-        ("=A100", "#REF"),
-        ("=AA1", "#REF"),
-        ("=\"a\"+1", "#VALUE"),
-        ("=A1:A2", "#VALUE"),
-        ("=900000000000000*10", "#NUM"),
-        ("=2^0.5", "#NUM"),
+        ("=1/0", "#DIV/0!"),
+        ("=A1+1", "#DIV/0!"),
+        ("=1+", "#ERROR!"),
+        ("=FOO(1)", "#NAME?"),
+        ("=1*/2", "#ERROR!"),
+        ("=A100", "#REF!"),
+        ("=AA1", "#REF!"),
+        ("=\"a\"+1", "#VALUE!"),
+        ("=A1:A2", "#VALUE!"),
+        ("=900000000000000*10", "#NUM!"),
+        ("=2^0.5", "#NUM!"),
         ("=COUNT(A1:A11)", "0"),
-        ("=SUM(A13:A13)+1", "#CYCLE"),
+        ("=SUM(A13:A13)+1", "#CYCLE!"),
+        ("=total", "#NAME?"),
     ];
     let mut k = Keys::new().new_sheet();
     for (t, _) in &entries {
@@ -378,7 +379,7 @@ fn errors() {
     }
 }
 
-/// A cycle makes every cell of it, and every cell that uses one, #CYCLE;
+/// A cycle makes every cell of it, and every cell that uses one, #CYCLE!;
 /// breaking it brings the values back.
 #[test]
 fn cycles() {
@@ -387,7 +388,7 @@ fn cycles() {
     run.finish(&k);
     let g = run.grid();
     for c in ["A1", "B1", "C1", "D1"] {
-        assert_eq!(g[c], "#CYCLE", "{c}: {g:?}");
+        assert_eq!(g[c], "#CYCLE!", "{c}: {g:?}");
     }
     let k = k.goto("C1").enter("5");
     let mut run = Run::new(&k);
@@ -408,14 +409,15 @@ fn editing_an_entry() {
     let mut run = Run::new(&k2);
     run.finish(&k2);
     assert_eq!(run.cell("A1"), "3");
-    assert_eq!(run.entry(), "A1   =1+2   3");
-    // Enter keeps it and moves down; Tab moves right.
+    assert_eq!(run.entry(), "A1   =1+2   = 3");
+    // Enter keeps it and moves down; Tab moves right, and Enter after it
+    // goes to the next row where the Tabs began.
     let k3 = Keys { lines: k.lines.clone(), f: k.f }.press("enter").text("x").press("tab").text("y").press("enter");
     let mut run = Run::new(&k3);
     run.finish(&k3);
     let g = run.grid();
     assert_eq!((g["A1"].as_str(), g["A2"].as_str(), g["B2"].as_str()), ("152", "x", "y"));
-    assert_eq!(run.entry(), "B3   ");
+    assert_eq!(run.entry(), "A3   ");
     // Delete clears the selection; a new entry replaces the old.
     let k4 = Keys { lines: k3.lines.clone(), f: k3.f }.goto("A2").press("right shift").press("delete").goto("A1").enter("7");
     let mut run = Run::new(&k4);
@@ -426,6 +428,235 @@ fn editing_an_entry() {
     assert_eq!(g["A1"], "7");
 }
 
+/// Modes of an entry, as in other spreadsheets: typing replaces the cell
+/// and an arrow keeps the entry and moves; while a formula is typed, an
+/// arrow after an operator points at a cell (Shift grows a range) and puts
+/// its reference in; F2 switches to moving the text cursor; Esc restores
+/// the old content; the entry shows in its cell with the cursor; formulas
+/// are kept in capitals with their brackets closed.
+#[test]
+fn entering_and_pointing_with_keys() {
+    let base = Keys::new().new_sheet().enter("5").enter("7").enter("11").goto("A1");
+    // Typing replaces; Right keeps it and moves right.
+    let k = Keys { lines: base.lines.clone(), f: base.f }.text("8").press("right");
+    let mut run = Run::new(&k);
+    run.finish(&k);
+    assert_eq!((run.cell("A1").as_str(), run.entry().as_str()), ("8", "B1   "));
+    // Pointing: = then Down from B1... (A4: =, Up points at A3, Shift+Up
+    // grows it to A2:A3; + then Up points at A3 again).
+    let k = Keys { lines: base.lines.clone(), f: base.f }.goto("A4").text("=sum(").press("up").press("up shift").wait(1);
+    let mut run = Run::new(&k);
+    run.finish(&k);
+    assert_eq!(run.entry(), "A4   =sum(A2:A3|");
+    assert!(run.status().starts_with("Point"), "{}", run.status());
+    let k = Keys { lines: k.lines.clone(), f: k.f }.text(")+").press("up").press("enter");
+    let mut run = Run::new(&k);
+    run.finish(&k);
+    assert_eq!(run.cell("A4"), "29");
+    let k = Keys { lines: k.lines.clone(), f: k.f }.press("up");
+    let mut run = Run::new(&k);
+    run.finish(&k);
+    assert_eq!(run.entry(), "A4   =SUM(A2:A3)+A3   = 29");
+    // An open bracket is closed; a lowercase reference is read.
+    let k = Keys { lines: base.lines.clone(), f: base.f }.goto("B1").enter("=max(a1:a3").press("up");
+    let mut run = Run::new(&k);
+    run.finish(&k);
+    assert_eq!(run.entry(), "B1   =MAX(A1:A3)   = 11");
+    // F2: the arrows move the cursor; the entry shows in its cell too; Esc
+    // puts the old content back.
+    let k = Keys { lines: base.lines.clone(), f: base.f }.press("f2").press("left").text("0");
+    let mut run = Run::new(&k);
+    run.finish(&k);
+    assert_eq!(run.entry(), "A1   0|5");
+    assert!(run.status().starts_with("Edit"), "{}", run.status());
+    let shown: String = run.layout().lines.iter().flat_map(|l| &l.spans).filter(|s| (3200..3400).contains(&s.style.anchor)).map(|s| s.text.clone()).collect();
+    assert_eq!(shown, "05", "the cell shows the entry, each character an anchor");
+    let k = Keys { lines: k.lines.clone(), f: k.f }.press("esc");
+    let mut run = Run::new(&k);
+    run.finish(&k);
+    assert_eq!((run.cell("A1").as_str(), run.entry().as_str()), ("5", "A1   5"));
+    // F2 while typing a formula switches to the cursor; again, to pointing.
+    let k = Keys { lines: base.lines.clone(), f: base.f }.goto("C2").text("=1+").press("f2").press("left").text("0").press("right").press("f2").press("up").wait(1);
+    let mut run = Run::new(&k);
+    run.finish(&k);
+    assert_eq!(run.entry(), "C2   =10+C1|");
+    let k = Keys { lines: k.lines.clone(), f: k.f }.press("enter");
+    let mut run = Run::new(&k);
+    run.finish(&k);
+    assert_eq!(run.cell("C2"), "10");
+    // F4 cycles $ on the reference at the cursor.
+    let k = Keys { lines: base.lines.clone(), f: base.f }.goto("C1").text("=A1").press("f4").wait(1);
+    let mut run = Run::new(&k);
+    run.finish(&k);
+    assert_eq!(run.entry(), "C1   =$A$1|");
+    let k = Keys { lines: k.lines.clone(), f: k.f }.press("f4").press("f4").press("f4").press("f4");
+    let mut run = Run::new(&k);
+    run.finish(&k);
+    assert_eq!(run.entry(), "C1   =$A$1|");
+}
+
+/// Undo and redo cover entries, pastes, fills, clears and moves; a new
+/// change after an undo drops what was undone.
+#[test]
+fn undo_and_redo() {
+    let base = Keys::new().new_sheet().enter("1").enter("2").enter("=A1+A2");
+    let k = Keys { lines: base.lines.clone(), f: base.f }.press("z ctrl").wait(3);
+    let mut run = Run::new(&k);
+    run.finish(&k);
+    assert_eq!(run.cell("A3"), "");
+    assert_eq!(run.entry(), "A3   ", "the selection goes to the change undone");
+    let k = Keys { lines: k.lines.clone(), f: k.f }.press("z ctrl").press("z ctrl").wait(3).press("y ctrl").wait(3);
+    let mut run = Run::new(&k);
+    run.finish(&k);
+    assert_eq!((run.cell("A1").as_str(), run.cell("A2").as_str(), run.cell("A3").as_str()), ("1", "", ""));
+    // Ctrl+Shift+Z redoes too; then nothing is left to redo.
+    let k = Keys { lines: k.lines.clone(), f: k.f }.press("z ctrl shift").wait(3).press("y ctrl").wait(3).press("y ctrl").wait(3);
+    let mut run = Run::new(&k);
+    run.finish(&k);
+    assert_eq!(run.cell("A3"), "3");
+    assert!(run.status().starts_with("Nothing to redo"), "{}", run.status());
+    // A paste, a fill and a clear, undone one by one.
+    let k = Keys { lines: base.lines.clone(), f: base.f }
+        .goto("A1")
+        .press("down shift")
+        .press("down shift")
+        .press("c ctrl")
+        .goto("B1")
+        .press("b ctrl")
+        .wait(3)
+        .goto("B1")
+        .press("right shift")
+        .press("down shift")
+        .press("down shift")
+        .press("r ctrl")
+        .wait(3)
+        .press("delete")
+        .wait(3);
+    let mut run = Run::new(&k);
+    run.finish(&k);
+    assert_eq!((run.cell("B3").as_str(), run.cell("C3").as_str()), ("", ""));
+    let k = Keys { lines: k.lines.clone(), f: k.f }.press("z ctrl").wait(3);
+    let mut run = Run::new(&k);
+    run.finish(&k);
+    assert_eq!((run.cell("B3").as_str(), run.cell("C3").as_str()), ("3", "3"));
+    let k = Keys { lines: k.lines.clone(), f: k.f }.press("z ctrl").wait(3);
+    let mut run = Run::new(&k);
+    run.finish(&k);
+    assert_eq!((run.cell("B3").as_str(), run.cell("C3").as_str()), ("3", ""));
+    let k = Keys { lines: k.lines.clone(), f: k.f }.press("z ctrl").wait(3);
+    let mut run = Run::new(&k);
+    run.finish(&k);
+    assert_eq!((run.cell("B1").as_str(), run.cell("B3").as_str()), ("", ""));
+    // A new entry after an undo: nothing to redo.
+    let k = Keys { lines: k.lines.clone(), f: k.f }.goto("D1").enter("9").press("y ctrl").wait(3);
+    let mut run = Run::new(&k);
+    run.finish(&k);
+    assert!(run.status().starts_with("Nothing to redo"), "{}", run.status());
+    assert_eq!(run.cell("B1"), "");
+}
+
+/// Copying keeps $ references and moves the others; a cut and paste
+/// moves the cells (their formulas unchanged); one cell pastes into a
+/// whole selected range.
+#[test]
+fn absolute_references_cut_and_paste_into_a_range() {
+    let k = Keys::new()
+        .new_sheet()
+        .enter("2")
+        .enter("3")
+        .goto("B1")
+        .enter("=A1*$A$1")
+        .goto("B1")
+        .press("c ctrl")
+        .goto("C2")
+        .press("b ctrl")
+        .wait(3);
+    let mut run = Run::new(&k);
+    run.finish(&k);
+    assert_eq!(run.entry(), "C2   =B2*$A$1   = 0");
+    let k = Keys { lines: k.lines.clone(), f: k.f }.goto("B2").press("b ctrl").wait(3).goto("B2");
+    let mut run = Run::new(&k);
+    run.finish(&k);
+    assert_eq!(run.entry(), "B2   =A2*$A$1   = 6");
+    // A$1 and $A1.
+    let k = Keys::new().new_sheet().enter("=A$1+$A1").press("up").press("c ctrl").goto("C3").press("b ctrl").wait(3).goto("C3");
+    let mut run = Run::new(&k);
+    run.finish(&k);
+    assert_eq!(run.entry(), "C3   =C$1+$A3   = 0");
+    // Cut and paste: moved, the source emptied, the formula as it was.
+    let k = Keys::new().new_sheet().enter("4").enter("=A1*2").press("up").press("x ctrl").goto("C5").press("b ctrl").wait(4);
+    let mut run = Run::new(&k);
+    run.finish(&k);
+    assert_eq!((run.cell("A2").as_str(), run.cell("C5").as_str()), ("", "8"));
+    assert_eq!(run.entry(), "C5   =A1*2   = 8");
+    // One cell into a range.
+    let k = Keys::new().new_sheet().enter("7").press("up").press("c ctrl").goto("B1").press("down shift").press("down shift").press("b ctrl").wait(4);
+    let mut run = Run::new(&k);
+    run.finish(&k);
+    assert_eq!((run.cell("B1").as_str(), run.cell("B2").as_str(), run.cell("B3").as_str()), ("7", "7", "7"));
+}
+
+/// The functions and operators people expect, booleans, & and typed TRUE.
+#[test]
+fn more_functions() {
+    let entries = [
+        ("4", "4"),
+        ("x", "x"),
+        ("TRUE", "TRUE"),
+        ("=COUNTA(A1:A3)", "3"),
+        ("=COUNT(A1:A3)", "1"),
+        ("=AND(A1>3,A3)", "TRUE"),
+        ("=OR(A1>5,FALSE)", "FALSE"),
+        ("=NOT(A1=4)", "FALSE"),
+        ("=INT(-2.5)", "-3"),
+        ("=INT(7.9)", "7"),
+        ("=\"n=\"&A1&A2", "n=4x"),
+        ("=A1/8&\"!\"", "0.5!"),
+        ("=IF(A3,\"yes\",\"no\")", "yes"),
+        ("=A3+1", "2"),
+        ("=SUM(A1:A3)", "4"),
+        ("=12.5%*8", "1"),
+    ];
+    let mut k = Keys::new().new_sheet();
+    for (t, _) in &entries {
+        k = k.enter(t);
+    }
+    let k = k.goto("A1");
+    let mut run = Run::new(&k);
+    run.finish(&k);
+    let g = run.grid();
+    for (i, (t, want)) in entries.iter().enumerate() {
+        let name = format!("A{}", i + 1);
+        assert_eq!(g.get(&name).map(String::as_str).unwrap_or(""), *want, "{name} = {t}: {g:?}");
+    }
+}
+
+/// Ctrl+arrows go to the edges of the filled cells, Ctrl+A selects the
+/// sheet, Ctrl+End the last cell used.
+#[test]
+fn moving_by_blocks() {
+    let k = Keys::new().new_sheet().enter("1").enter("2").enter("3").goto("A1").press("down ctrl");
+    let mut run = Run::new(&k);
+    run.finish(&k);
+    assert!(run.entry().starts_with("A3 "), "{}", run.entry());
+    let k = Keys { lines: k.lines.clone(), f: k.f }.press("down ctrl");
+    let mut run = Run::new(&k);
+    run.finish(&k);
+    assert!(run.entry().starts_with("A99 "), "{}", run.entry());
+    let k = Keys { lines: k.lines.clone(), f: k.f }.press("up ctrl").press("up ctrl").press("down ctrl shift");
+    let mut run = Run::new(&k);
+    run.finish(&k);
+    assert!(run.entry().starts_with("A1:A3 "), "{}", run.entry());
+    let k = Keys { lines: k.lines.clone(), f: k.f }.press("a ctrl");
+    let mut run = Run::new(&k);
+    run.finish(&k);
+    assert!(run.entry().starts_with("A1:Z99 "), "{}", run.entry());
+    let k = Keys { lines: k.lines.clone(), f: k.f }.goto("C7").enter("x").press("home ctrl").press("end ctrl");
+    let mut run = Run::new(&k);
+    run.finish(&k);
+    assert!(run.entry().starts_with("C7 "), "{}", run.entry());
+}
+
 /// The selection: keys and the pointer, the range, the box on the vector
 /// display at the column and row edges the page laid out.
 #[test]
@@ -433,15 +664,17 @@ fn selecting_with_keys_and_the_pointer() {
     let k = Keys::new().goto("B3").press("down shift").press("right shift");
     let mut run = Run::new(&k);
     run.finish(&k);
-    assert_eq!(run.entry(), "B3:C4   18.75");
-    // The box is around C4 (the moving end), between the column lines
-    // at 2 × 80 and 3 × 80 and on the row's edges from locate.
+    // The active cell stays where the range began, as in other
+    // spreadsheets: typing goes there.
+    assert_eq!(run.entry(), "B3:C4   12");
+    // The box is around B3, between the column lines at 2 × 80 and 3 × 80
+    // and on the row's edges from locate.
     let l = run.layout();
+    let row3 = l.lines.iter().find(|l| l.spans.iter().any(|s| s.style.anchor == 1002)).unwrap();
     let row4 = l.lines.iter().find(|l| l.spans.iter().any(|s| s.style.anchor == 1003)).unwrap();
-    let row5 = l.lines.iter().find(|l| l.spans.iter().any(|s| s.style.anchor == 1004)).unwrap();
     let (x0, y0, x1, y1) = run.sel_box().expect("a selection box");
-    assert_eq!((x0, x1), (3 * COLW as i16, 4 * COLW as i16), "C is the 4th column of the page");
-    assert_eq!((y0 as u32, y1 as u32), (row4.y - 3, row5.y - 3));
+    assert_eq!((x0, x1), (2 * COLW as i16, 3 * COLW as i16), "B is the 3rd column of the page");
+    assert_eq!((y0 as u32, y1 as u32), (row3.y - 3, row4.y - 3));
     // A click on D6 selects it; a drag to E7 selects D6:E7.
     let row6 = l.lines.iter().find(|l| l.spans.iter().any(|s| s.style.anchor == 1005)).unwrap().y;
     let row7 = l.lines.iter().find(|l| l.spans.iter().any(|s| s.style.anchor == 1006)).unwrap().y;
@@ -451,7 +684,8 @@ fn selecting_with_keys_and_the_pointer() {
         .at(&format!("pointer {} {} 0", 5 * COLW + 10, row7 + 2));
     let mut run = Run::new(&k2);
     run.finish(&k2);
-    assert_eq!(run.entry(), "D6:E7   ");
+    // (the active cell D6, where the drag began, holds a formula)
+    assert_eq!(run.entry(), "D6:E7   =B6*C6   = 608");
     // The selection's row numbers and column letters are in its colour.
     let l = run.layout();
     let accent = [26, 100, 210];
@@ -476,12 +710,12 @@ fn copy_paste_and_fill() {
         .goto("B3")
         .press("c ctrl")
         .goto("D5")
-        .press("y ctrl");
+        .press("b ctrl");
     let mut run = Run::new(&k);
     run.finish(&k);
     let g = run.grid();
     assert_eq!((g["B1"].as_str(), g["B2"].as_str(), g["B3"].as_str()), ("10", "20", "30"));
-    assert_eq!(run.entry(), "D5   =C5*10   0");
+    assert_eq!(run.entry(), "D5   =C5*10   = 0");
     // Fill right, and a copy that moves a reference off the sheet.
     let k2 = Keys { lines: k.lines.clone(), f: k.f }
         .goto("A1")
@@ -491,13 +725,13 @@ fn copy_paste_and_fill() {
         .goto("B2")
         .press("c ctrl")
         .goto("A9")
-        .press("y ctrl");
+        .press("v ctrl");
     let mut run = Run::new(&k2);
     run.finish(&k2);
     let g = run.grid();
     assert_eq!((g["B1"].as_str(), g["C1"].as_str()), ("1", "1"));
-    assert_eq!(g["A9"], "#REF");
-    assert_eq!(run.entry(), "A9   =#REF*10");
+    assert_eq!(g["A9"], "#REF!");
+    assert_eq!(run.entry(), "A9   =#REF!*10   #REF! a reference outside the sheet (A1 to Z99)");
 }
 
 #[test]

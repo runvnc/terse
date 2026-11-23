@@ -4,7 +4,7 @@
 //! The identity (`identity.key`), the subscription list (`subscriptions`),
 //! the nicknames (`nicknames`) and the relay list (`relays`) live in the
 //! config directory, `--config` (default `$XDG_CONFIG_HOME/terse`,
-//! else `~/.config/terse`). Feed entries are kept with the blobs, in
+//! else `~/.config/terse`; `terse_dirs` for macOS and Windows). Feed entries are kept with the blobs, in
 //! `<store>/feeds`.
 
 use std::path::PathBuf;
@@ -346,14 +346,31 @@ fn name_of(node: &Node, key: &FeedKey) -> Option<String> {
     node.display_name(key).map(|(n, _)| printable(&n, false))
 }
 
+/// A feed key shortened as the reader shows it: the first and last six
+/// hex digits.
+fn short_key(key: &FeedKey) -> String {
+    let hex = to_hex(key);
+    format!("{}…{}", &hex[..6], &hex[58..])
+}
+
 fn now() -> u32 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs().min(u32::MAX as u64) as u32)
 }
 
+/// `terse feed publish <file> --title <t> [--reply-to <id>] [--dry-run]
+/// [--force]`: an article entry (NETWORK 4.2). Each `terse:` link of the
+/// article is listed first, with what this host holds, what is uploaded
+/// with it and what a relay keeps ([`crate::links`]); an article that links
+/// to a blob of the user's feed that this host does not hold is refused
+/// unless `--force`.
+/// `--dry-run` lists them and publishes nothing.
 fn publish(args: &[String]) -> Result<ExitCode, String> {
-    let args = Args::parse(args, &[])?;
-    known(&args, &["--title", "--reply-to", "--program", "--name"])?;
+    let args = Args::parse(args, &["--dry-run", "--force"])?;
+    known(&args, &["--title", "--reply-to", "--program", "--name", "--dry-run", "--force"])?;
     if args.has("--program") {
+        if args.has("--dry-run") || args.has("--force") {
+            return Err("--dry-run and --force are for articles, not --program".into());
+        }
         return publish_program(&args);
     }
     let data = read(args.one_positional()?)?;
@@ -368,10 +385,80 @@ fn publish(args: &[String]) -> Result<ExitCode, String> {
         Some(id) => Some(parse_hex(id).ok_or(format!("{id} is not a blob ID (64 hex digits)"))?),
         None => None,
     };
-    let identity = load_identity(&args)?;
-    let relays = relay_urls(&args, true)?;
+    let dry_run = args.has("--dry-run");
+    // A dry run needs no identity (without one, nothing counts as yours)
+    // and asks no relay.
+    let identity = if dry_run { load_identity(&args).ok() } else { Some(load_identity(&args)?) };
+    let relays = if dry_run { Vec::new() } else { relay_urls(&args, true)? };
     let mut node = open_node(&args, &relays)?;
-    node.set_identity(identity);
+    let own = identity.as_ref().map(Identity::feed_key);
+    let linked = crate::links::survey(&data, &node, own.as_ref());
+    let names: std::collections::HashMap<FeedKey, String> = linked
+        .iter()
+        .filter_map(|l| match l.keep {
+            crate::links::Keep::Others { feed, .. } => Some((feed, name_of(&node, &feed).unwrap_or_else(|| format!("feed {}", short_key(&feed))))),
+            _ => None,
+        })
+        .collect();
+    let name = |key: &FeedKey| names.get(key).cloned().unwrap_or_default();
+    // The user's own parts (named by an entry of their feed) that this host
+    // does not hold cannot go up with the article.
+    let missing: Vec<String> = linked
+        .iter()
+        .filter(|l| matches!(l.keep, crate::links::Keep::Own { .. }) && !l.held)
+        .map(|l| l.link())
+        .collect();
+    let refusal = (!missing.is_empty() && !args.has("--force")).then(|| {
+        let (what, them, it) = if missing.len() == 1 { ("an article", "it", "it is") } else { ("articles", "them", "they are") };
+        format!(
+            "not published: the article links to {what} of your feed that this host does not hold: {}, so {it} not \
+             uploaded with it. Get {them} first (terse get <id>), or give --force if your relays hold {them}",
+            missing.join(", ")
+        )
+    });
+    // A blob held here that no entry names goes up, but a relay that drops
+    // such blobs drops it after a while.
+    for l in linked.iter().filter(|l| l.keep == crate::links::Keep::Unnamed) {
+        eprintln!(
+            "terse: warning: {} is named by no entry: a relay that drops blobs no entry names (NETWORK.md 5.3) will \
+             drop it and the link will lead nowhere there; to keep it, publish it as an article of its own \
+             (terse feed publish <file> --title <t>)",
+            l.link()
+        );
+    }
+    if dry_run || refusal.is_some() {
+        let would = if dry_run { "would be uploaded" } else { "not uploaded" };
+        for l in &linked {
+            println!("{}", l.line(l.upload.map(|_| would), name));
+        }
+        if let Some(refusal) = refusal {
+            return Err(refusal);
+        }
+        println!("dry run: nothing uploaded or published");
+        return Ok(ExitCode::SUCCESS);
+    }
+    // What is the user's own (or named by nothing) goes up first, so that
+    // the article's links lead somewhere from the moment it is published.
+    let mut lines = Vec::new();
+    for l in &linked {
+        let uploaded = match l.upload.map(|id| node.store().read(&id)) {
+            None => None,
+            Some(Ok(Some(bytes))) => Some(match (node.publish(&bytes), node.take_delivery()) {
+                (Done::Put(_), d) if d.is_empty() => "stored here only (no relay)".to_string(),
+                (Done::Put(_), d) => {
+                    let taken = d.iter().filter(|(_, d)| *d == terse_net::Delivery::Accepted).count();
+                    format!("uploaded now (taken by {taken} of {} relays)", d.len())
+                }
+                _ => "upload failed (no relay took it)".to_string(),
+            }),
+            Some(_) => Some("not uploaded (it could not be read here)".to_string()),
+        };
+        lines.push(l.line(uploaded.as_deref(), name));
+    }
+    for line in lines {
+        println!("{line}");
+    }
+    node.set_identity(identity.expect("not a dry run"));
     let done = node.publish_article(&Draft { data, title, reply_to, time: now() });
     crate::say_delivery(&mut node);
     match done {

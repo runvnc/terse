@@ -49,6 +49,18 @@
 //!   and addresses (NETWORK 5.3, "Its own policy"); what a denied feed or
 //!   blob left in the store is removed in batches ([`Relay::purge`]).
 //!   Denials are this relay's only: peers do not pass them on.
+//! - **Subscriptions per connection** (`subscriptions_per_connection`): a
+//!   limited connection's subscribe beyond that many feeds is refused.
+//!
+//! Bounds (NETWORK 5.3, "The reference relay's bounds"): what it keeps in
+//! memory and on disk grows with what it keeps, never with the traffic it
+//! has seen. The arrival log is compacted to the entries still kept once
+//! it holds more than twice as many records as there are entries kept, plus
+//! [`ARRIVALS_SLACK`] ([`Relay::compact`], a batch at a time like
+//! [`Relay::collect`]); the table of addresses has a fixed size; a peer
+//! link is subscribed only to feeds some client subscribes to now; gets
+//! asked of the peers are at most [`PULLS_PER_CONNECTION`] per connection
+//! and [`MAX_PULLS`] in all. [`Relay::bounds`] says where each stands.
 
 pub mod admin;
 pub mod deny;
@@ -74,7 +86,7 @@ use terse_net::profile::{self, Document};
 use terse_net::protocol::{self, MAX_FIND_RESULTS, Malformed, Reply, Request, SCOPE_ENTRIES, SCOPE_FEEDS, SCOPE_PROGRAMS, status};
 use terse_net::relay::websocket_config;
 use terse_net::tls::{self, ServerConfig, Stream};
-use terse_net::timeline::Arrivals;
+use terse_net::timeline::{self, Arrivals, Compaction};
 use terse_net::{BlobStore, FeedKey, FeedStore};
 use tungstenite::Message;
 
@@ -106,6 +118,19 @@ pub const COLLECT_BATCH: usize = 64;
 /// the lock (by the relay's clock): it ends after the first removal that
 /// takes it past this.
 pub const COLLECT_BATCH_TIME: Duration = Duration::from_millis(2);
+/// The arrival log is compacted once it holds more records than twice the
+/// entries kept plus this.
+pub const ARRIVALS_SLACK: usize = 1024;
+/// Most records of the arrival log looked at in one hold of its lock (a
+/// batch also ends after [`COLLECT_BATCH_TIME`] on the relay's clock).
+pub const COMPACT_BATCH: usize = 1024;
+/// Subscriptions a limited connection may hold in [`Policy::public`].
+pub const SUBSCRIPTIONS_PER_CONNECTION: usize = 1024;
+/// Gets asked of the peers for one connection at once; more are answered
+/// from the store only.
+pub const PULLS_PER_CONNECTION: usize = 16;
+/// Gets asked of the peers at once, for all connections.
+pub const MAX_PULLS: usize = 1024;
 /// How often the maintenance thread runs.
 const TICK: Duration = Duration::from_millis(100);
 /// How often the write list's and the deny list's files are checked for
@@ -152,6 +177,8 @@ pub struct Policy {
     pub new_feeds_total: Option<limits::Rate>,
     pub connections_per_address: Option<usize>,
     pub max_connections: Option<usize>,
+    /// Feeds a limited connection may be subscribed to at once.
+    pub subscriptions_per_connection: Option<usize>,
     /// Addresses whose rates are kept at once; more share one.
     pub table_size: usize,
     /// The write list's file.
@@ -190,6 +217,7 @@ impl Policy {
             new_feeds_total: None,
             connections_per_address: None,
             max_connections: None,
+            subscriptions_per_connection: None,
             table_size: 8192,
             writers: None,
             deny: None,
@@ -221,6 +249,7 @@ impl Policy {
             new_feeds_total: Some(Rate::new(60.0, hour)),
             connections_per_address: Some(32),
             max_connections: Some(PUBLIC_MAX_CONNECTIONS),
+            subscriptions_per_connection: Some(SUBSCRIPTIONS_PER_CONNECTION),
             status_every: Some(Duration::from_secs(600)),
             ..Policy::unlimited(DEFAULT_FEED_CAP)
         }
@@ -253,6 +282,7 @@ pub enum Reason {
     Finds,
     WaitingRoom,
     Connections,
+    Subscriptions,
     /// The deny list: an entry of a denied feed, or naming a denied blob.
     DeniedFeed,
     /// A put of a denied blob.
@@ -261,7 +291,7 @@ pub enum Reason {
     DeniedAddress,
 }
 
-const REASONS: [(Reason, &str); 12] = [
+const REASONS: [(Reason, &str); 13] = [
     (Reason::FeedFull, "feed-full"),
     (Reason::RelayFull, "relay-full"),
     (Reason::NotWriter, "not-writer"),
@@ -271,6 +301,7 @@ const REASONS: [(Reason, &str); 12] = [
     (Reason::Finds, "finds"),
     (Reason::WaitingRoom, "waiting-room"),
     (Reason::Connections, "connections"),
+    (Reason::Subscriptions, "subscriptions"),
     (Reason::DeniedFeed, "denied-feed"),
     (Reason::DeniedBlob, "denied-blob"),
     (Reason::DeniedAddress, "denied-address"),
@@ -315,6 +346,53 @@ struct State {
     conns: HashMap<u64, Conn>,
     pulls: HashMap<u64, Pull>,
     next_pull: u64,
+    /// For each feed clients (not peers) subscribe to, how many of them:
+    /// a peer link is subscribed to these feeds only.
+    wanted: HashMap<FeedKey, usize>,
+}
+
+impl State {
+    /// Removes a connection, its subscriptions and the gets it is waiting
+    /// for the peers for.
+    fn remove(&mut self, id: u64) {
+        let Some(c) = self.conns.remove(&id) else { return };
+        if !c.peer.load(Ordering::Relaxed) {
+            for feed in c.feeds {
+                self.unwant(&feed);
+            }
+        }
+        let waiting: Vec<u64> = self.pulls.iter().filter(|(_, p)| p.client == id).map(|(&p, _)| p).collect();
+        for p in waiting {
+            self.end_pull(p);
+        }
+    }
+
+    /// One client fewer subscribes to `feed`: when none does, the peer
+    /// links are unsubscribed from it (NETWORK 5.2).
+    fn unwant(&mut self, feed: &FeedKey) {
+        let Some(n) = self.wanted.get_mut(feed) else { return };
+        *n -= 1;
+        if *n > 0 {
+            return;
+        }
+        self.wanted.remove(feed);
+        for c in self.conns.values_mut().filter(|c| c.peer.load(Ordering::Relaxed)) {
+            if c.peer_feeds.remove(feed) {
+                c.next_req = c.next_req.wrapping_add(1);
+                push(c, protocol::encode_unsubscribe(c.next_req, feed));
+            }
+        }
+    }
+
+    /// Ends a pull: forgets it, and the requests sent for it to peers that
+    /// have not answered.
+    fn end_pull(&mut self, pull: u64) -> Option<Pull> {
+        let p = self.pulls.remove(&pull)?;
+        for c in self.conns.values_mut().filter(|c| !c.pulls_sent.is_empty()) {
+            c.pulls_sent.retain(|_, &mut q| q != pull);
+        }
+        Some(p)
+    }
 }
 
 /// The latest profile entry of a feed (NETWORK 4.6, 4.7).
@@ -351,7 +429,7 @@ pub struct Relay {
     frozen: Mutex<Option<(Instant, u64)>>,
     /// Pings sent on connections (tests).
     pings: AtomicUsize,
-    refused: [AtomicUsize; 12],
+    refused: [AtomicUsize; REASONS.len()],
     /// Waiting blobs removed, and their bytes; entries dropped for a
     /// feed's limits.
     collected: AtomicU64,
@@ -366,6 +444,15 @@ pub struct Relay {
     profiles: Mutex<HashMap<FeedKey, Profile>>,
     /// The order in which entries were stored.
     arrivals: Mutex<Arrivals>,
+    /// Entries kept (on disk), for the arrival log's bound.
+    kept_entries: AtomicUsize,
+    /// The arrival log's compaction under way, and whether its copy has
+    /// reached the end of the log.
+    compaction: Mutex<Option<(Compaction, bool)>>,
+    compactions: AtomicU64,
+    /// After a failed compaction, none is started before this (the
+    /// relay's clock).
+    compact_retry: Mutex<Option<Instant>>,
     /// Messages written to peer connections, by type.
     peer_messages: [AtomicUsize; 256],
     /// Messages received on every connection, by type (for counting round
@@ -386,6 +473,32 @@ pub struct Connection {
     /// When this connection's recent finds were answered (the relay's
     /// clock: [`Relay::instant`]).
     finds: Mutex<VecDeque<Instant>>,
+}
+
+impl Connection {
+    /// Takes the messages queued for this connection (what its thread
+    /// would send next: tests).
+    pub fn take_queued(&self) -> Vec<Vec<u8>> {
+        self.queue.try_iter().collect()
+    }
+}
+
+/// What one step of [`Relay::compact`] did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Compacting {
+    /// Nothing: the arrival log is within its bound.
+    Idle,
+    /// A compaction began (its copy was made, empty).
+    Started,
+    /// This many records of the log were looked at under one hold of its
+    /// lock, and the kept ones copied.
+    Copied(usize),
+    /// The copy, complete so far, was synced (without the lock).
+    Synced,
+    /// The copy replaced the log: its records before and after.
+    Done { before: usize, after: usize },
+    /// A file could not be written; the log stays as it was.
+    Failed,
 }
 
 /// What to send back for a message.
@@ -425,19 +538,35 @@ impl Relay {
         }
         // Entries stored without an arrival record (by an older relay) are
         // recorded now. A failure only leaves them out of searches.
+        // The copy of a compaction a crash stopped is not the log.
         let mut arrivals = Arrivals::beside_blobs(blobs.dir());
+        if let Err(e) = arrivals.remove_leftover() {
+            eprintln!("terse-relay: removing an unfinished copy of the arrival log: {e}");
+        }
+        // A torn record at the end would put every record after it out of
+        // step.
+        if let Err(e) = arrivals.cut_torn() {
+            eprintln!("terse-relay: cutting a torn record off the arrival log: {e}");
+        }
         let logged: HashSet<(FeedKey, u32)> = arrivals.order().map(|o| o.iter().copied().collect()).unwrap_or_default();
         let mut stored = feeds.feeds().unwrap_or_default();
         stored.sort();
+        let mut kept = 0;
         for feed in stored {
             for seq in feeds.seqs(&feed).unwrap_or_default() {
+                kept += 1;
                 if !logged.contains(&(feed, seq)) {
                     let _ = arrivals.record(&feed, seq);
                 }
             }
         }
+        drop(logged);
         let mut relay = Relay {
             arrivals: Mutex::new(arrivals),
+            kept_entries: AtomicUsize::new(kept),
+            compaction: Mutex::new(None),
+            compactions: AtomicU64::new(0),
+            compact_retry: Mutex::new(None),
             blobs,
             feeds,
             cap,
@@ -547,11 +676,22 @@ impl Relay {
         };
         {
             let mut state = self.state.lock().unwrap();
+            let mut ended = Vec::new();
             for c in state.conns.values_mut() {
-                c.feeds.retain(|f| !feeds.contains(f));
+                let denied: Vec<FeedKey> = c.feeds.iter().filter(|f| feeds.contains(f)).copied().collect();
+                for f in denied {
+                    c.feeds.remove(&f);
+                    if !c.peer.load(Ordering::Relaxed) {
+                        ended.push(f);
+                    }
+                }
                 if c.addr.is_some_and(|ip| addresses.iter().any(|r| r.contains(ip))) {
                     c.dropped.store(true, Ordering::Relaxed);
                 }
+            }
+            // The peer links follow: no client wants these feeds now.
+            for f in ended {
+                state.unwant(&f);
             }
         }
         self.profiles.lock().unwrap().retain(|f, _| !feeds.contains(f));
@@ -868,6 +1008,185 @@ impl Relay {
         (done, !(done == ids.len() && ids.len() < COLLECT_BATCH))
     }
 
+    /// Entries kept now.
+    pub fn kept_entries(&self) -> usize {
+        self.kept_entries.load(Ordering::Relaxed)
+    }
+
+    /// The most records the arrival log holds before it is compacted:
+    /// twice the entries kept, plus [`ARRIVALS_SLACK`].
+    pub fn arrivals_bound(&self) -> usize {
+        2 * self.kept_entries() + ARRIVALS_SLACK
+    }
+
+    /// The arrival log's records (each entry once) and its file's bytes.
+    pub fn arrivals(&self) -> (usize, u64) {
+        let mut a = self.arrivals.lock().unwrap();
+        let records = a.order().map_or(0, <[_]>::len);
+        (records, a.file_bytes())
+    }
+
+    /// Compactions of the arrival log finished since the relay started.
+    pub fn compactions(&self) -> u64 {
+        self.compactions.load(Ordering::Relaxed)
+    }
+
+    /// Compacts the arrival log if it is over its bound
+    /// ([`Self::arrivals_bound`]), a batch at a time like [`Self::collect`];
+    /// returns its records before and after, if it was compacted.
+    pub fn compact(&self) -> Option<(usize, usize)> {
+        loop {
+            match self.compact_batch() {
+                Compacting::Idle | Compacting::Failed => return None,
+                Compacting::Done { before, after } => return Some((before, after)),
+                // Give the connections waiting for the lock their turn.
+                Compacting::Copied(_) => thread::sleep(Duration::from_millis(1)),
+                Compacting::Started | Compacting::Synced => {}
+            }
+        }
+    }
+
+    /// One step of [`Self::compact`]. Copying holds the arrival log's lock
+    /// for at most [`COMPACT_BATCH`] records, and none after the first
+    /// once [`COLLECT_BATCH_TIME`] has passed on the relay's clock; syncing
+    /// the copy holds no lock. The copy replaces the log under the lock
+    /// in the step that copies the last records, if every record before
+    /// those was synced; it is synced again after.
+    pub fn compact_batch(&self) -> Compacting {
+        let mut slot = self.compaction.lock().unwrap();
+        let Some((c, at_end)) = slot.as_mut() else {
+            if self.compact_retry.lock().unwrap().is_some_and(|t| self.instant() < t) {
+                return Compacting::Idle;
+            }
+            let mut a = self.arrivals.lock().unwrap();
+            let Ok(records) = a.order().map(<[_]>::len) else { return Compacting::Failed };
+            if records <= self.arrivals_bound() {
+                return Compacting::Idle;
+            }
+            return match a.start_compaction() {
+                Ok(c) => {
+                    *slot = Some((c, false));
+                    Compacting::Started
+                }
+                Err(e) => {
+                    drop(a);
+                    self.abandon_compaction(&mut slot, e)
+                }
+            };
+        };
+        if *at_end && !c.synced() {
+            return match c.sync() {
+                Ok(()) => Compacting::Synced,
+                Err(e) => self.abandon_compaction(&mut slot, e),
+            };
+        }
+        let synced = c.synced();
+        let mut a = self.arrivals.lock().unwrap();
+        let started = self.instant();
+        let copied = c.copy(&mut a, COMPACT_BATCH, |feed, seq| self.feeds.contains(feed, seq), || {
+            self.instant().duration_since(started) >= COLLECT_BATCH_TIME
+        });
+        let (looked, end) = match copied {
+            Ok(r) => r,
+            Err(e) => return self.abandon_compaction(&mut slot, e),
+        };
+        *at_end = end;
+        if !(end && synced) {
+            return Compacting::Copied(looked);
+        }
+        let (c, _) = slot.take().unwrap();
+        let before = c.before;
+        match c.finish(&mut a) {
+            Ok((file, dir)) => {
+                let after = a.order().map_or(0, <[_]>::len);
+                drop(a);
+                drop(slot);
+                self.compactions.fetch_add(1, Ordering::Relaxed);
+                if let Err(e) = timeline::sync_finished(&file, &dir) {
+                    eprintln!("terse-relay: syncing the compacted arrival log: {e}");
+                }
+                Compacting::Done { before, after }
+            }
+            Err(e) => {
+                let _ = a.remove_leftover();
+                drop(a);
+                self.abandon_compaction(&mut slot, e)
+            }
+        }
+    }
+
+    /// Gives a compaction up after an error; another is not started for
+    /// a minute.
+    fn abandon_compaction(&self, slot: &mut Option<(Compaction, bool)>, e: std::io::Error) -> Compacting {
+        eprintln!("terse-relay: compacting the arrival log, tried again in a minute: {e}");
+        if let Some((c, _)) = slot.take() {
+            c.abandon();
+        }
+        *self.compact_retry.lock().unwrap() = Some(self.instant() + Duration::from_secs(60));
+        Compacting::Failed
+    }
+
+    /// Where each structure that could grow stands against its bound
+    /// (NETWORK 5.3, "The reference relay's bounds"), one per line, for the
+    /// status file.
+    pub fn bounds(&self) -> String {
+        let p = &self.policy;
+        let or_none = |v: Option<usize>| v.map_or("none".to_string(), |v| v.to_string());
+        let (records, log_bytes) = self.arrivals();
+        let kept = self.kept_entries();
+        let mut lines = vec![format!(
+            "arrival-log {records} records, {log_bytes} bytes; bound {} records (2 x {kept} entries kept + {ARRIVALS_SLACK}); {} compactions",
+            self.arrivals_bound(),
+            self.compactions()
+        )];
+        let feeds = self.feeds.feeds().map_or(0, |f| f.len());
+        lines.push(format!("entries {kept} kept in {feeds} feeds; bound {} per feed", p.feed_entries));
+        lines.push(format!("profiles {} (one per feed with a profile)", self.profiles.lock().unwrap().len()));
+        {
+            let state = self.state.lock().unwrap();
+            let (mut clients, mut subs, mut peer_subs, mut sent) = (0, 0, 0, 0);
+            for c in state.conns.values() {
+                if c.peer.load(Ordering::Relaxed) {
+                    peer_subs += c.peer_feeds.len();
+                    sent += c.pulls_sent.len();
+                } else {
+                    clients += 1;
+                    subs += c.feeds.len();
+                }
+            }
+            lines.push(format!(
+                "connections {} ({} in all with peers and in-process); bound {}",
+                self.connection_count(),
+                state.conns.len(),
+                or_none(p.max_connections)
+            ));
+            lines.push(format!(
+                "subscriptions {subs} on {clients} client connections, for {} feeds; bound {} per connection",
+                state.wanted.len(),
+                or_none(p.subscriptions_per_connection)
+            ));
+            lines.push(format!("peer-subscriptions {peer_subs}; bound: the feeds clients subscribe to, on each peer link"));
+            lines.push(format!(
+                "pulls {} waiting for peers ({sent} requests); bound {PULLS_PER_CONNECTION} per connection, {MAX_PULLS} in all",
+                state.pulls.len()
+            ));
+        }
+        lines.push(format!("address-table {} addresses; bound {} + 1", self.rates.lock().unwrap().len(), p.table_size));
+        if let Some(h) = &self.holdings {
+            let h = h.lock().unwrap();
+            lines.push(format!(
+                "waiting-room {} blobs, {} bytes charged; bound {} bytes ({} blobs)",
+                h.waiting.len(),
+                h.waiting_bytes,
+                p.unreferenced_bytes,
+                p.unreferenced_bytes / holdings::MIN_CHARGE
+            ));
+        }
+        let store_limit = self.blobs.limit().map_or("none".to_string(), |l| l.to_string());
+        lines.push(format!("store {} bytes; bound {store_limit}", self.blobs.used_bytes()));
+        lines.join("\n")
+    }
+
     /// Reads the write list again (if its file changed, unless `force`);
     /// says so on stderr.
     pub fn reload_writers(&self, force: bool) {
@@ -897,6 +1216,7 @@ impl Relay {
                 thread::sleep(TICK);
                 relay.expire_pulls();
                 relay.collect();
+                relay.compact();
                 relay.purge();
                 if writers_at.elapsed() >= WRITERS_CHECK {
                     writers_at = Instant::now();
@@ -914,7 +1234,7 @@ impl Relay {
                 {
                     file_at = Some(Instant::now());
                     let temp = path.with_extension("tmp");
-                    if std::fs::write(&temp, relay.status() + "\n").and_then(|()| std::fs::rename(&temp, path)).is_err() {
+                    if std::fs::write(&temp, relay.status() + "\n" + &relay.bounds() + "\n").and_then(|()| std::fs::rename(&temp, path)).is_err() {
                         let _ = std::fs::remove_file(&temp);
                     }
                 }
@@ -990,16 +1310,21 @@ impl Relay {
     }
 
     pub fn disconnect(&self, conn: &Connection) {
-        self.state.lock().unwrap().conns.remove(&conn.id);
+        self.state.lock().unwrap().remove(conn.id);
     }
 
     /// Marks a connection as a peer (NETWORK 5) and repeats the clients'
     /// subscriptions on it.
     pub fn mark_peer(&self, conn: &Connection) {
         let mut state = self.state.lock().unwrap();
-        conn.peer.store(true, Ordering::Relaxed);
-        let wanted: HashSet<FeedKey> =
-            state.conns.values().filter(|c| !c.peer.load(Ordering::Relaxed)).flat_map(|c| c.feeds.iter().copied()).collect();
+        // What it subscribed to as a client no longer counts as a client's.
+        if !conn.peer.swap(true, Ordering::Relaxed) {
+            let feeds: Vec<FeedKey> = state.conns.get(&conn.id).map(|c| c.feeds.iter().copied().collect()).unwrap_or_default();
+            for feed in feeds {
+                state.unwant(&feed);
+            }
+        }
+        let wanted: Vec<FeedKey> = state.wanted.keys().copied().collect();
         let Some(c) = state.conns.get_mut(&conn.id) else { return };
         for feed in wanted {
             let after = self.feeds.highest(&feed).unwrap_or(0);
@@ -1045,9 +1370,14 @@ impl Relay {
                 None => protocol::encode_subscribe_reply(req, status::REFUSED, 0),
             },
             Ok(Request::Unsubscribe { req, feed }) => {
-                if let Some(c) = self.state.lock().unwrap().conns.get_mut(&conn.id) {
-                    c.feeds.remove(&feed);
+                let mut state = self.state.lock().unwrap();
+                if let Some(c) = state.conns.get_mut(&conn.id)
+                    && c.feeds.remove(&feed)
+                    && !peer
+                {
+                    state.unwant(&feed);
                 }
+                drop(state);
                 protocol::encode_status_reply(protocol::UNSUBSCRIBE_REPLY, req, status::DONE)
             }
             Ok(Request::Find { req, scope, query }) => {
@@ -1256,6 +1586,9 @@ impl Relay {
     /// Asks every peer for a blob a client wants; false if there are none.
     fn pull(&self, conn: &Connection, req: u32, id: BlobId) -> bool {
         let mut state = self.state.lock().unwrap();
+        if state.pulls.len() >= MAX_PULLS || state.pulls.values().filter(|p| p.client == conn.id).count() >= PULLS_PER_CONNECTION {
+            return false;
+        }
         state.next_pull += 1;
         let pull_id = state.next_pull;
         let mut asked = 0;
@@ -1290,7 +1623,7 @@ impl Relay {
             None if pull.waiting == 0 => protocol::encode_get_reply(pull.req, status::NOT_FOUND, &[]),
             None => return,
         };
-        let pull = state.pulls.remove(&pull_id).unwrap();
+        let pull = state.end_pull(pull_id).unwrap();
         if let Some(c) = state.conns.get(&pull.client) {
             push(c, reply);
         }
@@ -1309,7 +1642,7 @@ impl Relay {
         let now = Instant::now();
         let late: Vec<u64> = state.pulls.iter().filter(|(_, p)| p.deadline <= now).map(|(&id, _)| id).collect();
         for id in late {
-            let pull = state.pulls.remove(&id).unwrap();
+            let pull = state.end_pull(id).unwrap();
             if let Some(c) = state.conns.get(&pull.client) {
                 push(c, protocol::encode_get_reply(pull.req, status::NOT_FOUND, &[]));
             }
@@ -1404,7 +1737,10 @@ impl Relay {
         };
         match self.feeds.insert(&signed) {
             // A failed record only leaves the entry out of searches.
-            Ok(Insert::New) => drop(self.arrivals.lock().unwrap().record(&feed, seq)),
+            Ok(Insert::New) => {
+                self.kept_entries.fetch_add(1, Ordering::Relaxed);
+                drop(self.arrivals.lock().unwrap().record(&feed, seq));
+            }
             Ok(Insert::Duplicate) => return status::DONE,
             Ok(Insert::Conflict) | Err(_) => return status::REFUSED,
         }
@@ -1423,6 +1759,7 @@ impl Relay {
                     // A failed removal keeps the entry, and its blob held.
                     if self.feeds.remove(&feed, s).is_ok() {
                         self.dropped_entries.fetch_add(1, Ordering::Relaxed);
+                        self.kept_entries.fetch_sub(1, Ordering::Relaxed);
                         if let Some((blob, size)) = h.remove_entry(&feed, s) {
                             self.start_waiting(&mut h, blob, size);
                         }
@@ -1431,7 +1768,12 @@ impl Relay {
             }
             // A failed prune only means keeping more than the cap. The
             // latest profile is always kept (NETWORK 4.6).
-            None => drop(self.feeds.prune_keeping(&feed, self.cap, keep)),
+            None => {
+                if let Ok(n) = self.feeds.prune_keeping(&feed, self.cap, keep) {
+                    self.dropped_entries.fetch_add(n as u64, Ordering::Relaxed);
+                    self.kept_entries.fetch_sub(n, Ordering::Relaxed);
+                }
+            }
         }
         if let Some(g) = group
             && self.writers.is_some()
@@ -1441,7 +1783,15 @@ impl Relay {
         }
         let message = protocol::encode_entry(&signed.bytes);
         // Peers get the entry as a publish below, not as a pushed entry.
-        state.conns.retain(|_, c| c.peer.load(Ordering::Relaxed) || !c.feeds.contains(&feed) || push(c, message.clone()));
+        let overflowed: Vec<u64> = state
+            .conns
+            .iter()
+            .filter(|(_, c)| !c.peer.load(Ordering::Relaxed) && c.feeds.contains(&feed) && !push(c, message.clone()))
+            .map(|(&id, _)| id)
+            .collect();
+        for id in overflowed {
+            state.remove(id);
+        }
         for (&cid, c) in state.conns.iter_mut() {
             if Some(cid) != source && c.peer.load(Ordering::Relaxed) {
                 c.next_req = c.next_req.wrapping_add(1);
@@ -1476,17 +1826,28 @@ impl Relay {
         let mut state = self.state.lock().unwrap();
         let seqs = self.feeds.seqs(&feed).ok()?;
         let highest = seqs.last().copied().unwrap_or(0);
+        let peer = conn.peer.load(Ordering::Relaxed);
         let c = state.conns.get_mut(&conn.id)?;
-        c.feeds.insert(feed);
+        if !c.feeds.contains(&feed) {
+            if conn.group.is_some() && self.policy.subscriptions_per_connection.is_some_and(|max| c.feeds.len() >= max) {
+                self.count(Reason::Subscriptions);
+                return None;
+            }
+            c.feeds.insert(feed);
+            if !peer {
+                *state.wanted.entry(feed).or_default() += 1;
+            }
+        }
+        let c = state.conns.get_mut(&conn.id)?;
         for seq in seqs.iter().copied().filter(|&seq| seq > after) {
             // A file pruned meanwhile is skipped.
             let Ok(Some(bytes)) = self.feeds.get(&feed, seq) else { continue };
             if !push(c, protocol::encode_entry(&bytes)) {
-                state.conns.remove(&conn.id);
+                state.remove(conn.id);
                 return Some(highest);
             }
         }
-        if !conn.peer.load(Ordering::Relaxed) {
+        if !peer {
             for c in state.conns.values_mut().filter(|c| c.peer.load(Ordering::Relaxed)) {
                 peer_subscribe(c, feed, highest);
             }

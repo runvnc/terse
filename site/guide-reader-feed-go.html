@@ -33,9 +33,26 @@ import (
     &quot;reader/relay&quot;
 )
 
+const (
+    keySize       = 32
+    typeSubscribe = 0x04
+    typeEntry     = 0x90
+    requestNumber = 2
+    after         = 0
+    statusAt      = 5
+    statusDone    = 1
+    highestAt     = 6
+    highestEnd    = 10
+    seqAt         = 32
+    seqEnd        = 36
+    kindArticle   = 1
+)
+
+var le = binary.LittleEndian
+
 func main() {
     key, err := hex.DecodeString(os.Args[2])
-    if err != nil || len(key) != 32 {
+    if err != nil || len(key) != keySize {
         log.Fatal(&quot;a feed key is 64 hexadecimal digits&quot;)
     }
     url := os.Args[1]
@@ -43,32 +60,35 @@ func main() {
     if err != nil {
         log.Fatal(err)
     }
-    subscribe := append([]byte{0x04, 2, 0, 0, 0}, key...)
-    subscribe = append(subscribe, 0, 0, 0, 0)
-    err = conn.WriteMessage(websocket.BinaryMessage, subscribe)
+    request := []byte{typeSubscribe}
+    request = le.AppendUint32(request, requestNumber)
+    request = append(request, key...)
+    request = le.AppendUint32(request, after)
+    err = conn.WriteMessage(websocket.BinaryMessage, request)
     if err != nil {
         log.Fatal(err)
     }
     _, reply, err := conn.ReadMessage()
-    if err != nil || len(reply) &lt; 10 || reply[5] != 1 {
+    if err != nil || len(reply) &lt; highestEnd ||
+        reply[statusAt] != statusDone {
         log.Fatal(&quot;the relay refused the subscription&quot;)
     }
-    highest := binary.LittleEndian.Uint32(reply[6:])
-    articles := map[uint32][32]byte{}
-    for caughtUp := highest == 0; !caughtUp; {
-        _, message, err := conn.ReadMessage()
+    highest := le.Uint32(reply[highestAt:highestEnd])
+    articles := map[uint32]relay.ID{}
+    for caughtUp := highest == after; !caughtUp; {
+        _, msg, err := conn.ReadMessage()
         if err != nil {
             log.Fatal(err)
         }
-        if len(message) &lt; 37 || message[0] != 0x90 {
+        entry, ok := bytes.CutPrefix(msg, []byte{typeEntry})
+        if !ok || len(entry) &lt; seqEnd {
             continue
         }
-        entry := message[1:]
-        seq := binary.LittleEndian.Uint32(entry[32:])
+        seq := le.Uint32(entry[seqAt:seqEnd])
         caughtUp = seq &gt;= highest
         e, err := tersenet.VerifyEntry(entry)
         mine := err == nil &amp;&amp; bytes.Equal(e.Feed[:], key)
-        if mine &amp;&amp; e.Kind == 1 {
+        if mine &amp;&amp; e.Kind == kindArticle {
             title := article.Visible(e.Title)
             fmt.Printf(&quot;%d  %s\n&quot;, seq, title)
             articles[seq] = e.Blob
@@ -89,10 +109,27 @@ func main() {
     fmt.Println()
     article.Show(blob)
 }</pre>
-<p>It is 75 lines; the whole program, with the <code>article</code> and <code>relay</code> packages, is 182. The entries are checked by one call to the Tersenet SDK for Go, <code>tersenet.VerifyEntry</code>, named in step 2&#39;s <code>go.mod</code>.</p>
+<p>It is 95 lines; the whole program, with the <code>article</code> and <code>relay</code> packages, is 221. The entries are checked by one call to the Tersenet SDK for Go, <code>tersenet.VerifyEntry</code>, named in step 2&#39;s <code>go.mod</code>.</p>
 <h2 id="how-it-works">How it works</h2>
-<p><code>main</code> connects and sends a Subscribe: the byte <code>04h</code>, a request number (here 2), the feed&#39;s key, and 4 bytes <code>after</code>, the highest entry number you already hold: 0, so the relay sends everything it has. Its reply starts with <code>84h</code> and gives, after a status byte, <code>highest</code>: the highest entry number it holds.</p>
-<p>Then the relay sends the feed&#39;s entries, oldest first, each in a message that starts with <code>90h</code>. The loop reads them until it has one numbered <code>highest</code> or more: then it has caught up. An entry is, in order: the feed&#39;s key (32 bytes), its number <code>seq</code> (4), a time (4), a kind (1: 1 for an article), the blob&#39;s size (3) and ID (32), a reply-to ID (32), the title&#39;s length (1), the title, and a 64-byte signature. So an entry with a title of n bytes is 173 + n bytes long.</p>
+<p><code>main</code> connects and sends a Subscribe (numbers least significant byte first, as in step 2):</p>
+<div class="table"><table>
+<thead><tr><th>Offset</th><th>Size</th><th>Field</th></tr></thead>
+<tbody>
+<tr><td>0</td><td>1</td><td>type: <code>04h</code>, Subscribe</td></tr>
+<tr><td>1</td><td>4</td><td>request number: 2</td></tr>
+<tr><td>5</td><td>32</td><td>the feed&#39;s key</td></tr>
+<tr><td>37</td><td>4</td><td><code>after</code>: the highest entry number you hold; 0 asks for all</td></tr>
+</tbody></table></div>
+<p>The relay answers with a Subscribe reply:</p>
+<div class="table"><table>
+<thead><tr><th>Offset</th><th>Size</th><th>Field</th></tr></thead>
+<tbody>
+<tr><td>0</td><td>1</td><td>type: <code>84h</code>, Subscribe reply</td></tr>
+<tr><td>1</td><td>4</td><td>the request number</td></tr>
+<tr><td>5</td><td>1</td><td>status: <code>1</code> done, <code>3</code> or more refused</td></tr>
+<tr><td>6</td><td>4</td><td><code>highest</code>: the highest entry number the relay holds</td></tr>
+</tbody></table></div>
+<p>Then the relay sends the feed&#39;s entries, oldest first, each in an Entry message: the byte <code>90h</code>, then the entry. The loop reads them until it has one numbered <code>highest</code> or more: then it has caught up (<code>seqAt</code> and <code>seqEnd</code> say where an entry&#39;s number is). An entry is, in order: the feed&#39;s key (32 bytes), its number <code>seq</code> (4), a time (4), a kind (1: 1 for an article), the blob&#39;s size (3) and ID (32), a reply-to ID (32), the title&#39;s length (1), the title, and a 64-byte signature. So an entry with a title of n bytes is 173 + n bytes long.</p>
 <p><code>tersenet.VerifyEntry</code> checks an entry by every rule the network sets and returns its fields, or an error naming the rule it breaks: the length, a title of at most 120 bytes and valid UTF-8, a <code>seq</code> from 1, a kind that is not reserved, a size from 1 byte to 1 MiB (4 KiB for a profile), a display name as a profile&#39;s or a program&#39;s title, and the signature. <code>main</code> keeps the valid entries of the feed asked for that are of kind 1, articles, and prints each one&#39;s number and title; any other entry is dropped, unseen.</p>
 <p>The signature is Ed25519, over the 13 bytes <code>terse-entry-0</code> followed by the entry without its signature, and it is checked strictly. Go&#39;s own <code>ed25519.Verify</code> is not enough: it accepts a key that is not the canonical encoding of its point, and a key or an R of small order, for which anyone can forge signatures. <a href="signatures.html">Signatures and valid entries</a> gives every rule and the reason for it, enough to write the check yourself. The SDK is one file, <code>sdk/go/tersenet.go</code> in the Tersenet sources, 168 lines with its comments: read it. <code>vectors/entries.txt</code> holds a forged entry for each rule; the test sends every one to this program from a fake relay, and only the valid articles are listed.</p>
 <p>To open an entry, <code>main</code> gets its blob with step 2&#39;s <code>relay.Get</code>, which checks its hash and skips any entry the relay sends meanwhile, and shows it with <code>article.Show</code>.</p>

@@ -76,8 +76,10 @@ impl Summary {
                     self.worst.push((
                         *ms,
                         format!(
-                            "frame {frame}: {ms:.1} ms, {} {component} (own {own_ms:.1}: cpu {cpu_ms:.1}, blocked {blocked_ms:.1}; starved {starved_ms:.1}), program {}",
+                            "frame {frame}: {ms:.1} ms, {} {component} (own {own_ms:.1}: cpu {}, blocked {}; starved {starved_ms:.1}), program {}",
                             verdict.name(),
+                            cpu_ms.map_or("-".into(), |v| format!("{v:.1}")),
+                            blocked_ms.map_or("-".into(), |v| format!("{v:.1}")),
                             if image.is_empty() { "-" } else { image }
                         ),
                     ));

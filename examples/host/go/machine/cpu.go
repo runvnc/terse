@@ -10,7 +10,19 @@ var le = binary.LittleEndian
 const (
 	ROMBase = 0x10000
 	RAMBase = 0x100000
+	ROMCost = 1
+	RAMCost = 4
 )
+
+const (
+	SP = 2
+	A0 = 10
+	A1 = 11
+	A5 = 15
+	A7 = 17
+)
+
+const UnknownCall = 0xffffffff
 
 const (
 	Illegal = 1 + iota
@@ -94,9 +106,9 @@ func (c *CPU) Step() (cost int64, ecall bool, fault *Fault) {
 	if raw&3 != 3 {
 		in, next = expand(raw), c.PC+2
 	}
-	cost = 1
+	cost = ROMCost
 	if c.PC >= RAMBase {
-		cost = 4
+		cost = RAMCost
 	}
 	ecall, fault = c.execute(in, next)
 	if fault != nil && fault.Kind == Illegal {

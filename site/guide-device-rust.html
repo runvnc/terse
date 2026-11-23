@@ -11,61 +11,107 @@
 <main>
 <article>
 <h1 id="make-a-device-in-rust">Make a device in Rust</h1>
-<p>This driver is the terminal, device 2, in one file of Rust with no dependencies: <code>examples/device/rust/src/main.rs</code>, 347 lines, a crate and workspace of its own. It does what <code>programs/hello</code> needs, exactly as the reference does, and no more.</p>
+<p>This driver is the terminal, device 2, in one file of Rust with no dependencies: <code>examples/device/rust/src/main.rs</code>, 415 lines, a crate and workspace of its own. It does what <code>programs/hello</code> needs, exactly as the reference does, and no more.</p>
 <h2 id="the-call-table">The call table</h2>
-<p>A driver tells the core, for each of its device&#39;s calls, where the call&#39;s buffer is and what the call costs: 64 bytes per function, in DEVICES.md section 5&#39;s layout. <code>Entry</code> has a field for each part of it, and <code>PLAIN</code> is a call with no buffer whose result is a constant 0. The table is the five calls <code>hello</code> makes:</p>
-<pre>const TABLE: [Entry; 5] = [
-    Entry {
-        function: 0,
-        flags: DEFERRED | BUFFERED,
-        length: 1,
-        scale: 1,
-        most: 4096,
-        access: READS | IN_ROM,
-        rule: 2,
-        rule_arg: 1,
-        per_byte: 2,
-        ..PLAIN
-    },
-    Entry {
-        function: 1,
-        charge_arg: 0,
-        low: 1,
-        high: 3,
-        add: 150,
-        ..PLAIN
-    },
-    Entry { function: 2, ..PLAIN },
-    Entry { function: 4, ..PLAIN },
-    Entry {
-        function: 7,
-        flags: DEFERRED | BUFFERED,
-        buffer: 1,
-        length: 2,
-        scale: 4,
-        most: 9600,
-        access: READS | IN_ROM,
-        checked: 0,
-        checked_most: 2399,
-        rule: 2,
-        rule_arg: 2,
-        per_four: 1,
-        ..PLAIN
-    },
-];</pre>
-<p><code>write</code> (0) has a buffer at <code>a0</code> of <code>a1</code> bytes, at most 4,096, read, which may be in ROM; it returns <code>a1</code> and costs 2 units a byte. <code>command</code> (1) costs 150 units for commands 1 to 3. <code>set_cursor</code> (2) and <code>set_colours</code> (4) cost nothing. <code>cells_write</code> (7) has a buffer at <code>a1</code> of <code>a2</code> cells of 4 bytes, <code>a0</code>, the first cell, at most 2,399; it returns <code>a2</code> and costs a unit per 4 bytes. All five are deferred: their result and charge follow from their arguments, so the core can work them out itself and send the calls later, in a batch.</p>
-<h2 id="the-terminal">The terminal</h2>
-<pre>struct Terminal {
-    grid: Vec&lt;u8&gt;,
-    col: usize,
-    row: usize,
-    fg: u8,
-    bg: u8,
-    shown: u8,
-    wrap: bool,
-    palette: Vec&lt;u8&gt;,
+<p>A driver tells the core, for each of its device&#39;s calls, where the call&#39;s buffer is and what the call costs: 64 bytes per function, in DEVICES.md section 5&#39;s layout. <code>Entry</code> has a field for each part of it, and <code>plain()</code> is a call with no buffer whose result is a constant 0. The table is the five calls <code>hello</code> makes, by the terminal&#39;s numbers:</p>
+<pre>const A0: u8 = 0;
+const A1: u8 = 1;
+const A2: u8 = 2;
+const NONE: u8 = 0xff;
+const DEFERRED: u8 = 2;
+const BUFFERED: u8 = 4;
+const READS: u8 = 1;
+const IN_ROM: u8 = 4;
+const FAILED: u32 = 0xffff_fffe;
+const RETURNS_VALUE: u8 = 1;
+const RETURNS_ARG: u8 = 2;
+const PER_FOUR: u8 = 1;</pre>
+<pre>fn table() -&gt; Vec&lt;Entry&gt; {
+    vec![
+        Entry {
+            function: WRITE,
+            flags: DEFERRED | BUFFERED,
+            buffer: A0,
+            length: A1,
+            scale: 1,
+            most: 4096,
+            access: READS | IN_ROM,
+            length_result: FAILED,
+            place_result: FAILED,
+            rule: RETURNS_ARG,
+            rule_arg: A1,
+            per_byte: 2,
+            ..plain()
+        },
+        Entry {
+            function: COMMAND,
+            charge_arg: A0,
+            low: CLEAR_SCREEN,
+            high: SCROLL_DOWN,
+            add: 150,
+            ..plain()
+        },
+        Entry { function: SET_CURSOR, ..plain() },
+        Entry { function: SET_COLOURS, ..plain() },
+        Entry {
+            function: CELLS_WRITE,
+            flags: DEFERRED | BUFFERED,
+            buffer: A1,
+            length: A2,
+            scale: CELL_SIZE as u32,
+            most: (CELLS * CELL_SIZE) as u32,
+            access: READS | IN_ROM,
+            checked: A0,
+            checked_most: CELLS as u32 - 1,
+            length_result: FAILED,
+            place_result: FAILED,
+            rule: RETURNS_ARG,
+            rule_arg: A2,
+            charge_flags: PER_FOUR,
+            ..plain()
+        },
+    ]
 }</pre>
-<p>At reset (<code>Terminal::new</code>) every cell is a space in colour 7 on 0, and the palette is xterm&#39;s 256 colours.</p>
+<p>All five are deferred: their result and charge follow from their arguments, so the core can work them out itself and send the calls later, in a batch. <code>write</code> returns <code>a1</code> and costs 2 units a byte; <code>command</code> costs 150 for commands 1 to 3; <code>cells_write</code> returns <code>a2</code> and costs a unit per 4 bytes. <code>encode</code> writes an entry, little-endian, the 0s being reserved bytes:</p>
+<pre>impl Entry {
+    fn encode(&amp;self) -&gt; Vec&lt;u8&gt; {
+        let e = self;
+        let mut b =
+            vec![e.function, e.flags, e.buffer, e.length];
+        words(&amp;mut b, &amp;[e.scale, e.least, e.most]);
+        b.extend([e.access, e.checked, 0, 0]);
+        words(
+            &amp;mut b,
+            &amp;[e.checked_most, e.length_result, e.place_result],
+        );
+        b.extend([e.rule, e.rule_arg, 0, 0]);
+        words(&amp;mut b, &amp;[e.value, e.value2, e.charge]);
+        b.extend([e.charge_flags, e.charge_arg]);
+        b.extend(e.per_byte.to_le_bytes());
+        words(&amp;mut b, &amp;[e.low, e.high, e.add]);
+        b
+    }
+}</pre>
+<div class="table"><table>
+<thead><tr><th>Fields</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>buffer</code>, <code>length</code></td><td>the arguments holding its address and length</td></tr>
+<tr><td><code>scale</code>, <code>least</code>, <code>most</code></td><td>bytes per unit of length; its range in bytes</td></tr>
+<tr><td><code>checked</code>, <code>checked_most</code></td><td>an argument and its greatest value</td></tr>
+<tr><td><code>length_result</code>, <code>place_result</code></td><td>the result for a bad length, a bad place</td></tr>
+<tr><td><code>rule</code>, <code>rule_arg</code>, <code>value</code></td><td><code>a0</code>: <code>value</code> if <code>RETURNS_VALUE</code>, argument <code>rule_arg</code> if <code>RETURNS_ARG</code></td></tr>
+<tr><td><code>charge</code>, <code>charge_flags</code>, <code>per_byte</code></td><td><code>charge</code> units, 1 per 4 bytes if <code>PER_FOUR</code>, <code>per_byte</code> a byte</td></tr>
+<tr><td><code>charge_arg</code>, <code>low</code>, <code>high</code>, <code>add</code></td><td><code>add</code> if <code>low</code> ≤ the argument ≤ <code>high</code></td></tr>
+</tbody></table></div>
+<p><code>NONE</code> (FFh) is &quot;no argument&quot;, and <code>FAILED</code> (FFFF_FFFEh) the result of a bad buffer.</p>
+<h2 id="the-terminal">The terminal</h2>
+<pre>const COLUMNS: usize = 80;
+const ROWS: usize = 30;
+const CELLS: usize = COLUMNS * ROWS;
+const CELL_SIZE: usize = 4;
+const GRAYS: u8 = 24;
+const CONTINUATION: u16 = 0xffff;</pre>
+<p><code>Terminal</code> holds the grid, the cursor, the colours and the palette. The grid is <code>CELLS</code> cells of <code>CELL_SIZE</code> bytes: the character (u16), then its foreground and background colours. At reset (<code>Terminal::new</code>) every cell is a space in colour 7 on 0. The palette is xterm&#39;s 256 colours, 3 bytes each: xterm&#39;s own 16 (<code>XTERM</code>), a 6 × 6 × 6 cube, and <code>GRAYS</code> grays from 8 in steps of 10.</p>
 <pre>    fn write(&amp;mut self, text: &amp;[u8]) {
         for c in String::from_utf8_lossy(text).chars() {
             if c == &#39;\n&#39; {
@@ -78,7 +124,9 @@
                 self.newline();
             }
             let code = match u16::try_from(c) {
-                Ok(0xffff) | Err(_) =&gt; 0xfffd,
+                Ok(CONTINUATION) | Err(_) =&gt; {
+                    char::REPLACEMENT_CHARACTER as u16
+                }
                 Ok(code) =&gt; code,
             };
             self.put(self.row * COLUMNS + self.col, code);
@@ -89,33 +137,37 @@
             }
         }
     }</pre>
-<p><code>write</code> decodes its bytes as UTF-8 with the standard library (<code>from_utf8_lossy</code>), prints each character at the cursor and moves on, wrapping at the end of a row and scrolling at the bottom (<code>newline</code>).</p>
+<p><code>write</code> decodes its bytes as UTF-8 with the standard library (<code>from_utf8_lossy</code>), prints each character at the cursor and moves on, wrapping at the end of a row and scrolling at the bottom (<code>newline</code>). A cell holds a character up to FFFFh, which is the <code>CONTINUATION</code> of a wide character, so that and anything above it is written as the replacement character.</p>
 <pre>    fn call(&amp;mut self, body: &amp;[u8]) -&gt; (u32, u32) {
-        let a = |i: usize| word(body, 4 + 4 * i);
-        let data = &amp;body[40..40 + word(body, 36) as usize];
-        match body[1] {
-            0 =&gt; {
+        let a = |i: usize| word(body, ARGS_AT + 4 * i);
+        let size = word(body, SIZE_AT) as usize;
+        let data = &amp;body[DATA_AT..DATA_AT + size];
+        match body[FUNCTION_AT] {
+            WRITE =&gt; {
                 self.write(data);
                 return (a(1), 2 * a(1));
             }
-            1 if a(0) == 4 =&gt; {
-                let line = self.row * COLUMNS;
-                for col in self.col..COLUMNS {
-                    self.put(line + col, &#39; &#39; as u16);
+            COMMAND =&gt; match a(0) {
+                CLEAR_SCREEN..=SCROLL_DOWN =&gt; return (0, 150),
+                CLEAR_TO_END =&gt; {
+                    let line = self.row * COLUMNS;
+                    for col in self.col..COLUMNS {
+                        self.put(line + col, &#39; &#39; as u16);
+                    }
                 }
-            }
-            1 if (1..=3).contains(&amp;a(0)) =&gt; return (0, 150),
-            2 =&gt; {
+                _ =&gt; {}
+            },
+            SET_CURSOR =&gt; {
                 self.col = (a(0) as usize).min(COLUMNS - 1);
                 self.row = (a(1) as usize).min(ROWS - 1);
                 self.wrap = false;
             }
-            4 =&gt; {
+            SET_COLOURS =&gt; {
                 self.fg = u8::try_from(a(0)).unwrap_or(self.fg);
                 self.bg = u8::try_from(a(1)).unwrap_or(self.bg);
             }
-            7 =&gt; {
-                let start = 4 * a(0) as usize;
+            CELLS_WRITE =&gt; {
+                let start = CELL_SIZE * a(0) as usize;
                 let size = self.grid.len();
                 for (i, &amp;byte) in data.iter().enumerate() {
                     self.grid[(start + i) % size] = byte;
@@ -133,23 +185,53 @@
         state.extend([col, row, self.fg, self.bg, self.shown]);
         state.push(self.wrap as u8);
         state.extend(&amp;self.palette);
-        state.extend([0; 4]);
+        state.extend(self.partial);
         state
     }</pre>
-<p><code>call</code> carries a call out and returns its result and the charge on top of the base one, which must be what the table&#39;s rules say. <code>state</code> is the device&#39;s part of the machine&#39;s state, the bytes the state hash covers: the cells, the cursor, the colours, cursor shown, a pending wrap, the palette, and 4 bytes for a UTF-8 character cut between two writes (none here).</p>
+<p><code>call</code> carries a call out and returns its result and the charge on top of the base one, which must be what the table&#39;s rules say. <code>state</code> is the device&#39;s part of the machine&#39;s state, the bytes the state hash covers: the cells, the cursor, the colours, cursor shown, a pending wrap, the palette, and <code>partial</code>, a UTF-8 character cut between two writes (a count and 3 bytes; none here).</p>
 <h2 id="the-messages">The messages</h2>
-<pre>fn hello(body: &amp;[u8]) -&gt; Vec&lt;u8&gt; {
+<pre>const HELLO: u8 = 0x01;
+const OPEN: u8 = 0x03;
+const CLOSE: u8 = 0x04;
+const CALL: u8 = 0x10;
+const BATCH: u8 = 0x11;
+const BEGIN: u8 = 0x30;
+const END: u8 = 0x31;
+const STATE: u8 = 0x40;
+const SHUTDOWN: u8 = 0x60;
+const ERROR: u8 = 0x7f;
+const REPLY: u8 = 0x80;
+
+const ADDRESS_SIZE: usize = 8;
+const PROTOCOL: u8 = 1;
+const ON_SOCKET: u8 = 0;
+const TOOK: u8 = 1;
+const TERMINAL_SLOT: u8 = 2;
+const DEVICE_VERSION: u8 = 0;
+const SLOTS_AT: usize = 8;
+const FUNCTION_AT: usize = 1;
+const ARGS_AT: usize = 4;
+const SIZE_AT: usize = 36;
+const DATA_AT: usize = 40;
+const BATCH_COUNT_AT: usize = 4;
+const BATCH_CALLS_AT: usize = 8;
+
+fn hello(body: &amp;[u8]) -&gt; Vec&lt;u8&gt; {
     let name = &quot;terminal (Rust example)&quot;;
-    let mut reply = vec![0x81, 1, 0, 0, name.len() as u8, 0];
+    let mut reply = vec![HELLO | REPLY, PROTOCOL, ON_SOCKET, 0];
+    reply.extend((name.len() as u16).to_le_bytes());
     reply.extend(name.as_bytes());
-    reply.extend([0, 0, 0, 0, body[8]]);
-    for &amp;slot in &amp;body[9..9 + body[8] as usize] {
-        if slot != 2 {
-            reply.extend([slot, 0, 0, 0]);
-            continue;
+    let count = body[SLOTS_AT] as usize;
+    let slots = &amp;body[SLOTS_AT + 1..][..count];
+    reply.extend([0, 0, 0, 0, count as u8]);
+    for &amp;slot in slots {
+        let mut entries = vec![];
+        if slot == TERMINAL_SLOT {
+            entries = table();
         }
-        reply.extend([2, 0, 0, TABLE.len() as u8]);
-        for entry in &amp;TABLE {
+        let count = entries.len() as u8;
+        reply.extend([slot, DEVICE_VERSION, 0, count]);
+        for entry in &amp;entries {
             reply.extend(entry.encode());
         }
     }
@@ -162,70 +244,84 @@ fn main() {
     let mut stream = UnixStream::connect(path).unwrap();
     let mut machines = HashMap::new();
     loop {
-        let mut length = [0; 4];
-        if stream.read_exact(&amp;mut length).is_err() {
+        let mut size = [0; 4];
+        if stream.read_exact(&amp;mut size).is_err() {
             return;
         }
-        let mut message = vec![0; word(&amp;length, 0) as usize];
+        let mut message = vec![0; word(&amp;size, 0) as usize];
         if stream.read_exact(&amp;mut message).is_err() {
             return;
         }
-        let (address, body) = message.split_at(8);
+        let (address, body) = message.split_at(ADDRESS_SIZE);
         let instance = word(address, 0);
         let reply = match body[0] {
-            0x01 =&gt; hello(body),
-            0x03 =&gt; {
+            HELLO =&gt; hello(body),
+            OPEN =&gt; {
                 machines.insert(instance, Terminal::new());
-                vec![0x83, 1, 0, 0, 0, 0]
+                vec![OPEN | REPLY, TOOK, 0, 0, 0, 0]
             }
-            0x04 =&gt; {
+            CLOSE =&gt; {
                 machines.remove(&amp;instance);
                 continue;
             }
-            0x10 =&gt; {
+            CALL =&gt; {
                 let t = machines.get_mut(&amp;instance).unwrap();
                 let (result, charge) = t.call(body);
-                let mut reply = vec![0x90, 0, 0, 0];
+                let mut reply = vec![CALL | REPLY, 0, 0, 0];
                 words(&amp;mut reply, &amp;[result, 0, charge, 0]);
                 reply
             }
-            0x11 =&gt; {
-                let mut at = 8;
-                for _ in 0..word(body, 4) {
-                    let size = word(body, at) as usize;
-                    let call = &amp;body[at + 4..at + 4 + size];
+            BATCH =&gt; {
+                let mut calls = &amp;body[BATCH_CALLS_AT..];
+                for _ in 0..word(body, BATCH_COUNT_AT) {
+                    let size = word(calls, 0) as usize;
+                    let call = &amp;calls[4..4 + size];
                     let t = machines.get_mut(&amp;word(call, 0));
-                    t.unwrap().call(&amp;call[8..]);
-                    at += 4 + size;
+                    t.unwrap().call(&amp;call[ADDRESS_SIZE..]);
+                    calls = &amp;calls[4 + size..];
                 }
                 continue;
             }
-            0x30 =&gt; {
-                let mut inputs = vec![0; 20];
-                inputs[0] = 0xb0;
-                inputs
+            BEGIN =&gt; {
+                let mut reply = vec![BEGIN | REPLY, 0, 0, 0];
+                words(&amp;mut reply, &amp;[0, 0, 0, 0]);
+                reply
             }
-            0x31 =&gt; continue,
-            0x40 =&gt; {
+            END =&gt; continue,
+            STATE =&gt; {
                 let state = machines[&amp;instance].state();
-                let mut reply = vec![0xc0, 0, 0, 0];
+                let mut reply = vec![STATE | REPLY, 0, 0, 0];
                 words(&amp;mut reply, &amp;[state.len() as u32]);
                 reply.extend(state);
                 reply
             }
-            0x60 =&gt; return,
-            _ =&gt; b&quot;\x7fnot handled&quot;.to_vec(),
+            SHUTDOWN =&gt; return,
+            _ =&gt; [&amp;[ERROR], &amp;b&quot;not handled&quot;[..]].concat(),
         };
         let mut out = Vec::new();
-        words(&amp;mut out, &amp;[8 + reply.len() as u32]);
+        words(&amp;mut out, &amp;[(ADDRESS_SIZE + reply.len()) as u32]);
         out.extend(address);
         out.extend(&amp;reply);
-        if stream.write_all(&amp;out).is_err() || reply[0] == 0x7f {
+        let sent = stream.write_all(&amp;out);
+        if sent.is_err() || reply[0] == ERROR {
             return;
         }
     }
 }</pre>
-<p>The core starts the driver with the socket&#39;s path in <code>TERSE_BUS_SOCKET</code>. Each message is a length, an address (which machine, which slot) and a body whose first byte is its type; a reply carries the address of its request. HELLO: answer for the slots asked, 2 with its table and 10 (full text) with none. OPEN: a new machine, its terminal at reset; CLOSE drops it. CALL: carry it out and reply RESULT. BATCH: deferred calls, carried out in order, with no replies. BEGIN: no input, no charge. END: nothing. STATE: the state. SHUTDOWN, or the socket closed: exit. Anything else gets an ERROR, and the driver exits.</p>
+<p>The core starts the driver with the socket&#39;s path in <code>TERSE_BUS_SOCKET</code>. Each message is a length, an address of <code>ADDRESS_SIZE</code> bytes (the instance, which machine, then the slot) and a body whose first byte is its type, named as DEVICES.md section 1 names them. A reply carries the address of its request, and its type is the request&#39;s with <code>REPLY</code> added. The bodies, after the type, by offset:</p>
+<div class="table"><table>
+<thead><tr><th>Body</th><th>Fields</th></tr></thead>
+<tbody>
+<tr><td>HELLO</td><td>8: the number of slots asked; 9: the slots</td></tr>
+<tr><td>its reply</td><td><code>PROTOCOL</code>, <code>ON_SOCKET</code>, reserved; the name; width, height (0: any); per slot: slot, <code>DEVICE_VERSION</code>, layers (0), entries; 0 properties, subscriptions, services</td></tr>
+<tr><td>OPEN reply</td><td><code>TOOK</code>, 2 reserved, a reason (u16 length, 0)</td></tr>
+<tr><td>CALL</td><td>1: function; 4: <code>a0</code> to <code>a5</code>; 28: budget; 36: buffer length; 40: the buffer</td></tr>
+<tr><td>RESULT</td><td>flags 0, 2 reserved; <code>a0</code>, <code>a1</code> (unused), charge, 0 writes</td></tr>
+<tr><td>BATCH</td><td>4: count; 8: the CALLs, each a u32 length, address and body</td></tr>
+<tr><td>INPUTS</td><td>3 reserved; charge, events, writes, record: all 0</td></tr>
+<tr><td>STATE reply</td><td>3 reserved; the length; the state</td></tr>
+</tbody></table></div>
+<p>HELLO answers for the slots asked: 2 with its table, 10 (full text) with none. OPEN makes a machine&#39;s terminal, CLOSE drops it. BATCH holds deferred calls, carried out in order with no replies. SHUTDOWN, or the socket closed, ends the driver; anything else gets an ERROR, and the driver exits.</p>
 <h2 id="run-it">Run it</h2>
 <p>Build it, then run <code>hello</code> under the reference core with it, from the top folder of the sources (<code>cargo build --release -p terse-bus -p terse-devices</code> builds the core and the reference drivers):</p>
 <pre>cargo build --release \

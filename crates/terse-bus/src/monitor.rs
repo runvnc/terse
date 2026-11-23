@@ -8,6 +8,17 @@
 //! late; the rule says when the host warns and when it stops the
 //! machines that use it. Everything goes to the record, off the frame
 //! loop.
+//!
+//! The host's own parts have their time on a CPU too (`RECORD.md` 4), so
+//! that a memory stall excuses no more of it than it can explain: `core`
+//! is the frame loop thread's CPU time from the frame's start to the
+//! machines' frames run, `compose` the whole process's from then until
+//! presenting begins (composing runs on a pool of threads), `present` the
+//! frame loop thread's while presenting. The process's CPU time includes
+//! threads that do not compose (sound, the content service): their time is
+//! counted as composing's, which can only excuse less. `outside` is the
+//! frame loop's waits for drivers' other work (services, `Acct::other_ns`):
+//! blocked on another process by design, its time on a CPU is not read.
 
 use std::path::PathBuf;
 use std::time::Instant;
@@ -59,6 +70,14 @@ pub struct Monitor {
     core: ProcProbe,
     core_wait: bool,
     core_before: Option<ProcSample>,
+    core_cpu: bool,
+    me_cpu: bool,
+    /// The frame loop thread and the process when the machines' frames
+    /// had run, and when presenting began.
+    core_emulated: Option<ProcSample>,
+    me_emulated: Option<ProcSample>,
+    core_presenting: Option<ProcSample>,
+    me_presenting: Option<ProcSample>,
     me: ProcProbe,
     psi: Pressure,
     psi_before: Option<u64>,
@@ -106,12 +125,17 @@ impl Monitor {
                 Watched { component: Component::Device(d.component), probe, before: None, readings }
             }).collect();
         let core = ProcProbe::this_thread();
+        let me = ProcProbe::process(std::process::id());
         let psi = Pressure::default();
         if let Some(r) = &rec {
             // What the operating system tells us (RECORD.md 4): without a
             // driver's CPU wait, it is blamed by its waits alone and never
             // stopped.
             r.add(Line::Readings { component: Component::Core, readings: Readings { cpu: core.has_cpu(), wait: core.has_wait(), stall: psi.available(), idle: core.infers_wait() } });
+            // Composing: the whole process's time on a CPU (its pool of
+            // threads); its starvation is not read apart from the frame
+            // loop's.
+            r.add(Line::Readings { component: Component::Compose, readings: Readings { cpu: me.has_cpu(), wait: false, stall: false, idle: false } });
             for w in &drivers {
                 r.add(Line::Readings { component: w.component, readings: w.readings });
             }
@@ -123,9 +147,15 @@ impl Monitor {
             dir: cfg.record.clone(),
             drivers,
             core_wait: core.has_wait(),
+            core_cpu: core.has_cpu(),
             core,
             core_before: None,
-            me: ProcProbe::process(std::process::id()),
+            core_emulated: None,
+            me_emulated: None,
+            core_presenting: None,
+            me_presenting: None,
+            me_cpu: me.has_cpu(),
+            me,
             psi,
             psi_before: None,
             frame: 0,
@@ -161,6 +191,10 @@ impl Monitor {
         self.core_before = self.core.sample();
         self.psi_before = self.psi.memory_full_ns();
         self.emulated = None;
+        self.core_emulated = None;
+        self.me_emulated = None;
+        self.core_presenting = None;
+        self.me_presenting = None;
         self.overhead.add(t.elapsed());
         self.t0 = Instant::now();
     }
@@ -185,7 +219,16 @@ impl Monitor {
     /// The machines' frames have run (composing follows).
     pub fn emulated(&mut self, bus: &Bus) {
         let waits = bus.procs.iter().map(|d| d.acct.frame_ns + d.acct.other_ns).sum();
+        self.core_emulated = self.core.sample();
+        self.me_emulated = self.me.sample();
         self.emulated = Some((Instant::now(), waits));
+    }
+
+    /// The composed picture is being handed to the display (called in a
+    /// window, after composing; headless there is none).
+    pub fn presenting(&mut self) {
+        self.core_presenting = self.core.sample();
+        self.me_presenting = self.me.sample();
     }
 
     /// The frame's picture is presented (`present_ns`: handing it to the
@@ -232,9 +275,18 @@ impl Monitor {
         };
         let core_ns = emul.saturating_sub(waits_then);
         let compose_ns = wall.saturating_sub(emul).saturating_sub(present_ns).saturating_sub(waits_all - waits_then);
-        parts.push(Part { component: Component::Core, wall_ns: core_ns, run_ns: None, starved_ns: None, image: image(0) });
-        parts.push(Part::new(Component::Compose, compose_ns));
-        parts.push(Part::new(Component::Present, present_ns));
+        // Their time on a CPU. Without a present (headless), presenting
+        // begins and ends at the frame's end.
+        let me_presenting = if self.core_presenting.is_some() { self.me_presenting } else { self.me.sample() };
+        let core_presenting = self.core_presenting.or(core_now);
+        let cpu = |a: Option<ProcSample>, b: Option<ProcSample>| Some(a?.since(&b?).cpu_ns);
+        let (thread_cpu, process_cpu) = (self.core_cpu, self.me_cpu);
+        let core_run = cpu(self.core_emulated, self.core_before).filter(|_| thread_cpu);
+        let compose_run = cpu(me_presenting, self.me_emulated).filter(|_| process_cpu);
+        let present_run = cpu(core_now, core_presenting).filter(|_| thread_cpu);
+        parts.push(Part { component: Component::Core, wall_ns: core_ns, run_ns: core_run, starved_ns: None, image: image(0) });
+        parts.push(Part { run_ns: compose_run, ..Part::new(Component::Compose, compose_ns) });
+        parts.push(Part { run_ns: present_run, ..Part::new(Component::Present, present_ns) });
         let own_total = core_ns + compose_ns + present_ns + counted;
         parts.push(Part::new(Component::Outside, wall.saturating_sub(own_total)));
         let memory = match (self.psi.memory_full_ns(), self.psi_before) {

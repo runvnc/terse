@@ -11,7 +11,7 @@
 <main>
 <article>
 <h1 id="the-terse32-machine">The Terse32 machine</h1>
-<p>This article describes machine profile 1, the only profile so far: the CPU, the memory map, how frames and the budget work, how a machine stops, the image file a program is shipped in, and how programs call devices, with the complete table of calls. Each device&#39;s calls are described in full in that device&#39;s article.</p>
+<p>This article describes machine profile 1, the only profile so far: the CPU, the memory map, how frames and the budget work, how a machine stops, the image file a program is shipped in, and how programs call devices. The complete table of calls is an article of its own, linked under &quot;Call table&quot; below. Each device&#39;s calls are described in full in that device&#39;s article.</p>
 <p>The machine is the optional third layer of Tersenet: the network and the article format are the core, and a reader can implement them without it. Which devices a host provides (the reading and the program profile) and how a program does without some is in <a href="device-system.html">the system device</a>.</p>
 <h2 id="cpu">CPU</h2>
 <p>The CPU executes exactly RV32I with the M (multiply and divide) and C (compressed) extensions, little-endian, in user mode. There is no A, F, D or B extension, no Zicsr or Zifencei, and no privileged architecture: no control and status registers, counters or traps are visible.</p>
@@ -134,100 +134,11 @@
 </ul>
 <p>In C, <code>terse.h</code> has a constant for every call (<code>CALL_WAIT_FRAME</code>, ...) and the inline functions <code>terse_call</code>, <code>terse_call4</code>, <code>terse_call5</code> and <code>terse_call2</code> (for two results).</p>
 <h2 id="call-table">Call table</h2>
-<p>Class sets the base charge: 4 for a deferred call (its result and charge follow from its arguments), 64 for an answered one (they depend on the device&#39;s state). System and Machines calls cost 4.</p>
-<p><a href="device-system.html">The system device</a>, slot 1, always present:</p>
-<div class="table"><table>
-<thead><tr><th><code>a7</code></th><th>Call</th><th>Arguments</th><th>Result</th></tr></thead>
-<tbody>
-<tr><td><code>100h</code></td><td><code>wait_frame</code></td><td>none</td><td>the frame counter in the frame it returns in</td></tr>
-<tr><td><code>101h</code></td><td><code>next_event</code></td><td><code>a0</code> = buffer (4 bytes, written)</td><td>1 and the event, or 0 if the queue is empty</td></tr>
-<tr><td><code>102h</code></td><td><code>frame_count</code></td><td>none</td><td>the frame counter</td></tr>
-<tr><td><code>103h</code></td><td><code>unix_time</code></td><td>none</td><td>the Unix time latched at the start of the frame</td></tr>
-<tr><td><code>104h</code></td><td><code>random</code></td><td><code>a0</code> = buffer (written), <code>a1</code> = length, at most 256</td><td>the length</td></tr>
-<tr><td><code>105h</code></td><td><code>controller</code></td><td><code>a0</code> = controller number, <code>a1</code> = buffer (8 bytes, written)</td><td>byte 0 of the state</td></tr>
-<tr><td><code>106h</code></td><td><code>exit</code></td><td><code>a0</code> = exit code (low 8 bits)</td><td>does not return</td></tr>
-<tr><td><code>107h</code></td><td><code>open</code></td><td><code>a0</code> = address of an open request (read)</td><td>1 passed to the shell, 0 not</td></tr>
-<tr><td><code>108h</code></td><td><code>argument</code></td><td><code>a0</code> = buffer (32 bytes, written)</td><td>1, or 0 if the machine has none</td></tr>
-<tr><td><code>109h</code></td><td><code>device</code></td><td><code>a0</code> = device slot</td><td>its version, or <code>FFFF_FFFFh</code> if absent</td></tr>
-</tbody></table></div>
-<p><a href="device-terminal.html">The terminal</a>, slot 2:</p>
-<div class="table"><table>
-<thead><tr><th><code>a7</code></th><th>Call</th><th>Arguments</th><th>Result</th><th>Class</th></tr></thead>
-<tbody>
-<tr><td><code>200h</code></td><td><code>write</code></td><td><code>a0</code> = buffer (read), <code>a1</code> = length, at most 4,096</td><td>the length</td><td>deferred</td></tr>
-<tr><td><code>201h</code></td><td><code>command</code></td><td><code>a0</code> = command</td><td>0</td><td>deferred</td></tr>
-<tr><td><code>202h</code></td><td><code>set_cursor</code></td><td><code>a0</code> = column, <code>a1</code> = row</td><td>0</td><td>deferred</td></tr>
-<tr><td><code>203h</code></td><td><code>get_cursor</code></td><td>none</td><td><code>a0</code> = column, <code>a1</code> = row</td><td>answered</td></tr>
-<tr><td><code>204h</code></td><td><code>set_colours</code></td><td><code>a0</code> = foreground, <code>a1</code> = background</td><td>0</td><td>deferred</td></tr>
-<tr><td><code>205h</code></td><td><code>get_colours</code></td><td>none</td><td><code>a0</code> = foreground, <code>a1</code> = background</td><td>answered</td></tr>
-<tr><td><code>206h</code></td><td><code>cells_read</code></td><td><code>a0</code> = first cell, <code>a1</code> = buffer (written), <code>a2</code> = count</td><td>the count</td><td>answered</td></tr>
-<tr><td><code>207h</code></td><td><code>cells_write</code></td><td><code>a0</code> = first cell, <code>a1</code> = buffer (read), <code>a2</code> = count</td><td>the count</td><td>deferred</td></tr>
-<tr><td><code>208h</code></td><td><code>palette_set</code></td><td><code>a0</code> = first entry, <code>a1</code> = buffer (read), <code>a2</code> = count</td><td>the count</td><td>deferred</td></tr>
-<tr><td><code>209h</code></td><td><code>size</code></td><td>none</td><td><code>a0</code> = 80 columns, <code>a1</code> = 30 rows</td><td>deferred</td></tr>
-</tbody></table></div>
-<p><a href="device-vector.html">The 2D vector display</a>, slot 3:</p>
-<div class="table"><table>
-<thead><tr><th><code>a7</code></th><th>Call</th><th>Arguments</th><th>Result</th><th>Class</th></tr></thead>
-<tbody>
-<tr><td><code>300h</code></td><td><code>submit</code></td><td><code>a0</code> = list address, <code>a1</code> = length</td><td>0 done, 1 rejected</td><td>deferred</td></tr>
-<tr><td><code>301h</code></td><td><code>clear</code></td><td>none</td><td>0</td><td>deferred</td></tr>
-<tr><td><code>302h</code></td><td><code>style</code></td><td><code>a0</code> = style</td><td>0 done, 1 rejected</td><td>deferred</td></tr>
-<tr><td><code>303h</code></td><td><code>persistence</code></td><td><code>a0</code> = persistence</td><td>0 done, 1 rejected</td><td>deferred</td></tr>
-<tr><td><code>304h</code></td><td><code>fill</code></td><td><code>a0</code> = fill mode</td><td>0 done, 1 rejected</td><td>deferred</td></tr>
-</tbody></table></div>
-<p>The content device, slot 4 (see <a href="content-blobs.html">blobs</a>, <a href="content-feeds.html">feeds</a> and <a href="content-records.html">named records</a>):</p>
-<div class="table"><table>
-<thead><tr><th><code>a7</code></th><th>Call</th><th>Arguments</th><th>Result</th><th>Class</th></tr></thead>
-<tbody>
-<tr><td><code>400h</code></td><td><code>submit</code></td><td><code>a0</code> = address of a request block</td><td>a handle 1 to 8, or 0 if rejected</td><td>answered</td></tr>
-</tbody></table></div>
-<p><a href="device-page.html">The page</a>, slot 7:</p>
-<div class="table"><table>
-<thead><tr><th><code>a7</code></th><th>Call</th><th>Arguments</th><th>Result</th><th>Class</th></tr></thead>
-<tbody>
-<tr><td><code>700h</code></td><td><code>submit</code></td><td><code>a0</code> = document address, <code>a1</code> = length</td><td>0 done, 1 rejected</td><td>deferred</td></tr>
-<tr><td><code>701h</code></td><td><code>clear</code></td><td>none</td><td>0</td><td>deferred</td></tr>
-<tr><td><code>702h</code></td><td><code>region</code></td><td><code>a0</code> = x, <code>a1</code> = y, <code>a2</code> = width, <code>a3</code> = height</td><td>0</td><td>deferred</td></tr>
-<tr><td><code>703h</code></td><td><code>scroll</code></td><td><code>a0</code> = y</td><td>0</td><td>deferred</td></tr>
-<tr><td><code>704h</code></td><td><code>background</code></td><td><code>a0</code> = colour</td><td>0</td><td>deferred</td></tr>
-<tr><td><code>705h</code></td><td><code>locate</code></td><td><code>a0</code> = anchor id</td><td>0 done, 1 rejected</td><td>answered</td></tr>
-</tbody></table></div>
-<p><a href="device-machines.html">Machines</a>, slot 8, the shell only (buffer sizes in bytes):</p>
-<div class="table"><table>
-<thead><tr><th><code>a7</code></th><th>Call</th><th>Arguments</th><th>Result</th></tr></thead>
-<tbody>
-<tr><td><code>800h</code></td><td><code>start</code></td><td><code>a0</code> = image ID (32, read)</td><td>a handle, or 0 if none is free</td></tr>
-<tr><td><code>801h</code></td><td><code>stop</code></td><td><code>a0</code> = handle</td><td>1, or 0 if not in use</td></tr>
-<tr><td><code>802h</code></td><td><code>place</code></td><td><code>a0</code> = handle, <code>a1</code> = x, <code>a2</code> = y, <code>a3</code> = width, <code>a4</code> = height</td><td>1, or 0 if not in use</td></tr>
-<tr><td><code>803h</code></td><td><code>run</code></td><td><code>a0</code> = handle, <code>a1</code> = 1 run, 0 pause</td><td>1, or 0 if refused</td></tr>
-<tr><td><code>804h</code></td><td><code>focus</code></td><td><code>a0</code> = handle, or 0</td><td>1, or 0 if refused</td></tr>
-<tr><td><code>805h</code></td><td><code>info</code></td><td><code>a0</code> = handle, <code>a1</code> = buffer (48, written)</td><td>1, or 0 if not 1 to 8</td></tr>
-<tr><td><code>806h</code></td><td><code>builtin</code></td><td><code>a0</code> = index, <code>a1</code> = buffer (32, written)</td><td>1, or 0 past the last</td></tr>
-<tr><td><code>807h</code></td><td><code>start_program</code></td><td><code>a0</code> = program record (read)</td><td>a handle, or 0 if none is free</td></tr>
-<tr><td><code>808h</code></td><td><code>identity</code></td><td><code>a0</code> = handle, <code>a1</code> = buffer (81, written)</td><td>1, or 0 if it has none</td></tr>
-<tr><td><code>809h</code></td><td><code>request</code></td><td><code>a0</code> = handle, <code>a1</code> = buffer (82, written)</td><td>1, or 0 if no request waits</td></tr>
-<tr><td><code>80Ah</code></td><td><code>argument</code></td><td><code>a0</code> = handle, <code>a1</code> = blob ID (32, read)</td><td>1, or 0 if not loading</td></tr>
-<tr><td><code>80Bh</code></td><td><code>snapshot</code></td><td><code>a0</code> = handle, <code>a1</code> = slot</td><td>1 accepted, 0 refused</td></tr>
-<tr><td><code>80Ch</code></td><td><code>restore</code></td><td><code>a0</code> = slot</td><td>a handle, or 0 if none is free or out of range</td></tr>
-<tr><td><code>80Dh</code></td><td><code>snapshot_info</code></td><td><code>a0</code> = slot, <code>a1</code> = buffer (122, written)</td><td>1 if it holds one, else 0</td></tr>
-<tr><td><code>80Eh</code></td><td><code>snapshot_delete</code></td><td><code>a0</code> = slot</td><td>1, or 0 if out of range</td></tr>
-<tr><td><code>80Fh</code></td><td><code>face</code></td><td><code>a0</code> = handle, <code>a1</code> = frames, <code>a2</code> = x, <code>a3</code> = y, <code>a4</code> = width, <code>a5</code> = height</td><td>1, or 0 if refused</td></tr>
-<tr><td><code>810h</code></td><td><code>unface</code></td><td><code>a0</code> = frames</td><td>1, or 0 if refused</td></tr>
-<tr><td><code>811h</code></td><td><code>experimental</code></td><td><code>a0</code> = handle, <code>a1</code> = index, <code>a2</code> = buffer (32, written)</td><td>2 granted, 1 not, 0 none</td></tr>
-</tbody></table></div>
-<p><a href="device-vector3.html">The 3D vector display</a>, slot 9:</p>
-<div class="table"><table>
-<thead><tr><th><code>a7</code></th><th>Call</th><th>Arguments</th><th>Result</th><th>Class</th></tr></thead>
-<tbody>
-<tr><td><code>900h</code></td><td><code>submit</code></td><td><code>a0</code> = list address, <code>a1</code> = length</td><td>0 done, 1 rejected</td><td>deferred</td></tr>
-<tr><td><code>901h</code></td><td><code>clear</code></td><td>none</td><td>0</td><td>deferred</td></tr>
-<tr><td><code>902h</code></td><td><code>style</code></td><td><code>a0</code> = style</td><td>0 done, 1 rejected</td><td>deferred</td></tr>
-<tr><td><code>903h</code></td><td><code>persistence</code></td><td><code>a0</code> = persistence</td><td>0 done, 1 rejected</td><td>deferred</td></tr>
-</tbody></table></div>
+<p>Every call of every device, with its number, arguments, result and class, is in <a href="machine-calls.html">the call table</a>.</p>
 <h2 id="screen-units">Screen units</h2>
 <p>Every device that draws, and the pointer, uses one coordinate system: the screen is 640 units wide and 480 high, (0, 0) at the top left, x to the right and y down. Units are square; the host shows the screen at a 4:3 shape, so a circle is round. A terminal cell is 8 units wide and 16 high: the cell at (column, row) starts at x = column × 8, y = row × 16. The vector displays use sixteenths of a unit for finer positions.</p>
 </article>
 </main>
-<footer><nav class="pn"><a rel="prev" href="performance-reports.html">← Performance reports</a><a rel="next" href="device-system.html">The system device (device 1) →</a></nav></footer>
+<footer><nav class="pn"><a rel="prev" href="performance-reports.html">← Performance reports</a><a rel="next" href="machine-calls.html">The call table →</a></nav></footer>
 </body>
 </html>

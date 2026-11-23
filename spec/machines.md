@@ -601,9 +601,9 @@ Provisional values (§provisional):
   request carries one blob ID or program identity, and its machine is not
   told what became of it); arguments other than one blob ID; budgets
   other than one full budget per machine per frame; giving a machine less
-  than the whole screen; a volume for each machine's sound, and sound placed
-  with a panel in the scene; what a host shows for a machine with no
-  picture; telling the shell when a view has finished moving.
+  than the whole screen; sound placed with a panel in the scene; what a
+  host shows for a machine with no picture; telling the shell when a view
+  has finished moving.
 - Snapshots (§machines.snapshots): saving them without the shell asking (a host
   has no shutdown notification yet), snapshots of the shell itself, moving
   a snapshot to another host, and a machine asking to be snapshotted.

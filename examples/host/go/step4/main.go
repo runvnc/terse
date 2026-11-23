@@ -39,7 +39,8 @@ func main() {
 	}
 	var grants, terminal []byte
 	if bus != nil {
-		grants, terminal = bus.Grants, bus.State(2)
+		grants = bus.Grants
+		terminal = bus.State(machine.Terminal)
 		bus.Close()
 	}
 	state := m.State(blake3.Sum256(file), grants, terminal)

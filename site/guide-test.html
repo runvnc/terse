@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Test your program in its window - the Tersenet manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Contents</a></nav></header>
+<main>
+<article>
+<h1 id="test-your-program-in-its-window">Test your program in its window</h1>
+<p><code>terse run</code> tests what a program computes: the screen and the state hash after scripted keys, the same on every computer. It does not show what the window shows over time: the picture as drawn, keys as a keyboard sends them, a part that flickers. <code>terse-host --drive</code> does. It runs the program in the real window with input from a script, and checks what the window shows.</p>
+<p>It never opens a window on your desktop: on Linux it starts a hidden display of its own (the compositor weston, which must be installed); on Windows and macOS it refuses. It runs the built <code>.terse</code> file, so it is the same for C and Rust programs. Here it tests <code>line.terse</code>, the program of &quot;Draw a line and read a key&quot;.</p>
+<h2 id="the-script">The script</h2>
+<p><code>line.drive</code>:</p>
+<pre>settle
+expect vectors contains line 5120 6400 5120 1280
+shot start.png
+press left
+press left
+settle
+expect vectors contains line 5120 6400 4800 1280
+expect idle 30
+shot left.png</pre>
+<p>One command a line, in order:</p>
+<ul>
+<li><code>settle</code> waits until the picture stops changing.</li>
+<li><code>expect vectors contains</code> fails unless the line display&#39;s list holds the rest of the line: here the line from (320, 400) to (320, 80), in sixteenths of a screen unit, as <code>terse run --dump-vectors</code> prints it.</li>
+<li><code>shot start.png</code> saves the picture as shown.</li>
+<li><code>press left</code> presses and releases the Left key, as a keyboard does.</li>
+<li><code>expect idle 30</code> fails if the picture changes in the next 30 frames: with no key pressed, nothing should move.</li>
+</ul>
+<h2 id="run-it">Run it</h2>
+<pre>terse-host line.terse --drive line.drive --renderer software</pre>
+<pre>frame 3-13: settle: 10 pictures, 0 changed,
+    settled (10 unchanged)
+frame 14: ok: vectors contains &quot;line 5120 6400 5120 1280&quot;
+frame 14: shot start.png (880x660)
+frame 22-32: settle: 10 pictures, 0 changed,
+    settled (10 unchanged)
+frame 33: ok: vectors contains &quot;line 5120 6400 4800 1280&quot;
+frame 33-63: expect idle 30: 30 pictures, 0 changed
+frame 63: ok: expect idle 30
+frame 64: shot left.png (880x660)
+drive: done, no expectation failed</pre>
+<p>Each line starts with the frame it looked at; the numbers vary a little from run to run, since the window runs in real time. (Two long lines are wrapped here.) The run ends with status 0, or 1 if an expectation failed: its line says <code>FAIL:</code> and what was there instead. <code>start.png</code> and <code>left.png</code> are the pictures. <code>--renderer software</code> draws without the graphics card, the same everywhere; leave it out to test the GPU&#39;s drawing.</p>
+<p>The same script runs headless, <code>terse run line.terse --events line.drive --frames 60 --dump --dump-vectors</code>: it gives the keys and passes over the window&#39;s commands.</p>
+<h2 id="what-you-have-now">What you have now</h2>
+<p>A test that sees what the user sees. <code>type</code>, <code>click</code>, <code>hold</code> and <code>resize</code> give other input; <code>dump page</code> prints the page as laid out; <code>expect no-slow</code> fails if a frame was late. Every command is in <a href="testing.html">Testing a program</a>. Next, a bigger step: <a href="guide-host.html">Make a host, step 1: run a program to its end</a>.</p>
+</article>
+</main>
+<footer><nav class="pn"><a rel="prev" href="guide-game-rust.html">← Make a small game in Rust</a><a rel="next" href="guide-host.html">Make a host →</a></nav></footer>
+</body>
+</html>

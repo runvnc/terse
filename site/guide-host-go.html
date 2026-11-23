@@ -13,10 +13,37 @@
 <h1 id="make-a-host-in-go-step-1-run-a-program-to-its-end">Make a host in Go, step 1: run a program to its end</h1>
 <p>This step reads a program file, sets up memory and runs the processor until the program calls <code>exit</code>. It is the package <code>machine</code> in <code>examples/host/go</code> (files <code>image.go</code>, <code>decode.go</code> and <code>cpu.go</code>) and the program <code>step1</code>. You need Go 1.22 or later. <code>gofmt</code> indents with tabs; here they are shown as four spaces.</p>
 <h2 id="the-program-file">The program file</h2>
-<p>A program file (<code>.terse</code>) is a 32-byte header, two bytes for each device the program uses, then the ROM: the program&#39;s code and data. <code>Load</code> checks the header and makes the processor at reset: the ROM at <code>0001_0000h</code>; the RAM, as many 8 KiB pages as the header asks for, all zero, at <code>0010_0000h</code>; <code>pc</code> on the first byte of ROM and the stack pointer <code>x2</code> at the end of RAM.</p>
+<p>A program file (<code>.terse</code>) is a 32-byte header, two bytes for each device the program uses, then the ROM: the program&#39;s code and data. <code>Load</code> checks the header and makes the processor at reset: the ROM at <code>0001_0000h</code>; the RAM, as many 8 KiB pages as the header asks for, all zero, at <code>0010_0000h</code>; <code>pc</code> on the first byte of ROM and the stack pointer <code>x2</code> at the end of RAM. The header:</p>
+<div class="table"><table>
+<thead><tr><th>Offset</th><th>Size</th><th>Field</th></tr></thead>
+<tbody>
+<tr><td>0</td><td>6</td><td><code>TERS</code>, format version 0, machine profile 1</td></tr>
+<tr><td>6</td><td>3</td><td>the ROM&#39;s length, at most 131,072 bytes</td></tr>
+<tr><td>9</td><td>1</td><td>RAM pages of 8 KiB, 1 to 128</td></tr>
+<tr><td>10</td><td>1</td><td>the number of devices, at most 16</td></tr>
+<tr><td>32</td><td>2 each</td><td>each device: its slot and version (<code>80h</code>: optional)</td></tr>
+</tbody></table></div>
+<p>Bytes 11 to 31 hold a title, which a host does not need. The rest is in <a href="machine.html">The Terse32 machine</a>, &quot;The image format&quot;.</p>
 <pre>package machine
 
-import &quot;errors&quot;
+import (
+    &quot;errors&quot;
+    &quot;strings&quot;
+)
+
+const (
+    headerSize  = 32
+    magic       = &quot;TERS\x00\x01&quot;
+    romLenAt    = 6
+    ramPagesAt  = 9
+    devicesAt   = 10
+    maxROM      = 131072
+    maxRAMPages = 128
+    maxDevices  = 16
+    deviceSize  = 2
+    PageSize    = 8192
+    optional    = 0x80
+)
 
 type Device struct {
     Slot, Version byte
@@ -24,25 +51,28 @@ type Device struct {
 }
 
 func Load(file []byte) (*CPU, []Device, error) {
-    if len(file) &lt; 32 || string(file[:6]) != &quot;TERS\x00\x01&quot; {
+    if len(file) &lt; headerSize ||
+        !strings.HasPrefix(string(file), magic) {
         return nil, nil, errors.New(&quot;not a Terse32 program&quot;)
     }
-    romLen := int(file[6]) | int(file[7])&lt;&lt;8 | int(file[8])&lt;&lt;16
-    pages, count := int(file[9]), int(file[10])
-    size := 32 + 2*count + romLen
-    if romLen &lt; 1 || romLen &gt; 131072 || pages &lt; 1 ||
-        pages &gt; 128 || count &gt; 16 || len(file) != size {
+    r := file[romLenAt:]
+    romLen := int(r[0]) | int(r[1])&lt;&lt;8 | int(r[2])&lt;&lt;16
+    pages, count := int(file[ramPagesAt]), int(file[devicesAt])
+    romAt := headerSize + deviceSize*count
+    if romLen &lt; 1 || romLen &gt; maxROM || pages &lt; 1 ||
+        pages &gt; maxRAMPages || count &gt; maxDevices ||
+        len(file) != romAt+romLen {
         return nil, nil, errors.New(&quot;a malformed program file&quot;)
     }
     var devices []Device
-    for i := 32; i &lt; 32+2*count; i += 2 {
+    for i := headerSize; i &lt; romAt; i += deviceSize {
         version := file[i+1]
-        devices = append(devices,
-            Device{file[i], version &amp; 0x7f, version&amp;0x80 != 0})
+        devices = append(devices, Device{file[i],
+            version &amp;^ optional, version&amp;optional != 0})
     }
-    cpu := &amp;CPU{PC: ROMBase, ROM: file[32+2*count:],
-        RAM: make([]byte, pages*8192)}
-    cpu.X[2] = RAMBase + uint32(len(cpu.RAM))
+    cpu := &amp;CPU{PC: ROMBase, ROM: file[romAt:],
+        RAM: make([]byte, pages*PageSize)}
+    cpu.X[SP] = RAMBase + uint32(len(cpu.RAM))
     return cpu, devices, nil
 }</pre>
 <p>The list of devices matters from step 3 on.</p>
@@ -117,9 +147,9 @@ func decode(i uint32) instruction {
     if raw&amp;3 != 3 {
         in, next = expand(raw), c.PC+2
     }
-    cost = 1
+    cost = ROMCost
     if c.PC &gt;= RAMBase {
-        cost = 4
+        cost = RAMCost
     }
     ecall, fault = c.execute(in, next)
     if fault != nil &amp;&amp; fault.Kind == Illegal {
@@ -218,7 +248,17 @@ func decode(i uint32) instruction {
 <p>The rest of <code>cpu.go</code> is the arithmetic of <code>alu</code> and <code>muldiv</code> (division by zero gives RISC-V&#39;s answers, not a trap), the branch conditions, and memory: <code>access</code> faults on a load or store that is misaligned or outside RAM (and ROM, for a load), checking alignment first.</p>
 <p>A fault stops the machine with <code>pc</code> on the faulting instruction, which is not carried out: an encoding the machine does not have (<code>ebreak</code> and the CSR instructions among them), a fetch, load or store outside memory, or a misaligned load or store.</p>
 <h2 id="calls">Calls</h2>
-<p><code>ecall</code> calls a device: <code>a7</code> (<code>x17</code>) holds the device&#39;s slot × 256 + the function, <code>a0</code> to <code>a5</code> (<code>x10</code> to <code>x15</code>) the arguments, and the result goes in <code>a0</code>. This step has one call, <code>exit</code>, <code>106h</code>; every other call returns <code>FFFF_FFFFh</code>, as a call the machine does not have must:</p>
+<p><code>ecall</code> calls a device: <code>a7</code> (<code>x17</code>) holds the device&#39;s slot × 256 + the function, <code>a0</code> to <code>a5</code> (<code>x10</code> to <code>x15</code>) the arguments, and the result goes in <code>a0</code>. <code>cpu.go</code> names these registers, the stack pointer and the result of a call the machine does not have, <code>FFFF_FFFFh</code>:</p>
+<pre>const (
+    SP = 2
+    A0 = 10
+    A1 = 11
+    A5 = 15
+    A7 = 17
+)
+
+const UnknownCall = 0xffffffff</pre>
+<p>This step has one call, <code>exit</code>, <code>106h</code>; every other call returns that result, as a call the machine does not have must:</p>
 <pre>package main
 
 import (
@@ -227,6 +267,8 @@ import (
 
     &quot;host/machine&quot;
 )
+
+const exit = 0x106
 
 func main() {
     file, err := os.ReadFile(os.Args[1])
@@ -245,11 +287,11 @@ func main() {
             fmt.Fprintln(os.Stderr, fault)
             os.Exit(1)
         }
-        if ecall &amp;&amp; cpu.X[17] == 0x106 {
-            os.Exit(int(cpu.X[10] &amp; 0xff))
+        if ecall &amp;&amp; cpu.X[machine.A7] == exit {
+            os.Exit(int(byte(cpu.X[machine.A0])))
         }
         if ecall {
-            cpu.X[10] = 0xffffffff
+            cpu.X[machine.A0] = machine.UnknownCall
         }
     }
 }</pre>
@@ -274,7 +316,7 @@ bin/step1 sum.terse
 echo $?</pre>
 <p>prints <code>186</code>. The reference gives the same: <code>terse run exit.terse --frames 1</code>, then <code>echo $?</code>.</p>
 <h2 id="what-you-have-now">What you have now</h2>
-<p>A Terse32 processor that runs a program to its end: <code>cpu.go</code> (271 lines), <code>decode.go</code> (122), <code>image.go</code> (31) and <code>step1/main.go</code> (34). Next, make it keep time: <a href="guide-host-go-frames.html">Make a host in Go, step 2: frames and the budget</a>.</p>
+<p>A Terse32 processor that runs a program to its end: <code>cpu.go</code> (283 lines), <code>decode.go</code> (122), <code>image.go</code> (51) and <code>step1/main.go</code> (36). Next, make it keep time: <a href="guide-host-go-frames.html">Make a host in Go, step 2: frames and the budget</a>.</p>
 <ul>
 <li>The same step in Rust: <a href="guide-host-rust.html">Make a host in Rust, step 1: run a program to its end</a>.</li>
 <li>Full implementations: <code>native/core-c/cpu.c</code> (C) and <code>crates/terse-core/src/cpu.rs</code> (the reference).</li>

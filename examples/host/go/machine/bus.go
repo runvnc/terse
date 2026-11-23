@@ -1,6 +1,7 @@
 package machine
 
 import (
+	"encoding/binary"
 	"fmt"
 	"io"
 	"net"
@@ -9,6 +10,76 @@ import (
 	"path/filepath"
 
 	"lukechampine.com/blake3"
+)
+
+const (
+	Terminal = 2
+	FullText = 10
+)
+
+const (
+	HELLO       = 0x01
+	OPEN        = 0x03
+	CALL        = 0x10
+	BEGIN       = 0x30
+	END         = 0x31
+	STATE       = 0x40
+	SHUTDOWN    = 0x60
+	REPLY       = 0x80
+	protocol    = 1
+	addressSize = 8
+	noSlot      = 0
+)
+
+const (
+	nameAt     = 4
+	lengthSize = 2
+	nativeSize = 4
+	layerSize  = 2
+	tookAt     = 1
+	took       = 1
+)
+
+const (
+	entrySize      = 64
+	functionAt     = 0
+	flagsAt        = 1
+	bufferAt       = 2
+	lengthAt       = 3
+	scaleAt        = 4
+	leastAt        = 8
+	mostAt         = 12
+	accessAt       = 16
+	checkedAt      = 17
+	checkedMostAt  = 20
+	lengthResultAt = 24
+	placeResultAt  = 28
+)
+
+const (
+	deferred       = 2
+	buffered       = 4
+	reads          = 1
+	writes         = 2
+	inROM          = 4
+	none           = 0xff
+	answeredCharge = 64
+)
+
+const (
+	setsA1        = 1
+	a0At          = 4
+	a1At          = 8
+	chargeAt      = 12
+	writeCountAt  = 16
+	writesAt      = 20
+	writeLengthAt = 4
+	writeDataAt   = 8
+)
+
+const (
+	inputsChargeAt = 4
+	sectionAt      = 8
 )
 
 type Bus struct {
@@ -39,24 +110,31 @@ func Start(command string, m *Machine, file []byte,
 
 	var ask []byte
 	for _, d := range devices {
-		if d.Slot == 2 || d.Slot == 10 {
+		if d.Slot == Terminal || d.Slot == FullText {
 			ask = append(ask, d.Slot)
 		}
 	}
-	hello := []byte{0x01, 1, 0, 0, 0, 0, 0, 0, byte(len(ask))}
-	hello = append(hello, ask...)
+	hello := []byte{HELLO, protocol, 0, 0, 0, 0, 0, 0}
+	hello = append(append(hello, byte(len(ask))), ask...)
 	hello = le.AppendUint16(hello, uint16(len(dir)))
 	hello = append(append(hello, dir...), 0, 0)
-	reply := b.request(0, 0x81, hello)
-	at := 10 + int(le.Uint16(reply[4:]))
+	rest := b.request(noSlot, hello)[nameAt:]
+	take := func(n int) []byte {
+		taken := rest[:n]
+		rest = rest[n:]
+		return taken
+	}
+	length := le.Uint16(take(lengthSize))
+	take(int(length) + nativeSize)
 	versions := map[byte]byte{}
-	for range reply[at] {
-		slot, version := reply[at+1], reply[at+2]
-		at += 4 + 2*int(reply[at+3])
+	for range take(1)[0] {
+		slot, version := take(1)[0], take(1)[0]
+		layers := int(take(1)[0])
+		take(layerSize * layers)
 		table := map[uint32][]byte{}
-		for range reply[at] {
-			table[uint32(reply[at+1])] = reply[at+1 : at+65]
-			at += 64
+		for range take(1)[0] {
+			entry := take(entrySize)
+			table[uint32(entry[functionAt])] = entry
 		}
 		b.tables[uint32(slot)], versions[slot] = table, version
 	}
@@ -76,13 +154,12 @@ func Start(command string, m *Machine, file []byte,
 		}
 	}
 	id := blake3.Sum256(file)
-	open := append([]byte{0x03, 0, 0, 0}, id[:]...)
-	open = le.AppendUint32(open, uint32(len(m.ROM)))
-	open = le.AppendUint32(open, uint32(len(m.RAM)))
-	open = append(open, 0, 0, byte(len(has)/2))
+	open := append([]byte{OPEN, 0, 0, 0}, id[:]...)
+	open = words(open, uint32(len(m.ROM)), uint32(len(m.RAM)))
+	open = append(open, 0, 0, byte(len(has)/deviceSize))
 	open = append(append(open, has...), 0)
-	reply = b.request(0, 0x83, append(open, m.ROM...))
-	if reply[1] != 1 {
+	reply := b.request(noSlot, append(open, m.ROM...))
+	if reply[tookAt] != took {
 		check(fmt.Errorf("the driver will not run the program"))
 	}
 	return b
@@ -95,107 +172,117 @@ func check(err error) {
 	}
 }
 
+func words(b []byte, values ...uint32) []byte {
+	for _, v := range values {
+		b = le.AppendUint32(b, v)
+	}
+	return b
+}
+
 func (b *Bus) send(slot byte, body []byte) {
-	message := le.AppendUint32(nil, uint32(8+len(body)))
+	message := words(nil, uint32(addressSize+len(body)))
 	message = append(message, 0, 0, 0, 0, slot, 0, 0, 0)
 	_, err := b.conn.Write(append(message, body...))
 	check(err)
 }
 
-func (b *Bus) request(slot, want byte, body []byte) []byte {
+func (b *Bus) request(slot byte, body []byte) []byte {
 	b.send(slot, body)
-	var length [4]byte
-	_, err := io.ReadFull(b.conn, length[:])
+	var length uint32
+	check(binary.Read(b.conn, le, &length))
+	reply := make([]byte, length)
+	_, err := io.ReadFull(b.conn, reply)
 	check(err)
-	reply := make([]byte, le.Uint32(length[:]))
-	_, err = io.ReadFull(b.conn, reply)
-	check(err)
-	if len(reply) < 9 || reply[8] != want {
-		check(fmt.Errorf("the driver said %q", reply[8:]))
+	reply = reply[addressSize:]
+	if len(reply) == 0 || reply[0] != body[0]|REPLY {
+		check(fmt.Errorf("the driver said %q", reply))
 	}
-	return reply[8:]
-}
-
-func (b *Bus) Begin(frame uint32) int64 {
-	begin := le.AppendUint32([]byte{0x30, 0, 0, 0}, frame)
-	begin = append(begin, make([]byte, 12)...)
-	return int64(le.Uint32(b.request(0, 0xb0, begin)[4:]))
+	return reply
 }
 
 func (b *Bus) Call(slot, fn uint32) (uint32, int64) {
 	m := b.m
 	entry := b.tables[slot][fn]
 	if entry == nil {
-		return 0xffffffff, 4
+		return UnknownCall, BaseCharge
 	}
-	charge := int64(64)
-	if entry[1]&2 != 0 {
-		charge = 4
+	field := func(at int) uint32 {
+		return le.Uint32(entry[at:])
 	}
-	args, access := m.X[10:16], entry[16]
-	addr := args[entry[2]]
+	flags, access := entry[flagsAt], entry[accessAt]
+	charge := int64(answeredCharge)
+	if flags&deferred != 0 {
+		charge = BaseCharge
+	}
+	args := m.X[A0 : A5+1]
+	addr := args[entry[bufferAt]]
 	var buffer []byte
-	if entry[1]&4 != 0 {
-		size := uint64(le.Uint32(entry[4:]))
-		if entry[3] != 0xff {
-			size *= uint64(args[entry[3]])
+	if flags&buffered != 0 {
+		size := uint64(field(scaleAt))
+		if entry[lengthAt] != none {
+			size *= uint64(args[entry[lengthAt]])
 		}
-		if size < uint64(le.Uint32(entry[8:])) ||
-			size > uint64(le.Uint32(entry[12:])) {
-			return le.Uint32(entry[24:]), charge
+		if size < uint64(field(leastAt)) ||
+			size > uint64(field(mostAt)) {
+			return field(lengthResultAt), charge
 		}
-		ramOnly := access&4 == 0 || access&2 != 0
+		ramOnly := access&inROM == 0 || access&writes != 0
 		buffer = m.Memory(addr, uint32(size), ramOnly)
 		if buffer == nil && size > 0 {
-			return le.Uint32(entry[28:]), charge
+			return field(placeResultAt), charge
 		}
 	}
-	checked, most := entry[17], le.Uint32(entry[20:])
-	if checked != 0xff && args[checked] > most {
-		return le.Uint32(entry[28:]), charge
+	checked := entry[checkedAt]
+	if checked != none && args[checked] > field(checkedMostAt) {
+		return field(placeResultAt), charge
 	}
 
-	call := []byte{0x10, byte(fn), 0, 0}
-	for _, a := range args {
-		call = le.AppendUint32(call, a)
-	}
-	call = le.AppendUint64(call, uint64(m.Budget-4))
-	if access&1 == 0 {
-		call = le.AppendUint32(call, 0)
+	call := words([]byte{CALL, byte(fn), 0, 0}, args...)
+	call = le.AppendUint64(call, uint64(m.Budget-BaseCharge))
+	if access&reads == 0 {
+		call = words(call, 0)
 	} else {
-		call = le.AppendUint32(call, uint32(len(buffer)))
+		call = words(call, uint32(len(buffer)))
 		call = append(call, buffer...)
 	}
-	reply := b.request(byte(slot), 0x90, call)
-	if reply[1]&1 != 0 {
-		m.X[11] = le.Uint32(reply[8:])
+	reply := b.request(byte(slot), call)
+	if reply[flagsAt]&setsA1 != 0 {
+		m.X[A1] = le.Uint32(reply[a1At:])
 	}
-	at := 20
-	for range le.Uint32(reply[16:]) {
-		offset := uint64(le.Uint32(reply[at:]) - addr)
-		size := uint64(le.Uint32(reply[at+4:]))
-		if access&2 == 0 || offset+size > uint64(len(buffer)) {
+	at := writesAt
+	for range le.Uint32(reply[writeCountAt:]) {
+		write := reply[at:]
+		offset := uint64(le.Uint32(write) - addr)
+		size := le.Uint32(write[writeLengthAt:])
+		end := offset + uint64(size)
+		if access&writes == 0 || end > uint64(len(buffer)) {
 			check(fmt.Errorf("a write outside the buffer"))
 		}
-		copy(buffer[offset:], reply[at+8:at+8+int(size)])
-		at += 8 + int(size)
+		copy(buffer[offset:], write[writeDataAt:][:size])
+		at += writeDataAt + int(size)
 	}
-	extra := int64(le.Uint32(reply[12:]))
-	return le.Uint32(reply[4:]), charge + extra
+	extra := int64(le.Uint32(reply[chargeAt:]))
+	return le.Uint32(reply[a0At:]), charge + extra
+}
+
+func (b *Bus) Begin(frame uint32) int64 {
+	begin := words([]byte{BEGIN, 0, 0, 0}, frame, 0, 0, 0)
+	reply := b.request(noSlot, begin)
+	return int64(le.Uint32(reply[inputsChargeAt:]))
 }
 
 func (b *Bus) End() {
 	stopped := byte(flag(b.m.Stopped != Running))
-	end := []byte{0x31, stopped, 0, 0}
-	b.send(0, le.AppendUint32(end, b.m.Frame))
+	end := words([]byte{END, stopped, 0, 0}, b.m.Frame)
+	b.send(noSlot, end)
 }
 
 func (b *Bus) State(slot byte) []byte {
-	return b.request(slot, 0xc0, []byte{0x40})[8:]
+	return b.request(slot, []byte{STATE})[sectionAt:]
 }
 
 func (b *Bus) Close() {
-	b.send(0, []byte{0x60})
+	b.send(noSlot, []byte{SHUTDOWN})
 	b.conn.Close()
 	b.driver.Wait()
 	os.RemoveAll(b.dir)

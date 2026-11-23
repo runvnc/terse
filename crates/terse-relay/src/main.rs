@@ -31,8 +31,9 @@ Limits for a public relay (README \"Running a public relay\"); all off unless gi
                             --uploads-per-minute 120 --upload-bytes-per-hour 32M
                             --new-feeds-per-hour 3 --new-feeds-per-hour-total 60
                             --finds-per-minute 60 --connections-per-address 32
-                            --max-connections 150 --status-every 10m (memory at
-                            worst about 514 MiB: the status line says)
+                            --max-connections 150 --subscriptions-per-connection 1024
+                            --status-every 10m (memory at worst about 514 MiB: the
+                            status line says)
   --feed-bytes <size|none>  bytes of the blobs one feed's entries name, at most;
                             older entries are dropped to make room
   --unreferenced-time <time|forever>
@@ -47,6 +48,7 @@ Limits for a public relay (README \"Running a public relay\"); all off unless gi
   --finds-per-minute <n>    finds and lookups per address
   --no-rate-limits          none of the five above
   --connections-per-address <n|none>, --max-connections <n|none>
+  --subscriptions-per-connection <n|none>  feeds one connection may subscribe to
   --memory <size>           the most memory to take at worst: sets --max-connections
                             (3 MiB each, 64 MiB besides, and the index of what is held)
   --deny <file>             the operator's deny list (feed <key>, blob <id>,
@@ -59,7 +61,8 @@ Limits for a public relay (README \"Running a public relay\"); all off unless gi
                             names (repeatable; @<file>: the ranges in a file, one a line)
   --ping-every <time|never> a ping on a silent connection (default 30s)
   --status-every <time|never>  a status line on stderr; --status-file <path>: kept
-                            up to date in a file (every 5 s)
+                            up to date in a file (every 5 s), with a line for each
+                            table or log that could grow and its bound
   An IPv6 client is counted per /64.";
 
 fn main() -> ExitCode {
@@ -284,6 +287,11 @@ fn run(args: Vec<String>) -> Result<(), String> {
             "--max-connections" => {
                 let v = value()?;
                 policy.max_connections = optional(&v, &["none"], |s| s.parse().ok().filter(|&n| n > 0)).ok_or(bad(&v))?;
+            }
+            "--subscriptions-per-connection" => {
+                let v = value()?;
+                policy.subscriptions_per_connection =
+                    optional(&v, &["none"], |s| s.parse().ok().filter(|&n| n > 0)).ok_or(bad(&v))?;
             }
             "--writers" => policy.writers = Some(value()?.into()),
             "--deny" => policy.deny = Some(value()?.into()),

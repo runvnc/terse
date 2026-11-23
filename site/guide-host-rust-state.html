@@ -16,6 +16,14 @@
 <p>Between frames, a machine&#39;s whole state is one string of bytes; its BLAKE3-256 hash is the state hash. Two hosts given the same program and input agree exactly when their hashes agree after every frame.</p>
 <pre>use crate::frames::{Machine, Status};
 
+const STATE_TAG: &amp;[u8] = b&quot;terse-state-1&quot;;
+const EMPTY_SYSTEM: usize = 37;
+const ABSENT: u8 = 0;
+const PRESENT: u8 = 1;
+const RUNNING: u8 = 0;
+const EXITED: u8 = 1;
+const FAULTED: u8 = 2;
+
 impl Machine {
     pub fn state(
         &amp;self,
@@ -23,7 +31,7 @@ impl Machine {
         grants: &amp;[u8],
         terminal: Option&lt;&amp;[u8]&gt;,
     ) -&gt; Vec&lt;u8&gt; {
-        let mut state = b&quot;terse-state-1&quot;.to_vec();
+        let mut state = STATE_TAG.to_vec();
         state.extend(id);
         state.extend(self.cpu.pc.to_le_bytes());
         for x in &amp;self.cpu.x[1..] {
@@ -31,9 +39,9 @@ impl Machine {
         }
         state.extend(self.frame.to_le_bytes());
         let (stopped, code, fault) = match self.status {
-            Status::Running =&gt; (0, 0, None),
-            Status::Exited(code) =&gt; (1, code, None),
-            Status::Faulted(fault) =&gt; (2, 0, Some(fault)),
+            Status::Running =&gt; (RUNNING, 0, None),
+            Status::Exited(code) =&gt; (EXITED, code, None),
+            Status::Faulted(fault) =&gt; (FAULTED, 0, Some(fault)),
         };
         let kind = fault.map_or(0, |f| f.kind as u8);
         state.extend([stopped, code, kind]);
@@ -48,22 +56,23 @@ impl Machine {
         }
         state.extend(&amp;self.cpu.ram);
         state.extend(grants);
-        state.extend([0; 37]);
+        state.extend([0; EMPTY_SYSTEM]);
         match terminal {
             Some(section) =&gt; {
-                state.push(1);
+                state.push(PRESENT);
                 state.extend(section);
             }
-            None =&gt; state.push(0),
+            None =&gt; state.push(ABSENT),
         }
-        state.extend([0, 0, 0]);
+        state.extend([ABSENT, ABSENT, ABSENT]);
         state
     }
 }</pre>
-<p>In order: <code>terse-state-1</code> and the image ID; <code>pc</code> and the registers <code>x1</code> to <code>x31</code>; the frame counter, how the machine stopped (0 running, 1 exited, 2 faulted), the exit code, and a fault&#39;s kind, encoding, <code>pc</code> and address; the budget carried into the next frame; the RAM; one byte per optional device, 1 if granted. Then the System device: 37 zero bytes here (the time, 0 in a test; an empty event queue; four controllers, none connected). Then each device&#39;s section in a fixed order, from its driver&#39;s STATE: the terminal&#39;s with a byte 1 before it, or a 0 for a machine without one; then a 0 each for the vector display, content and the page, which this host never has.</p>
+<p>In order: <code>terse-state-1</code> and the image ID; <code>pc</code> and the registers <code>x1</code> to <code>x31</code>; the frame counter, how the machine stopped (0 running, 1 exited, 2 faulted), the exit code, and a fault&#39;s kind, encoding, <code>pc</code> and address; the budget carried into the next frame; the RAM; one byte per optional device, 1 if granted. Then the System device, <code>EMPTY_SYSTEM</code>: 37 zero bytes here (the time, 4 bytes, 0 in a test; an event count of 0, 1 byte; four controllers of 8 bytes, none connected). Then each device&#39;s section in a fixed order, from its driver&#39;s STATE: the terminal&#39;s after <code>PRESENT</code> (1), or <code>ABSENT</code> (0) for a machine without one; then a 0 each for the vector display, content and the page, which this host never has.</p>
 <h2 id="the-program">The program</h2>
-<pre>use host::bus::Bus;
-use host::frames::{Machine, Status};
+<pre>use host::bus::{Bus, TERMINAL};
+use host::cpu::UNKNOWN_CALL;
+use host::frames::{BASE_CHARGE, Machine, Status};
 use host::image::load;
 use std::error::Error;
 use std::process::exit;
@@ -82,7 +91,7 @@ fn main() -&gt; Result&lt;(), Box&lt;dyn Error&gt;&gt; {
         }
         m.run_frame(|cpu, budget, slot, function| {
             let Some(bus) = &amp;mut bus else {
-                return (u32::MAX, 4);
+                return (UNKNOWN_CALL, BASE_CHARGE);
             };
             bus.call(cpu, budget, slot, function)
         });
@@ -92,7 +101,7 @@ fn main() -&gt; Result&lt;(), Box&lt;dyn Error&gt;&gt; {
     }
     let (grants, terminal) = match bus {
         Some(mut bus) =&gt; {
-            let terminal = bus.state(2);
+            let terminal = bus.state(TERMINAL);
             let grants = std::mem::take(&amp;mut bus.grants);
             bus.close();
             (grants, Some(terminal))
@@ -142,7 +151,7 @@ done</pre>
 </ul>
 <p><code>tcore</code> (<code>native/core-c</code>) has all of it but snapshots in about 1,580 lines of C; <code>crates/terse-core</code> is the reference.</p>
 <h2 id="what-you-have-now">What you have now</h2>
-<p>A host that runs Terse32 programs exactly as the reference does, and proves it: <code>state.rs</code>, 46 lines, <code>bin/step4.rs</code>, 50; 940 lines in all. Next, write a device as a separate program: <a href="guide-device.html">Make a device</a>.</p>
+<p>A host that runs Terse32 programs exactly as the reference does, and proves it: <code>state.rs</code>, 54 lines, <code>bin/step4.rs</code>, 51; 1,060 lines in all. Next, write a device as a separate program: <a href="guide-device.html">Make a device</a>.</p>
 <ul>
 <li>The same step in Go: &quot;Make a host in Go, step 4: prove it exact&quot;, the page before this one.</li>
 <li>The rules: <a href="state.html">State, replay and conformance</a>, sections &quot;The state serialization&quot;, &quot;The hash&quot;, &quot;Snapshots&quot; and &quot;The conformance image&quot;; the input in <a href="events.html">Events and input</a>.</li>

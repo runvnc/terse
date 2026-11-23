@@ -4,12 +4,39 @@ This step reads a program file, sets up memory and runs the processor until the 
 
 ## The program file
 
-A program file (`.terse`) is a 32-byte header, two bytes for each device the program uses, then the ROM: the program's code and data. `Load` checks the header and makes the processor at reset: the ROM at `0001_0000h`; the RAM, as many 8 KiB pages as the header asks for, all zero, at `0010_0000h`; `pc` on the first byte of ROM and the stack pointer `x2` at the end of RAM.
+A program file (`.terse`) is a 32-byte header, two bytes for each device the program uses, then the ROM: the program's code and data. `Load` checks the header and makes the processor at reset: the ROM at `0001_0000h`; the RAM, as many 8 KiB pages as the header asks for, all zero, at `0010_0000h`; `pc` on the first byte of ROM and the stack pointer `x2` at the end of RAM. The header:
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 6 | `TERS`, format version 0, machine profile 1 |
+| 6 | 3 | the ROM's length, at most 131,072 bytes |
+| 9 | 1 | RAM pages of 8 KiB, 1 to 128 |
+| 10 | 1 | the number of devices, at most 16 |
+| 32 | 2 each | each device: its slot and version (`80h`: optional) |
+
+Bytes 11 to 31 hold a title, which a host does not need. The rest is in [The Terse32 machine](terse:eb5e8f78d92c0dde2ae30f3c08aa4326196dddf37d5986350c9d13121701897d), "The image format".
 
 ```go from examples/host/go/machine/image.go
 package machine
 
-import "errors"
+import (
+    "errors"
+    "strings"
+)
+
+const (
+    headerSize  = 32
+    magic       = "TERS\x00\x01"
+    romLenAt    = 6
+    ramPagesAt  = 9
+    devicesAt   = 10
+    maxROM      = 131072
+    maxRAMPages = 128
+    maxDevices  = 16
+    deviceSize  = 2
+    PageSize    = 8192
+    optional    = 0x80
+)
 
 type Device struct {
     Slot, Version byte
@@ -17,25 +44,28 @@ type Device struct {
 }
 
 func Load(file []byte) (*CPU, []Device, error) {
-    if len(file) < 32 || string(file[:6]) != "TERS\x00\x01" {
+    if len(file) < headerSize ||
+        !strings.HasPrefix(string(file), magic) {
         return nil, nil, errors.New("not a Terse32 program")
     }
-    romLen := int(file[6]) | int(file[7])<<8 | int(file[8])<<16
-    pages, count := int(file[9]), int(file[10])
-    size := 32 + 2*count + romLen
-    if romLen < 1 || romLen > 131072 || pages < 1 ||
-        pages > 128 || count > 16 || len(file) != size {
+    r := file[romLenAt:]
+    romLen := int(r[0]) | int(r[1])<<8 | int(r[2])<<16
+    pages, count := int(file[ramPagesAt]), int(file[devicesAt])
+    romAt := headerSize + deviceSize*count
+    if romLen < 1 || romLen > maxROM || pages < 1 ||
+        pages > maxRAMPages || count > maxDevices ||
+        len(file) != romAt+romLen {
         return nil, nil, errors.New("a malformed program file")
     }
     var devices []Device
-    for i := 32; i < 32+2*count; i += 2 {
+    for i := headerSize; i < romAt; i += deviceSize {
         version := file[i+1]
-        devices = append(devices,
-            Device{file[i], version & 0x7f, version&0x80 != 0})
+        devices = append(devices, Device{file[i],
+            version &^ optional, version&optional != 0})
     }
-    cpu := &CPU{PC: ROMBase, ROM: file[32+2*count:],
-        RAM: make([]byte, pages*8192)}
-    cpu.X[2] = RAMBase + uint32(len(cpu.RAM))
+    cpu := &CPU{PC: ROMBase, ROM: file[romAt:],
+        RAM: make([]byte, pages*PageSize)}
+    cpu.X[SP] = RAMBase + uint32(len(cpu.RAM))
     return cpu, devices, nil
 }
 ```
@@ -126,9 +156,9 @@ func (c *CPU) Step() (cost int64, ecall bool, fault *Fault) {
     if raw&3 != 3 {
         in, next = expand(raw), c.PC+2
     }
-    cost = 1
+    cost = ROMCost
     if c.PC >= RAMBase {
-        cost = 4
+        cost = RAMCost
     }
     ecall, fault = c.execute(in, next)
     if fault != nil && fault.Kind == Illegal {
@@ -236,7 +266,21 @@ A fault stops the machine with `pc` on the faulting instruction, which is not ca
 
 ## Calls
 
-`ecall` calls a device: `a7` (`x17`) holds the device's slot × 256 + the function, `a0` to `a5` (`x10` to `x15`) the arguments, and the result goes in `a0`. This step has one call, `exit`, `106h`; every other call returns `FFFF_FFFFh`, as a call the machine does not have must:
+`ecall` calls a device: `a7` (`x17`) holds the device's slot × 256 + the function, `a0` to `a5` (`x10` to `x15`) the arguments, and the result goes in `a0`. `cpu.go` names these registers, the stack pointer and the result of a call the machine does not have, `FFFF_FFFFh`:
+
+```go from examples/host/go/machine/cpu.go
+const (
+    SP = 2
+    A0 = 10
+    A1 = 11
+    A5 = 15
+    A7 = 17
+)
+
+const UnknownCall = 0xffffffff
+```
+
+This step has one call, `exit`, `106h`; every other call returns that result, as a call the machine does not have must:
 
 ```go from examples/host/go/step1/main.go
 package main
@@ -247,6 +291,8 @@ import (
 
     "host/machine"
 )
+
+const exit = 0x106
 
 func main() {
     file, err := os.ReadFile(os.Args[1])
@@ -265,11 +311,11 @@ func main() {
             fmt.Fprintln(os.Stderr, fault)
             os.Exit(1)
         }
-        if ecall && cpu.X[17] == 0x106 {
-            os.Exit(int(cpu.X[10] & 0xff))
+        if ecall && cpu.X[machine.A7] == exit {
+            os.Exit(int(byte(cpu.X[machine.A0])))
         }
         if ecall {
-            cpu.X[10] = 0xffffffff
+            cpu.X[machine.A0] = machine.UnknownCall
         }
     }
 }
@@ -311,8 +357,8 @@ prints `186`. The reference gives the same: `terse run exit.terse --frames 1`, t
 
 ## What you have now
 
-A Terse32 processor that runs a program to its end: `cpu.go` (271 lines), `decode.go` (122), `image.go` (31) and `step1/main.go` (34). Next, make it keep time: [Make a host in Go, step 2: frames and the budget](terse:91e5ef619206107781f03da15766f4a8559c3a16b8cc7975bf056051ef6e2258).
+A Terse32 processor that runs a program to its end: `cpu.go` (283 lines), `decode.go` (122), `image.go` (51) and `step1/main.go` (36). Next, make it keep time: [Make a host in Go, step 2: frames and the budget](terse:f92c55521e410cfe70292f2fdf956ad1c4f9e76bb5cbae3de2a83398ed7c5762).
 
-- The same step in Rust: [Make a host in Rust, step 1: run a program to its end](terse:c0f3ee11e17b738f171fc48f3381a0cf767cfc3662804e07cc30754cf4b24d4a).
+- The same step in Rust: [Make a host in Rust, step 1: run a program to its end](terse:11d2fced88033a02d2e9d351c25e95e1b125f90a7e848e5ff6af85e16e86e336).
 - Full implementations: `native/core-c/cpu.c` (C) and `crates/terse-core/src/cpu.rs` (the reference).
-- The rules: [The Terse32 machine](terse:0e6aff25e1297b4bfda4bb39410090ef587db4bc6ec659386f0b5576d148c3c0), sections "CPU", "Memory map", "Reset state", "Stopping and faults", "The image format" and "Calls".
+- The rules: [The Terse32 machine](terse:eb5e8f78d92c0dde2ae30f3c08aa4326196dddf37d5986350c9d13121701897d), sections "CPU", "Memory map", "Reset state", "Stopping and faults", "The image format" and "Calls".

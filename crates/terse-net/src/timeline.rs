@@ -8,6 +8,16 @@
 //! sync` and a running host) interleave whole records. The order is
 //! therefore the same after a restart. Readers keep the first record for an
 //! entry and ignore a torn record at the end.
+//!
+//! A relay, which drops entries (NETWORK 5.3), rewrites the log with only
+//! the entries it still keeps ([`Compaction`]), a batch at a time: the
+//! records are copied to `arrivals.compact` beside it, the copy is synced,
+//! and it is renamed over the log. A crash before the rename leaves the log
+//! as it was (the copy is removed at the next start); one after it leaves
+//! the copy, of which at most the records copied after the sync may be
+//! missing or torn, and a relay records every entry it holds that the log
+//! lacks when it starts. A host never compacts: its log is also the
+//! record of entries of feeds it unsubscribed from (NETWORK 4.4).
 
 use std::collections::HashSet;
 use std::fs;
@@ -48,6 +58,57 @@ impl Arrivals {
         fs::OpenOptions::new().create(true).append(true).open(&self.path)?.write_all(&record)
     }
 
+    /// The log's file.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// The bytes of the log's file (0 if there is none).
+    pub fn file_bytes(&self) -> u64 {
+        fs::metadata(&self.path).map_or(0, |m| m.len())
+    }
+
+    /// Where a compaction writes its copy.
+    pub fn compaction_path(&self) -> PathBuf {
+        self.path.with_file_name("arrivals.compact")
+    }
+
+    /// Removes the copy a compaction stopped by a crash left (the log
+    /// itself is whole: the copy replaces it only once complete).
+    pub fn remove_leftover(&self) -> io::Result<()> {
+        match fs::remove_file(self.compaction_path()) {
+            Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
+            _ => Ok(()),
+        }
+    }
+
+    /// Cuts a torn record off the end of the file (one a crash left), so
+    /// that the records appended after it are whole; true if there was
+    /// one. Only for a log no other process appends to (a relay's, when
+    /// it starts).
+    pub fn cut_torn(&mut self) -> io::Result<bool> {
+        let len = self.file_bytes();
+        let whole = len - len % RECORD as u64;
+        if whole == len {
+            return Ok(false);
+        }
+        let file = fs::OpenOptions::new().write(true).open(&self.path)?;
+        file.set_len(whole)?;
+        file.sync_all()?;
+        Ok(true)
+    }
+
+    /// Starts rewriting the log with only the entries still kept.
+    pub fn start_compaction(&mut self) -> io::Result<Compaction> {
+        let before = self.order()?.len();
+        let temp = self.compaction_path();
+        if let Some(dir) = temp.parent() {
+            fs::create_dir_all(dir)?;
+        }
+        let file = fs::OpenOptions::new().create(true).write(true).truncate(true).open(&temp)?;
+        Ok(Compaction { temp, file, cursor: 0, kept: Vec::new(), before, synced_at: None })
+    }
+
     /// Every recorded entry, oldest first, including records appended by
     /// other processes since the last call.
     pub fn order(&mut self) -> io::Result<&[(FeedKey, u32)]> {
@@ -68,6 +129,100 @@ impl Arrivals {
         self.read += (fresh.len() - fresh.len() % RECORD) as u64;
         Ok(&self.order)
     }
+}
+
+/// A rewriting of an [`Arrivals`] log that keeps only some of its records,
+/// in their order, done a batch at a time ([`Self::copy`]) so that whoever
+/// shares the log is not held up for long; the log takes records meanwhile.
+pub struct Compaction {
+    temp: PathBuf,
+    file: fs::File,
+    /// Records of the log looked at so far.
+    cursor: usize,
+    /// The records copied, in order.
+    kept: Vec<(FeedKey, u32)>,
+    /// Records in the log when it began.
+    pub before: usize,
+    /// The cursor when the copy was last synced.
+    synced_at: Option<usize>,
+}
+
+impl Compaction {
+    /// Looks at up to `max` records after the cursor (fewer if `stop` says
+    /// so after one of them), copying those that `keep` says are kept.
+    /// Returns how many it looked at, and whether the cursor is at the end
+    /// of the log.
+    pub fn copy(
+        &mut self,
+        log: &mut Arrivals,
+        max: usize,
+        mut keep: impl FnMut(&FeedKey, u32) -> bool,
+        mut stop: impl FnMut() -> bool,
+    ) -> io::Result<(usize, bool)> {
+        let order = log.order()?;
+        let mut bytes = Vec::new();
+        let mut looked = 0;
+        for &(feed, seq) in order.iter().skip(self.cursor).take(max) {
+            if looked > 0 && stop() {
+                break;
+            }
+            looked += 1;
+            if keep(&feed, seq) {
+                bytes.extend_from_slice(&feed);
+                bytes.extend_from_slice(&seq.to_le_bytes());
+                self.kept.push((feed, seq));
+            }
+        }
+        self.file.write_all(&bytes)?;
+        self.cursor += looked;
+        Ok((looked, self.cursor == order.len()))
+    }
+
+    /// Whether every record up to the cursor is copied and synced.
+    pub fn synced(&self) -> bool {
+        self.synced_at == Some(self.cursor)
+    }
+
+    /// Records copied so far.
+    pub fn kept(&self) -> usize {
+        self.kept.len()
+    }
+
+    /// Makes the copy durable so far (an fsync: done without holding up
+    /// the log's other users).
+    pub fn sync(&mut self) -> io::Result<()> {
+        self.file.sync_all()?;
+        self.synced_at = Some(self.cursor);
+        Ok(())
+    }
+
+    /// Replaces the log with the copy, which must have reached its end (a
+    /// [`Self::copy`] that said so, with the log not touched since).
+    /// Returns the copy's file and its directory, to be synced again with
+    /// [`sync_finished`] (without holding up the log's other users), which
+    /// makes the records copied since [`Self::sync`] durable too.
+    pub fn finish(self, log: &mut Arrivals) -> io::Result<(fs::File, PathBuf)> {
+        fs::rename(&self.temp, &log.path)?;
+        log.read = (self.kept.len() * RECORD) as u64;
+        log.seen = self.kept.iter().copied().collect();
+        log.order = self.kept;
+        let dir = log.path.parent().map(Path::to_path_buf).unwrap_or_default();
+        Ok((self.file, dir))
+    }
+
+    /// Gives up: the log stays as it is and the copy is removed.
+    pub fn abandon(self) {
+        let _ = fs::remove_file(&self.temp);
+    }
+}
+
+/// Syncs what [`Compaction::finish`] returned: the file, and the directory
+/// that holds the rename.
+pub fn sync_finished(file: &fs::File, dir: &Path) -> io::Result<()> {
+    file.sync_all()?;
+    #[cfg(unix)]
+    fs::File::open(dir)?.sync_all()?;
+    Ok(())
 }
 
 /// Whole records from `records`, appended while they fit in `length` bytes
@@ -134,6 +289,52 @@ mod tests {
         f.write_all(&7u32.to_le_bytes()).unwrap();
         assert_eq!(a.order().unwrap()[3], ([3; 32], 7));
         // A restart reads the same order.
+        assert_eq!(Arrivals::beside_blobs(dir.path()).order().unwrap(), a.order().unwrap());
+    }
+
+    /// A compaction keeps the records `keep` allows, in order, takes the
+    /// records appended while it runs, and replaces the file only at the
+    /// end; stopped before that, the log is as it was.
+    #[test]
+    fn compaction() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut a = Arrivals::beside_blobs(dir.path());
+        for seq in 1..=10 {
+            a.record(&[1; 32], seq).unwrap();
+        }
+        let path = dir.path().join("feeds/arrivals");
+        let odd = |_: &FeedKey, seq: u32| seq % 2 == 1;
+        // Stopped after copying and syncing: the log is untouched.
+        let mut c = a.start_compaction().unwrap();
+        assert_eq!(c.copy(&mut a, 100, odd, || false).unwrap(), (10, true));
+        c.sync().unwrap();
+        drop(c);
+        assert_eq!(fs::metadata(&path).unwrap().len(), 10 * RECORD as u64);
+        assert_eq!(Arrivals::beside_blobs(dir.path()).order().unwrap().len(), 10);
+        assert!(a.compaction_path().exists());
+        a.remove_leftover().unwrap();
+        assert!(!a.compaction_path().exists());
+        // In batches of 4, the second stopped after one record; records
+        // appended meanwhile are taken.
+        let mut c = a.start_compaction().unwrap();
+        assert_eq!(c.before, 10);
+        assert_eq!(c.copy(&mut a, 4, odd, || false).unwrap(), (4, false));
+        assert_eq!(c.copy(&mut a, 4, odd, || true).unwrap(), (1, false));
+        a.record(&[2; 32], 1).unwrap();
+        assert_eq!(c.copy(&mut a, 100, odd, || false).unwrap(), (6, true));
+        assert!(!c.synced());
+        c.sync().unwrap();
+        assert!(c.synced());
+        assert_eq!(c.kept(), 6);
+        let (file, dir_path) = c.finish(&mut a).unwrap();
+        sync_finished(&file, &dir_path).unwrap();
+        let kept = [([1; 32], 1), ([1; 32], 3), ([1; 32], 5), ([1; 32], 7), ([1; 32], 9), ([2; 32], 1)];
+        assert_eq!(a.order().unwrap(), kept);
+        assert_eq!(fs::metadata(&path).unwrap().len(), 6 * RECORD as u64);
+        assert!(!a.compaction_path().exists());
+        // Appending goes on in the new file; a restart reads the same.
+        a.record(&[3; 32], 1).unwrap();
+        assert_eq!(a.order().unwrap().len(), 7);
         assert_eq!(Arrivals::beside_blobs(dir.path()).order().unwrap(), a.order().unwrap());
     }
 

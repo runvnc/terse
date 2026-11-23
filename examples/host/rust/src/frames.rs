@@ -1,4 +1,4 @@
-use crate::cpu::{Cpu, Fault};
+use crate::cpu::{A0, A7, Cpu, Fault, UNKNOWN_CALL};
 
 pub const FRAME_BUDGET: i64 = 125_000;
 
@@ -14,6 +14,16 @@ pub struct Machine {
     pub frame: u32,
     pub status: Status,
 }
+
+pub const SYSTEM: u32 = 1;
+pub const BASE_CHARGE: i64 = 4;
+pub const BAD_BUFFER: u32 = 0xffff_fffe;
+const EVENT_SIZE: u32 = 4;
+
+const WAIT_FRAME: u32 = 0;
+const NEXT_EVENT: u32 = 1;
+const FRAME_COUNT: u32 = 2;
+const EXIT: u32 = 6;
 
 impl Machine {
     pub fn new(cpu: Cpu) -> Machine {
@@ -46,17 +56,17 @@ impl Machine {
             if !ecall {
                 continue;
             }
-            let a7 = self.cpu.x[17];
+            let a7 = self.cpu.x[A7];
             let (slot, function) = (a7 >> 8, a7 & 0xff);
             let budget = self.budget;
-            let (result, charge) = if slot == 1 {
-                (self.system(function), 4)
+            let (result, charge) = if slot == SYSTEM {
+                (self.system(function), BASE_CHARGE)
             } else {
                 devices(&mut self.cpu, budget, slot, function)
             };
-            self.cpu.x[10] = result;
+            self.cpu.x[A0] = result;
             self.budget -= charge;
-            if slot == 1 && function == 0 {
+            if slot == SYSTEM && function == WAIT_FRAME {
                 break;
             }
         }
@@ -65,19 +75,18 @@ impl Machine {
     }
 
     fn system(&mut self, function: u32) -> u32 {
-        let a0 = self.cpu.x[10];
+        let a0 = self.cpu.x[A0];
+        let event = self.cpu.memory(a0, EVENT_SIZE, true);
         match function {
-            0 => self.frame + 1,
-            1 if self.cpu.memory(a0, 4, true).is_none() => {
-                0xffff_fffe
-            }
-            1 => 0,
-            2 => self.frame,
-            6 => {
+            WAIT_FRAME => self.frame + 1,
+            NEXT_EVENT if event.is_none() => BAD_BUFFER,
+            NEXT_EVENT => 0,
+            FRAME_COUNT => self.frame,
+            EXIT => {
                 self.status = Status::Exited(a0 as u8);
                 0
             }
-            _ => u32::MAX,
+            _ => UNKNOWN_CALL,
         }
     }
 }

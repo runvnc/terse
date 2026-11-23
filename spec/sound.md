@@ -266,9 +266,9 @@ it stops), once, and again only when the reason changes. The reference
 hosts (`terse-host`, `terse-bus` in a window) show a notice and write
 one line on standard error; `terse-host --hardware-check` says what the
 output is, or why there is none. A muted or silent system is not the
-host's to report. A volume and a mute of the host's own apply to the
-mixed samples on their way out and to nothing else. A host plays a
-frame's samples promptly (`PERFORMANCE.md` R18).
+host's to report. A volume or mute a host offers applies to the mixed
+samples on their way out and to nothing else. A host plays a frame's
+samples promptly (`PERFORMANCE.md` R18 and R19).
 
 ## §sound.determinism Determinism
 
@@ -295,5 +295,5 @@ placeholder: it is the device's version 0.
 
 ## §sound.unspecified Not yet specified
 
-- On the sound device (§sound): a volume per machine in a system,
-  filters, and samples longer than 65,536 bytes or of more than 8 bits.
+- On the sound device (§sound): filters, and samples longer than 65,536
+  bytes or of more than 8 bits.

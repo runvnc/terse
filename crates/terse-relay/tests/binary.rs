@@ -71,6 +71,18 @@ fn public_relay_and_graceful_stop() {
         assert!(Instant::now() < deadline, "no status file, or it does not count the refusal");
         std::thread::sleep(Duration::from_millis(50));
     }
+    // With a line for each table or log that could grow, and its bound
+    // (NETWORK 5.3).
+    let status = std::fs::read_to_string(&status_file).unwrap();
+    for line in [
+        "arrival-log 0 records, 0 bytes; bound 1024 records (2 x 0 entries kept + 1024)",
+        "subscriptions 0 on 1 client connections, for 0 feeds; bound 1024 per connection",
+        "connections 1 (1 in all with peers and in-process); bound 1000",
+        "address-table 1 addresses; bound 8192 + 1",
+        "store 0 bytes; bound 1073741824",
+    ] {
+        assert!(status.lines().any(|l| l.starts_with(line)), "{line:?} not in\n{status}");
+    }
     // SIGTERM: the connection is closed with a close frame, the relay
     // exits with success.
     assert!(Command::new("kill").args(["-TERM", &child.id().to_string()]).status().unwrap().success());

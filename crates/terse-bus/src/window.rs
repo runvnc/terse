@@ -196,6 +196,7 @@ impl App {
         // after it are excused.
         self.bs.surface(viewport);
         let drivers: Vec<f64> = self.present_ms().iter().zip(&presents_before).map(|(a, b)| a - b).collect();
+        self.bs.presenting();
         let start = Instant::now();
         if let Some(surface) = &mut self.surface {
             let mut buffer = surface.buffer_mut().map_err(|e| e.to_string())?;
@@ -336,7 +337,7 @@ impl App {
             if pressed {
                 self.bs.swallow(usage);
                 let what = self.audio.change(k);
-                let then = "Ctrl+Alt+minus and plus change it, Ctrl+Alt+M mutes; it is kept.".to_string();
+                let then = "Ctrl+Alt+minus and plus change it, Ctrl+Alt+M mutes, for this run.".to_string();
                 self.sound_notice = Some((("sound".into(), what, then), self.frames + 90));
             }
             return;

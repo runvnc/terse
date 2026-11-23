@@ -18,6 +18,20 @@ type Machine struct {
 	Devices  func(slot, fn uint32) (result uint32, charge int64)
 }
 
+const (
+	System     = 1
+	BaseCharge = 4
+	BadBuffer  = 0xfffffffe
+	eventSize  = 4
+)
+
+const (
+	waitFrame  = 0
+	nextEvent  = 1
+	frameCount = 2
+	exit       = 6
+)
+
 func (m *Machine) RunFrame() {
 	m.Budget += FrameBudget
 	for m.Budget > 0 && m.Stopped == Running {
@@ -30,16 +44,16 @@ func (m *Machine) RunFrame() {
 		if !ecall {
 			continue
 		}
-		slot, fn := m.X[17]>>8, m.X[17]&0xff
-		result, charge := uint32(0xffffffff), int64(4)
-		if slot == 1 {
+		slot, fn := m.X[A7]>>8, m.X[A7]&0xff
+		result, charge := uint32(UnknownCall), int64(BaseCharge)
+		if slot == System {
 			result = m.system(fn)
 		} else if m.Devices != nil {
 			result, charge = m.Devices(slot, fn)
 		}
-		m.X[10] = result
+		m.X[A0] = result
 		m.Budget -= charge
-		if slot == 1 && fn == 0 {
+		if slot == System && fn == waitFrame {
 			break
 		}
 	}
@@ -49,18 +63,18 @@ func (m *Machine) RunFrame() {
 
 func (m *Machine) system(fn uint32) uint32 {
 	switch fn {
-	case 0:
+	case waitFrame:
 		return m.Frame + 1
-	case 1:
-		if m.Memory(m.X[10], 4, true) == nil {
-			return 0xfffffffe
+	case nextEvent:
+		if m.Memory(m.X[A0], eventSize, true) == nil {
+			return BadBuffer
 		}
 		return 0
-	case 2:
+	case frameCount:
 		return m.Frame
-	case 6:
-		m.Stopped, m.ExitCode = Exited, byte(m.X[10])
+	case exit:
+		m.Stopped, m.ExitCode = Exited, byte(m.X[A0])
 		return 0
 	}
-	return 0xffffffff
+	return UnknownCall
 }

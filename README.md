@@ -136,7 +136,7 @@ URLs listed in the file `relays` in the config directory, one per line
 if there is no list); a relay already accepting connections on
 `ws://127.0.0.1:7878`; or one it starts itself on that port, for as long as
 it runs, with its store in `~/.local/share/terse/relay`
-(`$XDG_DATA_HOME/terse/relay`; `%LOCALAPPDATA%\terse\relay` on Windows). It prints one line on stderr saying which.
+(`$XDG_DATA_HOME/terse/relay`; `~/Library/Application Support/terse/data/relay` on macOS; `%LOCALAPPDATA%\terse\relay` on Windows). It prints one line on stderr saying which.
 `--relay` may be given several times; `--relay none` runs without a network.
 The host connects to all its relays (at most 8): puts and publishes go to
 each, subscriptions are made on each, and a blob is asked of them in turn.
@@ -386,7 +386,7 @@ images were built with clang and LLD 23.1.4.
 
 An `<id>` is 64 hex digits, looked up in the blob store and then on the relays;
 the bytes are verified against the ID. `--store` defaults to
-`$XDG_CACHE_HOME/terse/blobs` (else `~/.cache/terse/blobs`; `%LOCALAPPDATA%\terse\blobs` on Windows). Relays are `wss://` or
+`$XDG_CACHE_HOME/terse/blobs` (else `~/.cache/terse/blobs`; `~/Library/Caches/terse/blobs` on macOS; `%LOCALAPPDATA%\terse\blobs` on Windows). Relays are `wss://` or
 `ws://` URLs, or hosts without a scheme ("Relays over TLS", "Encrypted unless written
 otherwise"). `--relay` may be given several times, and every command that takes it
 also takes `--no-feed-relays`. The arrival order of entries (the timeline, SPEC §content.feeds) is kept in
@@ -529,7 +529,18 @@ with these defaults (each can be given on its own, and changed):
 | Entries of feeds new to the relay, per address and in all | 3 and 60 an hour | `--new-feeds-per-hour`, `--new-feeds-per-hour-total` |
 | Finds and lookups per address (and 4 a second per connection) | 60 a minute | `--finds-per-minute` |
 | Connections per address, and in all | 32, 150 | `--connections-per-address`, `--max-connections` (or `--memory`) |
+| Feeds one connection may subscribe to | 1024 | `--subscriptions-per-connection` |
 | A status line on stderr | every 10 minutes | `--status-every`, `--status-file` |
+
+What the relay keeps in memory and on disk grows with what it keeps, never with the
+traffic it has seen (NETWORK.md section 5.3, "The reference relay's bounds"): the log
+of when entries arrived is compacted to the entries still kept, the table of addresses
+has 8192 places, and so on. The status file (`--status-file`) has a line for each such
+table or log, with where it stands and its bound. Memory also grows with connections:
+each may hold the largest message (up to 2 MiB) while it arrives, with its queue and
+thread about 3 MiB at worst, so `--public` allows 150 (about 514 MiB at worst before the
+index); `--memory <size>` sets the number from the memory you give the relay, and the
+status line says the worst case ("memory at worst ... MiB").
 
 An address is an IPv4 address or an IPv6 /64. A refusal tells the client why, and for
 a rate when to try again (NETWORK.md section 3.1); `terse feed publish` and `terse put`
@@ -759,7 +770,7 @@ to an article (a blob of UTF-8 text); see NETWORK.md section 4. All `key` and
 - `--config <dir>` holds the secret key (`identity.key`, mode 0600, never printed),
   the subscription list (`subscriptions`), your nicknames for feeds (`nicknames`) and
   the relay list (`relays`). Default
-  `$XDG_CONFIG_HOME/terse`, else `~/.config/terse` (`%APPDATA%\terse` on Windows). A host creates the identity
+  `$XDG_CONFIG_HOME/terse`, else `~/.config/terse` (`~/Library/Application Support/terse` on macOS, `%APPDATA%\terse` on Windows). A host creates the identity
   itself when a program first publishes.
 - Entries are kept with the blobs, in `<store>/feeds/<feed key>/<seq>`, the seq as 10 decimal digits (`0000000003`).
 
@@ -767,8 +778,18 @@ Commands:
 
 - `key new` creates your identity (refuses to replace one) and prints its feed key;
   `key show` prints it again.
-- `feed publish <file> --title <t> [--reply-to <blob id>]` puts the article and
-  publishes the next entry of your feed; prints `seq N blob <id>`.
+- `feed publish <file> --title <t> [--reply-to <blob id>] [--dry-run] [--force]` puts the
+  article and publishes the next entry of your feed; prints `seq N blob <id>`. First it
+  lists each `terse:` link of the article (`link terse:<id>: held here, uploaded now ...;
+  kept: ...`): whether this host holds what it leads to, whether it was uploaded with the
+  article (blobs an entry of your feed names, and blobs held here that no entry names), and
+  whether relays keep it (an entry of your feed names it) or it is link-only (another feed's,
+  kept where that feed is kept, or unknown here). An entry names one blob (NETWORK.md 4.2),
+  so a relay that drops blobs no entry names (NETWORK.md 5.3) keeps a linked article only
+  while an entry names it: a link to a blob held here that no entry names is uploaded with
+  a warning (publish that blob as an article of its own to keep it). An article linking to
+  a blob of your feed that this host does not hold is refused, unless `--force`.
+  `--dry-run` lists the links and publishes nothing.
 - `feed publish --program <image.terse> [--name <n>]` checks the image and publishes
   it as a program (NETWORK.md 4.2) named `<n>` (default: the image's title; the rules of
   a display name); prints `seq N program <name> image <id>`. Publishing another image
@@ -1084,6 +1105,7 @@ without a frame number run one after another, `wait <frames>` and `type
     wheel 3               wheel steps
     resize 1900 1000      the window's size
     wait 30               frames; sleep <ms> waits real time
+    time 1800000000       hold the Unix time the machines see (the shell's clock) at this value
     settle [max N]        until 10 presented pictures in a row are the same
     shot out.png          the picture last presented, as presented
     dump page             page (this host's layout), terminal, vectors or state; `> file` to a file
@@ -1250,7 +1272,7 @@ title), so a new version of a program reads the old version's records; a program
 from a file or started by image ID has the records of that exact image. They never
 leave the machine and no other program can read them. Hosts keep them in
 `<data>/records` (`--data`, default `$XDG_DATA_HOME/terse`, else
-`~/.local/share/terse`, `%LOCALAPPDATA%\terse` on Windows); `terse run` and `terse-host` take `--data`. Sparks keeps its
+`~/.local/share/terse`, `~/Library/Application Support/terse/data` on macOS, `%LOCALAPPDATA%\terse` on Windows); `terse run` and `terse-host` take `--data`. Sparks keeps its
 high score there, the shell its layout and its session.
 
 The shell's snapshots (SPEC §machines.snapshots, below) are kept beside them, in
@@ -2204,20 +2226,28 @@ again only if the cause changes; the machines run exactly as before (SPEC
 §sound.presentation). `terse-host --hardware-check` opens and closes the output and
 says what it plays through, or why not; `--version` says what the build can play
 through. `TERSE_AUDIO` chooses: `auto` (default), `off` (play nothing, say nothing),
-`none` (as if no output were found), `pulse`, `pulse:<server>`, `alsa`,
-`alsa:<pcm>`; `--selftest` plays only when it is set, so tests never make a sound.
-`TERSE_AUDIO_STATS=1` prints the output's latency and underruns when it closes.
+`none` (as if no output were found), `null` (an output with no device behind it,
+which takes the samples at a device's pace and plays nothing), `pulse`,
+`pulse:<server>`, `alsa`, `alsa:<pcm>`; `--selftest` plays only when it is set, so
+tests never make a sound. `TERSE_AUDIO_STATS=1` prints the output's latency, each
+frame's hand-over and the underruns when it closes.
 
 The volume is the host's, applied on the way out (never to the machines or an
 `--audio-out` file): Ctrl+Alt+minus and Ctrl+Alt+plus (`=`) turn it down and up a
 tenth, Ctrl+Alt+M mutes, and so do the keyboard's volume keys where the desktop
 lets them reach the window. These keys are the host's: no program receives them. A
-short notice shows the new volume, which is kept in `<config>/sound`; `--volume
-<0-100>` and `--mute` set it for one run.
+short notice shows the new volume. The volume starts full (or as `--volume <0-100>`
+and `--mute` say) and lasts until the host exits: it is not saved, and a
+`<config>/sound` file an earlier version wrote is ignored.
 
 A frame's sound reaches the sound server's sink about 27 ms after the frame (PERFORMANCE.md
 R18: at most 3 frames). `TERSE_AUDIO_TRACE=<file>` writes each frame's hand-over time,
-to measure that against a recording. Tests: `crates/terse-core/src/sound.rs` (the
+to measure that against a recording. The host's own part, from the frame's end to
+the audio interface having the frame's first pair (R19), it measures itself:
+`terse-host --sound-check <image>` runs the image headless at 60 frames a second
+into the null output and prints that hand-over's p50, p99 and max (`terse perf` row
+S1). Tests: `crates/terse-host/tests/sound.rs` (`--sound-check` with no audio
+device; the volume not saved), `crates/terse-core/src/sound.rs` (the
 synthesis, bit for bit), `crates/terse-cli/tests/tune.rs` (the golden samples, a
 snapshot in the middle of a note, `--audio-out`, the reading profile),
 `crates/terse-devices/tests/sound.rs` (the driver and the compiled-in device give the

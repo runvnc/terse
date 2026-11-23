@@ -34,8 +34,8 @@ int main(void)
                 return 0;
         }
         vec_begin(list, sizeof list);
-        vec_move(320 * 16, 400 * 16);
-        vec_line(x * 16, 80 * 16);
+        vec_move(320 * VEC_UNIT, 400 * VEC_UNIT);
+        vec_line(x * VEC_UNIT, 80 * VEC_UNIT);
         vec_end();
         vec_submit_list(list);
         terse_wait_frame();
@@ -44,7 +44,7 @@ int main(void)
 <p>Build it with <code>terse build line.c</code> and run it with <code>terse-host line.terse</code>.</p>
 <h2 id="drawing">Drawing</h2>
 <p>The 2D vector display draws from a display list: a few bytes of drawing commands that the program builds in its own memory and hands over with <code>vec_submit_list</code>. The display shows that list every frame until the program submits another. The list must be in RAM, which is why it is a variable: a <code>const</code> array, in the program&#39;s read-only memory, is refused.</p>
-<p>The screen is 640 by 480 units, (0, 0) at the top left, and a list&#39;s coordinates are in sixteenths of a unit: hence the <code>* 16</code>. <code>vec_move</code> moves the pen without drawing, and <code>vec_line</code> draws a line from it. There are also circles, discs, rectangles and triangles, colours and widths.</p>
+<p>The screen is 640 by 480 units, (0, 0) at the top left, and a list&#39;s coordinates are in sixteenths of a unit: <code>VEC_UNIT</code> is 16, so <code>320 * VEC_UNIT</code> is 320 units. <code>vec_move</code> moves the pen without drawing, and <code>vec_line</code> draws a line from it. There are also circles, discs, rectangles and triangles, colours and widths.</p>
 <h2 id="reading-keys">Reading keys</h2>
 <p><code>terse_event_pop</code> takes the next event, as in hello. A key down event carries the key in <code>e.a</code>, and <code>terse.h</code> names the common ones: <code>KEY_LEFT</code>, <code>KEY_ENTER</code>, <code>KEY_ESCAPE</code> and so on. Typed text comes as separate text events, one per character, so a program that wants words reads those instead.</p>
 <h2 id="test-it-without-a-window">Test it without a window</h2>

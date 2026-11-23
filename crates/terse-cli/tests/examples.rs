@@ -179,6 +179,56 @@ fn roll_with_the_dice_driver() {
     }
 }
 
+/// "Test your program in its window" (guide-test): the line program
+/// driven in its real window by examples/program/line.drive, as the page
+/// runs it (`terse-host --drive`, in a headless weston of its own; skipped
+/// where there is none), and the same script headless with `terse run`.
+/// The drive is the same for every language: the first one here builds it.
+#[test]
+fn line_driven_in_its_window() {
+    let Some(&lang) = languages().first() else { return };
+    let dir = tempfile::tempdir().unwrap();
+    let image = build(dir.path(), lang, "line", &[]);
+    let script = common::workspace().join("examples/program/line.drive");
+    let script = script.to_str().unwrap();
+    let headless = ok(terse(dir.path(), &["run", &image, "--events", script, "--frames", "60", "--dump", "--dump-vectors"]), "line, headless");
+    assert!(headless.contains("line 5120 6400 4800 1280"), "{headless}");
+    if !Command::new("weston").arg("--version").output().is_ok_and(|o| o.status.success()) {
+        terse_testkit::skip!("weston", "terse-host --drive needs a headless compositor (weston)");
+        return;
+    }
+    let out = Command::new(terse_testkit::program("terse-host"))
+        .args([&image, "--drive", script, "--renderer", "software", "--consent", "deny"])
+        .current_dir(dir.path())
+        .env("XDG_CACHE_HOME", dir.path().join("cache"))
+        .env("XDG_CONFIG_HOME", dir.path().join("config"))
+        .env("XDG_DATA_HOME", dir.path().join("data"))
+        .env_remove("TERSE_DRIVE_DISPLAY")
+        .env_remove("TERSE_DRIVE_NESTED")
+        .output()
+        .unwrap();
+    let report = String::from_utf8_lossy(&out.stdout);
+    let all = format!("{report}{}", String::from_utf8_lossy(&out.stderr));
+    if all.contains("no graphics adapter") {
+        terse_testkit::skip!("gpu", "the window found no graphics adapter: {all}");
+        return;
+    }
+    assert!(out.status.success(), "{lang}: {all}");
+    for want in [
+        "ok: vectors contains \"line 5120 6400 5120 1280\"",
+        "ok: vectors contains \"line 5120 6400 4800 1280\"",
+        "ok: expect idle 30",
+        "shot start.png",
+        "shot left.png",
+        "drive: done, no expectation failed",
+    ] {
+        assert!(report.contains(want), "{lang}: no {want:?} in the report:\n{all}");
+    }
+    for png in ["start.png", "left.png"] {
+        assert!(dir.path().join(png).is_file(), "{png} not written");
+    }
+}
+
 /// The listings of the manual, as scripts/manual-listings.py writes them:
 /// a fence opened by three backquotes, a word and a path (with a `/`)
 /// holds that file, or, with two more words between slashes, the part of

@@ -12,7 +12,7 @@ terse-host
 terse-host: relay ws://127.0.0.1:7878 (started here, store …)
 ```
 
-A relay is where articles are kept and passed on; this one keeps them in the folder `relay` in `~/.local/share/terse` (on Windows `%LOCALAPPDATA%\terse`). Leave the window open while you follow the next pages: the `terse` commands in them publish through this relay.
+A relay is where articles are kept and passed on; this one keeps them in the folder `relay` in `~/.local/share/terse` (on macOS `~/Library/Application Support/terse/data`, on Windows `%LOCALAPPDATA%\terse`). Leave the window open while you follow the next pages: the `terse` commands in them publish through this relay.
 
 ## The launcher
 
@@ -59,10 +59,10 @@ Press ? in the reader for every key of every view. Esc on the timeline stops the
 
 ## Quit
 
-Close the window. Nothing needs saving: what you publish and follow is kept as you go. (To keep the programs you have open for next time, press S in the launcher first: [Find and play a game](terse:e656c56d9b58616b02583a1d95e988d4f53761f571bf139319fef0780e1ff5e2) shows how.)
+Close the window. Nothing needs saving: what you publish and follow is kept as you go. (To keep the programs you have open for next time, press S in the launcher first: [Find and play a game](terse:5d505e579b8de56739e3cb391f424959827c21a30e0c9e1687d0016d72badb14) shows how.)
 
 ## What you have now
 
-Tersenet running, the launcher, and the reader with this manual in it. Next, make the key that is your identity: [Create your profile](terse:82b54cbb817d9fb5a6a2c3856255a7d71122375919111b4e2fb435f0c0437640).
+Tersenet running, the launcher, and the reader with this manual in it. Next, make the key that is your identity: [Create your profile](terse:4e61524e262e0dcf084ef18b644c2a3fef9f0f14dd0a72c60d231cedd6741041).
 
-Every key of the launcher, the layouts and the tiles is in [Using the shell](terse:fcfe14a37fb92ed7df7baec84d8fc4c930fef6ed670c9b678d4856903fd82a5b).
+Every key of the launcher, the layouts and the tiles is in [Using the shell](terse:bd993d61abc13cbb16b43883ec65ae1429ffff3c570bcf413ea36c472c357cac).

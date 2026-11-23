@@ -9,9 +9,16 @@ Between frames, a machine's whole state is one string of bytes; its BLAKE3-256 h
 ```go from examples/host/go/machine/state.go
 package machine
 
+const (
+    stateTag    = "terse-state-1"
+    emptySystem = 37
+    absent      = 0
+    present     = 1
+)
+
 func (m *Machine) State(id [32]byte,
     grants, terminal []byte) []byte {
-    state := append([]byte("terse-state-1"), id[:]...)
+    state := append([]byte(stateTag), id[:]...)
     state = le.AppendUint32(state, m.PC)
     for _, x := range m.X[1:] {
         state = le.AppendUint32(state, x)
@@ -28,16 +35,17 @@ func (m *Machine) State(id [32]byte,
     state = le.AppendUint32(state, uint32(m.Budget))
     state = le.AppendUint32(state, uint32(len(m.RAM)))
     state = append(append(state, m.RAM...), grants...)
-    state = append(state, make([]byte, 37)...)
+    state = append(state, make([]byte, emptySystem)...)
     if terminal == nil {
-        return append(state, 0, 0, 0, 0)
+        state = append(state, absent)
+    } else {
+        state = append(append(state, present), terminal...)
     }
-    state = append(append(state, 1), terminal...)
-    return append(state, 0, 0, 0)
+    return append(state, absent, absent, absent)
 }
 ```
 
-In order: `terse-state-1` and the image ID; `pc` and the registers `x1` to `x31`; the frame counter, how the machine stopped (0 running, 1 exited, 2 faulted), the exit code, and a fault's kind, encoding, `pc` and address; the budget carried into the next frame; the RAM; one byte per optional device, 1 if granted. Then the System device: 37 zero bytes here (the time, 0 in a test; an empty event queue; four controllers, none connected). Then each device's section in a fixed order, from its driver's STATE: the terminal's with a byte 1 before it, or a 0 for a machine without one; then a 0 each for the vector display, content and the page, which this host never has.
+In order: `terse-state-1` and the image ID; `pc` and the registers `x1` to `x31`; the frame counter, how the machine stopped (0 running, 1 exited, 2 faulted), the exit code, and a fault's kind, encoding, `pc` and address; the budget carried into the next frame; the RAM; one byte per optional device, 1 if granted. Then the System device, `emptySystem`: 37 zero bytes here (the time, 4 bytes, 0 in a test; an event count of 0, 1 byte; four controllers of 8 bytes, none connected). Then each device's section in a fixed order, from its driver's STATE: the terminal's after `present` (1), or `absent` (0) for a machine without one; then a 0 each for the vector display, content and the page, which this host never has.
 
 ## The program
 
@@ -83,7 +91,8 @@ func main() {
     }
     var grants, terminal []byte
     if bus != nil {
-        grants, terminal = bus.Grants, bus.State(2)
+        grants = bus.Grants
+        terminal = bus.State(machine.Terminal)
         bus.Close()
     }
     state := m.State(blake3.Sum256(file), grants, terminal)
@@ -151,7 +160,7 @@ This host runs `hello` and proves it, nothing more. The rest of a complete host,
 
 ## What you have now
 
-A host that runs Terse32 programs exactly as the reference does, and proves it: `state.go`, 28 lines, `step4/main.go`, 52; 900 lines in all. Next, write a device as a separate program: [Make a device](terse:{guide-device}).
+A host that runs Terse32 programs exactly as the reference does, and proves it: `state.go`, 36 lines, `step4/main.go`, 53; 1,050 lines in all. Next, write a device as a separate program: [Make a device](terse:{guide-device}).
 
 - The same step in Rust: [Make a host in Rust, step 4: prove it exact](terse:{guide-host-rust-state}).
 - The rules: [State, replay and conformance](terse:{state}), sections "The state serialization", "The hash", "Snapshots" and "The conformance image"; the input in [Events and input](terse:{events}).

@@ -44,7 +44,7 @@ fn main() {
         term_puts(&quot;.\n&quot;);
     }
 }</pre>
-<p>The Rust runtime has no calls for an invented device, nor could it: nobody but its author knows them. So the program makes them itself with <code>call</code>, the runtime&#39;s raw device call, which takes the call&#39;s number, <code>(240 &lt;&lt; 8) | function</code> here, and three arguments. It is <code>unsafe</code> because a call may read or write the memory its arguments point to; <code>seed</code> and <code>roll</code> take only numbers. <code>device(DICE)</code> is <code>None</code> when the host did not grant the device.</p>
+<p>The Rust runtime has no calls for an invented device, nor could it: nobody but its author knows them. So the program makes them itself with <code>call</code>, the runtime&#39;s raw device call, which takes the call&#39;s number, <code>(240 &lt;&lt; 8) | function</code> here, and three arguments. It is <code>unsafe</code> because a call may read or write the memory its arguments point to; <code>seed</code> and <code>roll</code> take only numbers (<code>roll</code>, the number of sides). <code>device(DICE)</code> is <code>None</code> when the host did not grant the device.</p>
 <h2 id="build-it-and-run-it">Build it and run it</h2>
 <p>With the driver built as on the last page:</p>
 <pre>terse build roll.rs --optional 240:0=example.dice

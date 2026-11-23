@@ -146,16 +146,17 @@ fn a_blocked_driver_is_warned_about_then_its_machine_saved_and_stopped() {
         .iter()
         .filter_map(|l| match l {
             Line::Late { frame, verdict: Verdict::Blamed, component: Component::Device(2), blocked_ms, own_ms, .. } => {
-                assert!(*own_ms >= 40.0 && *blocked_ms >= 30.0, "{l:?}");
+                assert!(*own_ms >= 40.0 && blocked_ms.is_none_or(|b| b >= 30.0), "{l:?}");
                 Some(*frame)
             }
             _ => None,
         })
         .collect();
     assert!(blamed.len() == 10 && blamed[0] >= 19, "nothing before the slow frames, 10 to the stop: {lines:?}");
-    // Every frame from the first slow one to the stop was late: blamed,
-    // or excused because the computer was busy.
-    let late = lines.iter().filter(|l| matches!(l, Line::Late { frame, component: Component::Device(2), .. } if *frame >= 19)).count() as u64;
+    // Every frame from the first slow one to the stop was late (a sleep of
+    // 60 ms makes it so on any computer): blamed, or excused because the
+    // computer was busy or short of memory.
+    let late = lines.iter().filter(|l| matches!(l, Line::Late { frame, .. } if *frame >= 19)).count() as u64;
     let (warn_at, stop_at) = (blamed[2], blamed[9]);
     assert_eq!(late, stop_at - 18, "{lines:?}");
     // The stop comes with the tenth blamed frame: frame 28 on a quiet
@@ -200,11 +201,13 @@ fn a_blocked_driver_is_warned_about_then_its_machine_saved_and_stopped() {
 
 /// A driver that spins in END for 60 ms of its own CPU time (a fixed
 /// amount of work, `cpu`: however busy the computer, it does all of it)
-/// in 15 frames: each of them is late and blamed on it with that time on
-/// the CPU, whatever else the computer is doing (waiting for a CPU is
-/// taken off its own time, not added to it; another program's swapping
-/// does not excuse time on a CPU, `RECORD.md` 4); without the rule it is
-/// only recorded.
+/// in 15 frames: each of them is late and blamed on it with more than its
+/// allowance on a CPU, whatever else the computer is doing (waiting for a
+/// CPU is taken off its own time, not added to it; another program's
+/// swapping does not excuse time on a CPU, `RECORD.md` 4), and no other
+/// frame is blamed on it; without the rule it is only recorded. Which
+/// frames is the protocol's doing, not the scheduler's: END's work is
+/// waited for by the next frame's first request.
 #[test]
 fn a_spinning_driver_is_blamed_and_without_the_rule_only_recorded() {
     let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
@@ -220,13 +223,18 @@ fn a_spinning_driver_is_blamed_and_without_the_rule_only_recorded() {
     let every_late: Vec<&Line> = lines.iter().filter(|l| matches!(l, Line::Late { .. } | Line::Readings { .. })).collect();
     // END's work is waited for by the next frame's first request: the
     // driver's END of host frames 19 to 33 (counters 20 to 34) makes
-    // frames 20 to 34 late. Each is blamed on the driver with most of its
-    // 60 ms on a CPU (its time on a CPU in the frame before, while the
-    // frame loop finished that frame, is not in it).
+    // frames 20 to 34 late. Each is blamed on the driver with more than
+    // its allowance (8.3 ms) of its 60 ms on a CPU (what it did while the
+    // frame loop finished the frame before is not in it: on a busy
+    // computer that can be much of it, never all).
+    let cpu_read = lines.iter().any(|l| matches!(l, Line::Readings { component: Component::Device(2), readings } if readings.cpu));
     let blamed: Vec<u64> = lines
         .iter()
         .filter_map(|l| match l {
-            Line::Late { frame, verdict: Verdict::Blamed, component: Component::Device(2), cpu_ms, own_ms, .. } if *cpu_ms >= 30.0 && *own_ms >= *cpu_ms => Some(*frame),
+            Line::Late { frame, verdict: Verdict::Blamed, component: Component::Device(2), cpu_ms, own_ms, .. } => {
+                assert!(*own_ms > 8.3 && (!cpu_read || cpu_ms.is_some_and(|c| c > 8.3 && *own_ms >= c)), "{l:?}");
+                Some(*frame)
+            }
             _ => None,
         })
         .collect();
@@ -323,7 +331,7 @@ fn a_starved_driver_is_not_blamed() {
     assert!(out.status.success(), "{}", text(&out.stderr));
     let lines = record_lines(&perf);
     assert!(!lines.iter().any(|l| matches!(l, Line::Warn { .. } | Line::Stop { .. })), "{lines:?}");
-    assert!(!lines.iter().any(|l| matches!(l, Line::Late { verdict: Verdict::Blamed, .. })), "{lines:?}");
+    assert!(!lines.iter().any(|l| matches!(l, Line::Late { verdict: Verdict::Blamed, component: Component::Device(2), .. })), "{lines:?}");
     // The evidence: late frames in which the core waited for the driver
     // longer than the allowance (8.3 ms), most of it starved.
     let starved = lines

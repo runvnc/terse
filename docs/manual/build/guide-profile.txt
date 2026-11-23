@@ -50,7 +50,7 @@ In the reader you can do the same without a terminal: F opens your feeds, P asks
 terse feed address
 ```
 
-prints the address to give to people: your key, and after an `@` the relays where others can find you. For now it is the key alone, with a note that only people on the same relay will find your feed: your relay is on your own computer. [Subscribe to someone's feed](terse:700c53b156db3367cef43670d0d15ff33f1fd025a1d9ff05641dbf4f2fa6f3b5) says how to share a relay. The reader's help page (?) shows the address too.
+prints the address to give to people: your key, and after an `@` the relays where others can find you. For now it is the key alone, with a note that only people on the same relay will find your feed: your relay is on your own computer. [Subscribe to someone's feed](terse:a6e19f6bc794561d32aeae28018e87f42529387beb2fda857270de573b187269) says how to share a relay. The reader's help page (?) shows the address too.
 
 ## What is kept where
 
@@ -60,10 +60,10 @@ prints the address to give to people: your key, and after an `@` the relays wher
 | `~/.local/share/terse` | what programs keep, the relay's store |
 | `~/.cache/terse` | articles and programs you downloaded |
 
-On macOS they are the same folders. On Windows the first is `%APPDATA%\terse` and the others are both `%LOCALAPPDATA%\terse`. Wherever you are, setting `XDG_CONFIG_HOME`, `XDG_DATA_HOME` or `XDG_CACHE_HOME` to a folder puts the `terse` folder there instead.
+On macOS the first is `~/Library/Application Support/terse`, the second the folder `data` in it and the third `~/Library/Caches/terse`. On Windows the first is `%APPDATA%\terse` and the others are both `%LOCALAPPDATA%\terse`. Wherever you are, setting `XDG_CONFIG_HOME`, `XDG_DATA_HOME` or `XDG_CACHE_HOME` to a folder puts the `terse` folder there instead.
 
 ## What you have now
 
-A key, a name and an address: an identity no one issued and no one can take away. Next, put something in your feed: [Write and publish an article](terse:33913c5c8230b66dfa4025cd4ec3643d54aeb95a7065f168781bca46ede34e55).
+A key, a name and an address: an identity no one issued and no one can take away. Next, put something in your feed: [Write and publish an article](terse:65ee2156978055af0422a9210177d2e5c366ca2de0584618b85917e4d2539e32).
 
-Profiles, names and addresses in full are in [The network](terse:7e9193ce460e3f05a484580055d842c205e92d1607aca43f45f943c2b57d6b87).
+Profiles, names and addresses in full are in [The network](terse:1dd0d8efcd9961657ab4e2a3eb3f72f651a0683a36f8495452fef4f5ce0752a5).

@@ -3,6 +3,16 @@ use std::fmt;
 
 pub const ROM_BASE: u32 = 0x10000;
 pub const RAM_BASE: u32 = 0x100000;
+pub const ROM_COST: i64 = 1;
+pub const RAM_COST: i64 = 4;
+
+pub const SP: usize = 2;
+pub const A0: usize = 10;
+pub const A1: usize = 11;
+pub const A5: usize = 15;
+pub const A7: usize = 17;
+
+pub const UNKNOWN_CALL: u32 = 0xffff_ffff;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Kind {
@@ -81,7 +91,8 @@ impl Cpu {
         } else {
             (expand(raw), self.pc + 2)
         };
-        let cost = if self.pc >= RAM_BASE { 4 } else { 1 };
+        let ram = self.pc >= RAM_BASE;
+        let cost = if ram { RAM_COST } else { ROM_COST };
         match self.execute(instruction, next) {
             Err(f) if f.kind == Kind::Illegal => Err(Fault {
                 kind: Kind::Illegal,
