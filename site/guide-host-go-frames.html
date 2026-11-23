@@ -31,6 +31,20 @@ type Machine struct {
     Devices  func(slot, fn uint32) (result uint32, charge int64)
 }</pre>
 <p><code>Machine</code> is the processor of step 1 with what the frame loop keeps: the budget, the frame counter, and how the machine stopped. <code>Devices</code> is for calls to other devices; it stays empty until step 3.</p>
+<p>Slot 1 is the System device. <code>BaseCharge</code> is the charge of its calls and of a call the machine does not have; <code>BadBuffer</code>, the result when a call&#39;s buffer is not where it must be. Its calls are numbered by function:</p>
+<pre>const (
+    System     = 1
+    BaseCharge = 4
+    BadBuffer  = 0xfffffffe
+    eventSize  = 4
+)
+
+const (
+    waitFrame  = 0
+    nextEvent  = 1
+    frameCount = 2
+    exit       = 6
+)</pre>
 <pre>func (m *Machine) RunFrame() {
     m.Budget += FrameBudget
     for m.Budget &gt; 0 &amp;&amp; m.Stopped == Running {
@@ -43,16 +57,16 @@ type Machine struct {
         if !ecall {
             continue
         }
-        slot, fn := m.X[17]&gt;&gt;8, m.X[17]&amp;0xff
-        result, charge := uint32(0xffffffff), int64(4)
-        if slot == 1 {
+        slot, fn := m.X[A7]&gt;&gt;8, m.X[A7]&amp;0xff
+        result, charge := uint32(UnknownCall), int64(BaseCharge)
+        if slot == System {
             result = m.system(fn)
         } else if m.Devices != nil {
             result, charge = m.Devices(slot, fn)
         }
-        m.X[10] = result
+        m.X[A0] = result
         m.Budget -= charge
-        if slot == 1 &amp;&amp; fn == 0 {
+        if slot == System &amp;&amp; fn == waitFrame {
             break
         }
     }
@@ -70,20 +84,20 @@ type Machine struct {
 <h2 id="four-calls">Four calls</h2>
 <pre>func (m *Machine) system(fn uint32) uint32 {
     switch fn {
-    case 0:
+    case waitFrame:
         return m.Frame + 1
-    case 1:
-        if m.Memory(m.X[10], 4, true) == nil {
-            return 0xfffffffe
+    case nextEvent:
+        if m.Memory(m.X[A0], eventSize, true) == nil {
+            return BadBuffer
         }
         return 0
-    case 2:
+    case frameCount:
         return m.Frame
-    case 6:
-        m.Stopped, m.ExitCode = Exited, byte(m.X[10])
+    case exit:
+        m.Stopped, m.ExitCode = Exited, byte(m.X[A0])
         return 0
     }
-    return 0xffffffff
+    return UnknownCall
 }</pre>
 <ul>
 <li><code>100h</code>, <code>wait_frame</code>: returns the number of the frame in which the program goes on, one more than the counter.</li>
@@ -146,7 +160,7 @@ bin/step2 frames.terse 10
 echo $?</pre>
 <p>prints <code>6</code>, as <code>terse run frames.terse --frames 10</code> does. Each pass of the loop costs 7 units: the <code>ecall</code> 1 + 4, the other two instructions 1 each. 100,000 passes are 700,000 units, so the loop ends in frame 5 (frames 0 to 4 give 625,000), <code>wait_frame</code> returns 6, and the program exits in frame 6. A host that says 3 does not charge calls; 5, its <code>wait_frame</code> returns the counter instead of one more; 1, it has no budget at all. Step 1&#39;s program says 255: it has no <code>frame_count</code>, so the last call returns <code>FFFF_FFFFh</code>.</p>
 <h2 id="what-you-have-now">What you have now</h2>
-<p>A machine that runs programs at exactly the reference&#39;s speed: <code>frames.go</code>, 66 lines, and <code>step2/main.go</code>, 32. Next, give it a screen: <a href="guide-host-go-driver.html">Make a host in Go, step 3: a driver shows hello</a>.</p>
+<p>A machine that runs programs at exactly the reference&#39;s speed: <code>frames.go</code>, 80 lines, and <code>step2/main.go</code>, 32. Next, give it a screen: <a href="guide-host-go-driver.html">Make a host in Go, step 3: a driver shows hello</a>.</p>
 <ul>
 <li>The same step in Rust: <a href="guide-host-rust-frames.html">Make a host in Rust, step 2: frames and the budget</a>.</li>
 <li>Full implementations: <code>native/core-c/main.c</code> (the frame loop) and <code>machine.c</code> (all ten System calls); the reference&#39;s <code>crates/terse-core/src/machine.rs</code> and <code>system.rs</code>.</li>

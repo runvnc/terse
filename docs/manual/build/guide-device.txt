@@ -6,8 +6,8 @@ A host does not have to build its devices in. On the device bus each device is a
 
 The terminal, device 2, written as a driver in two languages, each one file with no dependencies:
 
-- In Go, in `examples/device/go`: [Make a device in Go](terse:7a0c52ea817a34ee1725f36047a72742a4e7a88a0d0da53a41b0b69e5bf1cb15).
-- In Rust, in `examples/device/rust`: [Make a device in Rust](terse:c0dfc8b156ce89e821ee914f91e84f3e280dded1fc4b40cd5e6c4e4b19cc61fd).
+- In Go, in `examples/device/go`: [Make a device in Go](terse:eb9106fa5f2b473464ca11b24640b839ae14fee84908fcd1b4b589d321b989a7).
+- In Rust, in `examples/device/rust`: [Make a device in Rust](terse:fda3a146c82239f138d2a9db4fd2224ec75da73a9844414bc1c89dd3f0fe0fe7).
 
 Each does just enough of the terminal for `programs/hello`: under the reference core, `hello` gives exactly the hashes it gives with the reference terminal, frame after frame. Each also runs under the other language's host, which is a good test of both.
 

@@ -21,15 +21,17 @@ use terse::*;
 
 entry!(main);
 
+const BUILT_IN: [u8; 32] = [0; 32];
+
 fn main() {
-    let hello = mach_start_named(&amp;[0; 32], &quot;hello&quot;);
+    let hello = mach_start_named(&amp;BUILT_IN, &quot;hello&quot;);
     mach_place(hello, 0, 0, 640, 480);
     mach_focus(hello);
     loop {
         wait_frame();
     }
 }</pre>
-<p>The runtime has three calls of device 8, the ones a first shell needs, with the C library&#39;s names: <code>mach_start_named</code> (the key, 32 zero bytes for a built-in program, and the name), <code>mach_place</code> and <code>mach_focus</code>. The other calls of the device (listing the built-in programs, a machine&#39;s state, snapshots) are not wrapped; a program reaches them with the runtime&#39;s <code>call</code>, which takes the call&#39;s number, <code>(8 &lt;&lt; 8) | function</code>, and its arguments, as <a href="device-machines.html">The Machines device</a> lists them.</p>
+<p>The runtime has three calls of device 8, the ones a first shell needs, with the C library&#39;s names: <code>mach_start_named</code> (the key, 32 zero bytes, <code>BUILT_IN</code>, for a built-in program, and the name), <code>mach_place</code> and <code>mach_focus</code>. The other calls of the device (listing the built-in programs, a machine&#39;s state, snapshots) are not wrapped; a program reaches them with the runtime&#39;s <code>call</code>, which takes the call&#39;s number, <code>(8 &lt;&lt; 8) | function</code>, and its arguments, as <a href="device-machines.html">The Machines device</a> lists them.</p>
 <h2 id="build-it-and-run-it">Build it and run it</h2>
 <pre>terse build myshell.rs --device 8:0
 terse run --shell myshell.terse --frames 30 --dump

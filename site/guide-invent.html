@@ -72,7 +72,7 @@ int main(void)
         for (;;)
             terse_wait_frame();
     }
-    terse_random(&amp;seed, 4);
+    terse_random(&amp;seed, sizeof seed);
     terse_call(DICE_SEED, seed, 0, 0);
     for (;;) {
         for (int frame = 0; frame &lt; 30; frame++)
@@ -82,7 +82,7 @@ int main(void)
         term_puts(&quot;.\n&quot;);
     }
 }</pre>
-<p>Function <code>f</code> of the device on slot 240 is the call <code>(240 &lt;&lt; 8) | f</code>, made with <code>terse_call</code>; <code>terse_has_device</code> says whether the host granted the device. The seed comes from the machine&#39;s own random bytes, which the host records, so a replay rolls the same dice.</p>
+<p>Function <code>f</code> of the device on slot 240 is the call <code>(240 &lt;&lt; 8) | f</code>, made with <code>terse_call</code>; <code>DICE_ROLL</code> takes the number of sides, here 6. <code>terse_has_device</code> says whether the host granted the device. The seed comes from the machine&#39;s own random bytes, which the host records, so a replay rolls the same dice.</p>
 <h2 id="build-them-and-run-them">Build them and run them</h2>
 <p>The image names the device on a slot, as optional: an experimental device is never required, and a host without its driver runs the program without it.</p>
 <pre>cc -std=c11 -O2 -o dice native/driver-experimental/dice.c

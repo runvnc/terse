@@ -39,7 +39,7 @@ fn main() {
 }
 ```
 
-The Rust runtime has no calls for an invented device, nor could it: nobody but its author knows them. So the program makes them itself with `call`, the runtime's raw device call, which takes the call's number, `(240 << 8) | function` here, and three arguments. It is `unsafe` because a call may read or write the memory its arguments point to; `seed` and `roll` take only numbers. `device(DICE)` is `None` when the host did not grant the device.
+The Rust runtime has no calls for an invented device, nor could it: nobody but its author knows them. So the program makes them itself with `call`, the runtime's raw device call, which takes the call's number, `(240 << 8) | function` here, and three arguments. It is `unsafe` because a call may read or write the memory its arguments point to; `seed` and `roll` take only numbers (`roll`, the number of sides). `device(DICE)` is `None` when the host did not grant the device.
 
 ## Build it and run it
 
@@ -55,6 +55,6 @@ prints the C program's rolls, `You rolled 1.`, `2.` and `5.`, since the same see
 
 ## What you have now
 
-The program in Rust; and the end of the implementation guide. It is `examples/program/rust/roll.rs` in the Tersenet sources. What remains is the reference, which starts with [How Tersenet works](terse:f4462f1741e9d9fc19e95bf789d17ba1641ca8ddb6fdbda694fad164f9d44705).
+The program in Rust; and the end of the implementation guide. It is `examples/program/rust/roll.rs` in the Tersenet sources. What remains is the reference, which starts with [How Tersenet works](terse:946a64d33a3d343251e089a6f9c6e5db89377f84db6e2194806899cd15027d35).
 
-The rules of experimental devices are in [Experimental devices](terse:15dd998494b2c29d724dddbfb17c9141a13ec530783a0503eae41da31deb1ee7), and every call of the runtime in [Rust programs](terse:cc62b734f57e387e481efa6a768ddcea6ee1aaa3d58cc6359b652a3327298ff8).
+The rules of experimental devices are in [Experimental devices](terse:15dd998494b2c29d724dddbfb17c9141a13ec530783a0503eae41da31deb1ee7), and every call of the runtime in [Rust programs](terse:2a5f0d3ad6047f9eb589149fd575f4082b1a0d8da01e403f70861aea23766bac).

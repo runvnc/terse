@@ -1,6 +1,6 @@
 # Draw a line and read a key
 
-This page adds what most programs need besides text: drawing, and keys that change what is drawn. The program draws one line; Left and Right swing its top end, and Esc quits. In C here, and in Rust on [the next page](terse:b23e4146ced84e85e60194fee3e5d80aee72791722652cd580fb5e8c1e6ca229).
+This page adds what most programs need besides text: drawing, and keys that change what is drawn. The program draws one line; Left and Right swing its top end, and Esc quits. In C here, and in Rust on [the next page](terse:21637e5c43d76fb4a35f091bb0d06788128ea1135bf1c59f0aa9f450fe26d7ec).
 
 ## The program
 
@@ -27,8 +27,8 @@ int main(void)
                 return 0;
         }
         vec_begin(list, sizeof list);
-        vec_move(320 * 16, 400 * 16);
-        vec_line(x * 16, 80 * 16);
+        vec_move(320 * VEC_UNIT, 400 * VEC_UNIT);
+        vec_line(x * VEC_UNIT, 80 * VEC_UNIT);
         vec_end();
         vec_submit_list(list);
         terse_wait_frame();
@@ -42,7 +42,7 @@ Build it with `terse build line.c` and run it with `terse-host line.terse`.
 
 The 2D vector display draws from a display list: a few bytes of drawing commands that the program builds in its own memory and hands over with `vec_submit_list`. The display shows that list every frame until the program submits another. The list must be in RAM, which is why it is a variable: a `const` array, in the program's read-only memory, is refused.
 
-The screen is 640 by 480 units, (0, 0) at the top left, and a list's coordinates are in sixteenths of a unit: hence the `* 16`. `vec_move` moves the pen without drawing, and `vec_line` draws a line from it. There are also circles, discs, rectangles and triangles, colours and widths.
+The screen is 640 by 480 units, (0, 0) at the top left, and a list's coordinates are in sixteenths of a unit: `VEC_UNIT` is 16, so `320 * VEC_UNIT` is 320 units. `vec_move` moves the pen without drawing, and `vec_line` draws a line from it. There are also circles, discs, rectangles and triangles, colours and widths.
 
 ## Reading keys
 
@@ -75,6 +75,6 @@ A line from (320, 400) to (300, 80) in screen units, written in sixteenths, one 
 
 ## What you have now
 
-A program that draws and reacts to keys: the shape of most games and tools. It is `examples/program/c/line.c` in the Tersenet sources. Next, [the same in Rust](terse:b23e4146ced84e85e60194fee3e5d80aee72791722652cd580fb5e8c1e6ca229), or, staying with C, a small game: [Make a small game](terse:fb1c10d9ea8711746408103c0094ace112596e029d31d297595c862760d197b9).
+A program that draws and reacts to keys: the shape of most games and tools. It is `examples/program/c/line.c` in the Tersenet sources. Next, [the same in Rust](terse:21637e5c43d76fb4a35f091bb0d06788128ea1135bf1c59f0aa9f450fe26d7ec), or, staying with C, a small game: [Make a small game](terse:d42f61da7ffb41b282de63164f2679c89c5affdc8fd41a7025b2563d0a0a8178).
 
 Every drawing command is in [The 2D vector display](terse:5d3b36acec57a1278864e7534689495daf77667d45204a6ef08bda09b3e9c33a), and every event and key in [Events and input](terse:dc3d95e68d63157ec488f5d5e99c6875d65ff723df6dce52b1af6b3190229a62).

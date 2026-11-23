@@ -72,10 +72,10 @@ Fields an op does not use are ignored.
 | `0Bh` | Set profile | [feeds](terse:18456270781246b942d8ff3bf063d270e2763a92eb75d8d6f22aab647ca67bca) |
 | `0Ch` | Set nickname | [feeds](terse:18456270781246b942d8ff3bf063d270e2763a92eb75d8d6f22aab647ca67bca) |
 | `0Dh` | Programs | [feeds](terse:18456270781246b942d8ff3bf063d270e2763a92eb75d8d6f22aab647ca67bca) |
-| `0Eh` | Save | [named records](terse:c1e60acd8b8245fd6ee11e1a498d14eadf337c1551f144cabe64c218b65af78c) |
-| `0Fh` | Load | [named records](terse:c1e60acd8b8245fd6ee11e1a498d14eadf337c1551f144cabe64c218b65af78c) |
-| `10h` | Delete | [named records](terse:c1e60acd8b8245fd6ee11e1a498d14eadf337c1551f144cabe64c218b65af78c) |
-| `11h` | Records | [named records](terse:c1e60acd8b8245fd6ee11e1a498d14eadf337c1551f144cabe64c218b65af78c) |
+| `0Eh` | Save | [named records](terse:4038ca747e7dea6058cf99dc95ec76ab3a5a9e41728fb81032a61a50c714ee96) |
+| `0Fh` | Load | [named records](terse:4038ca747e7dea6058cf99dc95ec76ab3a5a9e41728fb81032a61a50c714ee96) |
+| `10h` | Delete | [named records](terse:4038ca747e7dea6058cf99dc95ec76ab3a5a9e41728fb81032a61a50c714ee96) |
+| `11h` | Records | [named records](terse:4038ca747e7dea6058cf99dc95ec76ab3a5a9e41728fb81032a61a50c714ee96) |
 
 Get (`01h`) asks for up to `length` bytes of blob `id` starting at `offset`, delivered to `addr`. On success `length` is the number of bytes delivered (fewer if the blob ends first) and `size` is the blob's size. A get whose `offset` is at or beyond the end of the blob completes with `01h`, `length` 0 and `size` the blob's size.
 

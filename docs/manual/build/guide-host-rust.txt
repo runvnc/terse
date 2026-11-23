@@ -4,10 +4,32 @@ This step reads a program file, sets up memory and runs the processor until the 
 
 ## The program file
 
-A program file (`.terse`) is a 32-byte header, two bytes for each device the program uses, then the ROM: the program's code and data. `load` checks the header and makes the processor at reset: the ROM at `0001_0000h`; the RAM, as many 8 KiB pages as the header asks for, all zero, at `0010_0000h`; `pc` on the first byte of ROM and the stack pointer `x2` at the end of RAM.
+A program file (`.terse`) is a 32-byte header, two bytes for each device the program uses, then the ROM: the program's code and data. `load` checks the header and makes the processor at reset: the ROM at `0001_0000h`; the RAM, as many 8 KiB pages as the header asks for, all zero, at `0010_0000h`; `pc` on the first byte of ROM and the stack pointer `x2` at the end of RAM. The header:
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 6 | `TERS`, format version 0, machine profile 1 |
+| 6 | 3 | the ROM's length, at most 131,072 bytes |
+| 9 | 1 | RAM pages of 8 KiB, 1 to 128 |
+| 10 | 1 | the number of devices, at most 16 |
+| 32 | 2 each | each device: its slot and version (`80h`: optional) |
+
+Bytes 11 to 31 hold a title, which a host does not need. The rest is in [The Terse32 machine](terse:eb5e8f78d92c0dde2ae30f3c08aa4326196dddf37d5986350c9d13121701897d), "The image format".
 
 ```rust from examples/host/rust/src/image.rs
-use crate::cpu::{Cpu, RAM_BASE, ROM_BASE};
+use crate::cpu::{Cpu, RAM_BASE, ROM_BASE, SP};
+
+const HEADER_SIZE: usize = 32;
+const MAGIC: &[u8] = b"TERS\0\x01";
+const ROM_LEN_AT: usize = 6;
+const RAM_PAGES_AT: usize = 9;
+const DEVICES_AT: usize = 10;
+const MAX_ROM: usize = 131072;
+const MAX_RAM_PAGES: usize = 128;
+const MAX_DEVICES: usize = 16;
+pub const DEVICE_SIZE: usize = 2;
+pub const PAGE_SIZE: usize = 8192;
+const OPTIONAL: u8 = 0x80;
 
 pub struct Device {
     pub slot: u8,
@@ -16,35 +38,37 @@ pub struct Device {
 }
 
 pub fn load(file: &[u8]) -> Result<(Cpu, Vec<Device>), String> {
-    if file.len() < 32 || &file[..6] != b"TERS\0\x01" {
+    if file.len() < HEADER_SIZE || !file.starts_with(MAGIC) {
         return Err("not a Terse32 program".into());
     }
+    let r = &file[ROM_LEN_AT..];
     let rom_len =
-        u32::from_le_bytes([file[6], file[7], file[8], 0]);
-    let (pages, count) = (file[9] as usize, file[10] as usize);
-    let size = 32 + 2 * count + rom_len as usize;
-    if !(1..=131072).contains(&rom_len)
-        || !(1..=128).contains(&pages)
-        || count > 16
-        || file.len() != size
+        u32::from_le_bytes([r[0], r[1], r[2], 0]) as usize;
+    let pages = file[RAM_PAGES_AT] as usize;
+    let count = file[DEVICES_AT] as usize;
+    let rom_at = HEADER_SIZE + DEVICE_SIZE * count;
+    if !(1..=MAX_ROM).contains(&rom_len)
+        || !(1..=MAX_RAM_PAGES).contains(&pages)
+        || count > MAX_DEVICES
+        || file.len() != rom_at + rom_len
     {
         return Err("a malformed program file".into());
     }
-    let devices = file[32..32 + 2 * count]
-        .chunks(2)
+    let devices = file[HEADER_SIZE..rom_at]
+        .chunks(DEVICE_SIZE)
         .map(|d| Device {
             slot: d[0],
-            version: d[1] & 0x7f,
-            optional: d[1] & 0x80 != 0,
+            version: d[1] & !OPTIONAL,
+            optional: d[1] & OPTIONAL != 0,
         })
         .collect();
     let mut cpu = Cpu {
         x: [0; 32],
         pc: ROM_BASE,
-        rom: file[32 + 2 * count..].to_vec(),
-        ram: vec![0; pages * 8192],
+        rom: file[rom_at..].to_vec(),
+        ram: vec![0; pages * PAGE_SIZE],
     };
-    cpu.x[2] = RAM_BASE + cpu.ram.len() as u32;
+    cpu.x[SP] = RAM_BASE + cpu.ram.len() as u32;
     Ok((cpu, devices))
 }
 ```
@@ -156,7 +180,8 @@ and so on for the other 16-bit forms, 140 lines in all. A form the machine does 
         } else {
             (expand(raw), self.pc + 2)
         };
-        let cost = if self.pc >= RAM_BASE { 4 } else { 1 };
+        let ram = self.pc >= RAM_BASE;
+        let cost = if ram { RAM_COST } else { ROM_COST };
         match self.execute(instruction, next) {
             Err(f) if f.kind == Kind::Illegal => Err(Fault {
                 kind: Kind::Illegal,
@@ -234,12 +259,27 @@ A fault stops the machine with `pc` on the faulting instruction, which is not ca
 
 ## Calls
 
-`ecall` calls a device: `a7` (`x17`) holds the device's slot × 256 + the function, `a0` to `a5` (`x10` to `x15`) the arguments, and the result goes in `a0`. This step has one call, `exit`, `106h`; every other call returns `FFFF_FFFFh`, as a call the machine does not have must:
+`ecall` calls a device: `a7` (`x17`) holds the device's slot × 256 + the function, `a0` to `a5` (`x10` to `x15`) the arguments, and the result goes in `a0`. `cpu.rs` names these registers, the stack pointer and the result of a call the machine does not have, `FFFF_FFFFh`:
+
+```rust from examples/host/rust/src/cpu.rs
+pub const SP: usize = 2;
+pub const A0: usize = 10;
+pub const A1: usize = 11;
+pub const A5: usize = 15;
+pub const A7: usize = 17;
+
+pub const UNKNOWN_CALL: u32 = 0xffff_ffff;
+```
+
+This step has one call, `exit`, `106h`; every other call returns that result, as a call the machine does not have must:
 
 ```rust from examples/host/rust/src/bin/step1.rs
+use host::cpu::{A0, A7, UNKNOWN_CALL};
 use host::image::load;
 use std::error::Error;
 use std::process::exit;
+
+const EXIT: u32 = 0x106;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = std::env::args().collect();
@@ -251,10 +291,10 @@ fn main() -> Result<(), Box<dyn Error>> {
                 eprintln!("{fault}");
                 exit(1)
             }
-            Ok((_, true)) if cpu.x[17] == 0x106 => {
-                exit((cpu.x[10] & 0xff) as i32)
+            Ok((_, true)) if cpu.x[A7] == EXIT => {
+                exit(cpu.x[A0] as u8 as i32)
             }
-            Ok((_, true)) => cpu.x[10] = u32::MAX,
+            Ok((_, true)) => cpu.x[A0] = UNKNOWN_CALL,
             Ok(_) => {}
         }
     }
@@ -297,8 +337,8 @@ prints `186`. The reference gives the same: `terse run exit.terse --frames 1`, t
 
 ## What you have now
 
-A Terse32 processor that runs a program to its end: `cpu.rs` (208 lines), `decode.rs` (183), `image.rs` (40) and `bin/step1.rs` (22). Next, make it keep time: [Make a host in Rust, step 2: frames and the budget](terse:03bcf990caa1c94fd44c288107fb07aa02f566c2baf0ea45d37e829ff00a0c5d).
+A Terse32 processor that runs a program to its end: `cpu.rs` (219 lines), `decode.rs` (183), `image.rs` (54) and `bin/step1.rs` (25). Next, make it keep time: [Make a host in Rust, step 2: frames and the budget](terse:85808e691aa905d2adc315d323db743613a3a45ff3dfeecf5f6532209c8d06b1).
 
 - The same step in Go: "Make a host in Go, step 1: run a program to its end", the page before this one.
 - Full implementations: `native/core-c/cpu.c` (C) and `crates/terse-core/src/cpu.rs` (the reference).
-- The rules: [The Terse32 machine](terse:9be743eb3c9471e1a4d9a9b9bd1e65d1498a86dfc9aef351e17a506f0ee72c83), sections "CPU", "Memory map", "Reset state", "Stopping and faults", "The image format" and "Calls".
+- The rules: [The Terse32 machine](terse:eb5e8f78d92c0dde2ae30f3c08aa4326196dddf37d5986350c9d13121701897d), sections "CPU", "Memory map", "Reset state", "Stopping and faults", "The image format" and "Calls".

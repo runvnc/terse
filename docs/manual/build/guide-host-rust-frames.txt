@@ -23,6 +23,20 @@ pub struct Machine {
 
 `Machine` is the processor of step 1 with what the frame loop keeps: the budget, the frame counter, and whether and how the machine stopped.
 
+Slot 1 is the System device. `BASE_CHARGE` is the charge of its calls and of a call the machine does not have; `BAD_BUFFER`, the result when a call's buffer is not where it must be. Its calls are numbered by function:
+
+```rust from examples/host/rust/src/frames.rs
+pub const SYSTEM: u32 = 1;
+pub const BASE_CHARGE: i64 = 4;
+pub const BAD_BUFFER: u32 = 0xffff_fffe;
+const EVENT_SIZE: u32 = 4;
+
+const WAIT_FRAME: u32 = 0;
+const NEXT_EVENT: u32 = 1;
+const FRAME_COUNT: u32 = 2;
+const EXIT: u32 = 6;
+```
+
 ```rust from examples/host/rust/src/frames.rs
     pub fn run_frame<D>(&mut self, mut devices: D)
     where
@@ -41,17 +55,17 @@ pub struct Machine {
             if !ecall {
                 continue;
             }
-            let a7 = self.cpu.x[17];
+            let a7 = self.cpu.x[A7];
             let (slot, function) = (a7 >> 8, a7 & 0xff);
             let budget = self.budget;
-            let (result, charge) = if slot == 1 {
-                (self.system(function), 4)
+            let (result, charge) = if slot == SYSTEM {
+                (self.system(function), BASE_CHARGE)
             } else {
                 devices(&mut self.cpu, budget, slot, function)
             };
-            self.cpu.x[10] = result;
+            self.cpu.x[A0] = result;
             self.budget -= charge;
-            if slot == 1 && function == 0 {
+            if slot == SYSTEM && function == WAIT_FRAME {
                 break;
             }
         }
@@ -72,19 +86,18 @@ In order:
 
 ```rust from examples/host/rust/src/frames.rs
     fn system(&mut self, function: u32) -> u32 {
-        let a0 = self.cpu.x[10];
+        let a0 = self.cpu.x[A0];
+        let event = self.cpu.memory(a0, EVENT_SIZE, true);
         match function {
-            0 => self.frame + 1,
-            1 if self.cpu.memory(a0, 4, true).is_none() => {
-                0xffff_fffe
-            }
-            1 => 0,
-            2 => self.frame,
-            6 => {
+            WAIT_FRAME => self.frame + 1,
+            NEXT_EVENT if event.is_none() => BAD_BUFFER,
+            NEXT_EVENT => 0,
+            FRAME_COUNT => self.frame,
+            EXIT => {
                 self.status = Status::Exited(a0 as u8);
                 0
             }
-            _ => u32::MAX,
+            _ => UNKNOWN_CALL,
         }
     }
 ```
@@ -97,7 +110,8 @@ In order:
 ## The program
 
 ```rust from examples/host/rust/src/bin/step2.rs
-use host::frames::{Machine, Status};
+use host::cpu::UNKNOWN_CALL;
+use host::frames::{BASE_CHARGE, Machine, Status};
 use host::image::load;
 use std::error::Error;
 use std::process::exit;
@@ -109,7 +123,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let (cpu, _) = load(&file)?;
     let mut m = Machine::new(cpu);
     while m.running() && m.frame < frames {
-        m.run_frame(|_, _, _, _| (u32::MAX, 4));
+        m.run_frame(|_, _, _, _| (UNKNOWN_CALL, BASE_CHARGE));
     }
     match m.status {
         Status::Faulted(fault) => {
@@ -156,8 +170,8 @@ prints `6`, as `terse run frames.terse --frames 10` does. Each pass of the loop 
 
 ## What you have now
 
-A machine that runs programs at exactly the reference's speed: `frames.rs`, 83 lines, and `bin/step2.rs`, 23. Next, give it a screen: [Make a host in Rust, step 3: a driver shows hello](terse:58808fc8aaddd4e2ab2f92d6d82878ccd61631d24d2268ac71d41fbc4a2529f3).
+A machine that runs programs at exactly the reference's speed: `frames.rs`, 92 lines, and `bin/step2.rs`, 24. Next, give it a screen: [Make a host in Rust, step 3: a driver shows hello](terse:c828dda1532135d70b773166fdf0d958af545e0ad7da55226db37d2894ef03c0).
 
 - The same step in Go: "Make a host in Go, step 2: frames and the budget", the page before this one.
 - Full implementations: `native/core-c/main.c` (the frame loop) and `machine.c` (all ten System calls); the reference's `crates/terse-core/src/machine.rs` and `system.rs`.
-- The rules: [The Terse32 machine](terse:9be743eb3c9471e1a4d9a9b9bd1e65d1498a86dfc9aef351e17a506f0ee72c83), section "Frames and the budget"; [The system device (device 1)](terse:3250192d7bd8b6022808c00a8fbc5c81bdc67d2bef438fd25b877c4b94237273); [Charges and limits](terse:0cd6940cd27ae344118a79142e415ac92d9df31c5938bdee4e8ef2249cdd8620).
+- The rules: [The Terse32 machine](terse:eb5e8f78d92c0dde2ae30f3c08aa4326196dddf37d5986350c9d13121701897d), section "Frames and the budget"; [The system device (device 1)](terse:5107ebd08fd51daad5ceea79195859e84f217c95e79ed4f8ad76dd18d8543a15); [Charges and limits](terse:0cd6940cd27ae344118a79142e415ac92d9df31c5938bdee4e8ef2249cdd8620).

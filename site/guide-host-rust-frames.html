@@ -28,6 +28,16 @@ pub struct Machine {
     pub status: Status,
 }</pre>
 <p><code>Machine</code> is the processor of step 1 with what the frame loop keeps: the budget, the frame counter, and whether and how the machine stopped.</p>
+<p>Slot 1 is the System device. <code>BASE_CHARGE</code> is the charge of its calls and of a call the machine does not have; <code>BAD_BUFFER</code>, the result when a call&#39;s buffer is not where it must be. Its calls are numbered by function:</p>
+<pre>pub const SYSTEM: u32 = 1;
+pub const BASE_CHARGE: i64 = 4;
+pub const BAD_BUFFER: u32 = 0xffff_fffe;
+const EVENT_SIZE: u32 = 4;
+
+const WAIT_FRAME: u32 = 0;
+const NEXT_EVENT: u32 = 1;
+const FRAME_COUNT: u32 = 2;
+const EXIT: u32 = 6;</pre>
 <pre>    pub fn run_frame&lt;D&gt;(&amp;mut self, mut devices: D)
     where
         D: FnMut(&amp;mut Cpu, i64, u32, u32) -&gt; (u32, i64),
@@ -45,17 +55,17 @@ pub struct Machine {
             if !ecall {
                 continue;
             }
-            let a7 = self.cpu.x[17];
+            let a7 = self.cpu.x[A7];
             let (slot, function) = (a7 &gt;&gt; 8, a7 &amp; 0xff);
             let budget = self.budget;
-            let (result, charge) = if slot == 1 {
-                (self.system(function), 4)
+            let (result, charge) = if slot == SYSTEM {
+                (self.system(function), BASE_CHARGE)
             } else {
                 devices(&amp;mut self.cpu, budget, slot, function)
             };
-            self.cpu.x[10] = result;
+            self.cpu.x[A0] = result;
             self.budget -= charge;
-            if slot == 1 &amp;&amp; function == 0 {
+            if slot == SYSTEM &amp;&amp; function == WAIT_FRAME {
                 break;
             }
         }
@@ -72,19 +82,18 @@ pub struct Machine {
 </ul>
 <h2 id="four-calls">Four calls</h2>
 <pre>    fn system(&amp;mut self, function: u32) -&gt; u32 {
-        let a0 = self.cpu.x[10];
+        let a0 = self.cpu.x[A0];
+        let event = self.cpu.memory(a0, EVENT_SIZE, true);
         match function {
-            0 =&gt; self.frame + 1,
-            1 if self.cpu.memory(a0, 4, true).is_none() =&gt; {
-                0xffff_fffe
-            }
-            1 =&gt; 0,
-            2 =&gt; self.frame,
-            6 =&gt; {
+            WAIT_FRAME =&gt; self.frame + 1,
+            NEXT_EVENT if event.is_none() =&gt; BAD_BUFFER,
+            NEXT_EVENT =&gt; 0,
+            FRAME_COUNT =&gt; self.frame,
+            EXIT =&gt; {
                 self.status = Status::Exited(a0 as u8);
                 0
             }
-            _ =&gt; u32::MAX,
+            _ =&gt; UNKNOWN_CALL,
         }
     }</pre>
 <ul>
@@ -94,7 +103,8 @@ pub struct Machine {
 <li><code>106h</code>, <code>exit</code>: the machine stops with exit code <code>a0</code> &amp; <code>FFh</code>. Like every call it writes its result, 0, to <code>a0</code>.</li>
 </ul>
 <h2 id="the-program">The program</h2>
-<pre>use host::frames::{Machine, Status};
+<pre>use host::cpu::UNKNOWN_CALL;
+use host::frames::{BASE_CHARGE, Machine, Status};
 use host::image::load;
 use std::error::Error;
 use std::process::exit;
@@ -106,7 +116,7 @@ fn main() -&gt; Result&lt;(), Box&lt;dyn Error&gt;&gt; {
     let (cpu, _) = load(&amp;file)?;
     let mut m = Machine::new(cpu);
     while m.running() &amp;&amp; m.frame &lt; frames {
-        m.run_frame(|_, _, _, _| (u32::MAX, 4));
+        m.run_frame(|_, _, _, _| (UNKNOWN_CALL, BASE_CHARGE));
     }
     match m.status {
         Status::Faulted(fault) =&gt; {
@@ -139,7 +149,7 @@ target/release/step2 frames.terse 10
 echo $?</pre>
 <p>prints <code>6</code>, as <code>terse run frames.terse --frames 10</code> does. Each pass of the loop costs 7 units: the <code>ecall</code> 1 + 4, the other two instructions 1 each. 100,000 passes are 700,000 units, so the loop ends in frame 5 (frames 0 to 4 give 625,000), <code>wait_frame</code> returns 6, and the program exits in frame 6. A host that says 3 does not charge calls; 5, its <code>wait_frame</code> returns the counter instead of one more; 1, it has no budget at all.</p>
 <h2 id="what-you-have-now">What you have now</h2>
-<p>A machine that runs programs at exactly the reference&#39;s speed: <code>frames.rs</code>, 83 lines, and <code>bin/step2.rs</code>, 23. Next, give it a screen: <a href="guide-host-rust-driver.html">Make a host in Rust, step 3: a driver shows hello</a>.</p>
+<p>A machine that runs programs at exactly the reference&#39;s speed: <code>frames.rs</code>, 92 lines, and <code>bin/step2.rs</code>, 24. Next, give it a screen: <a href="guide-host-rust-driver.html">Make a host in Rust, step 3: a driver shows hello</a>.</p>
 <ul>
 <li>The same step in Go: &quot;Make a host in Go, step 2: frames and the budget&quot;, the page before this one.</li>
 <li>Full implementations: <code>native/core-c/main.c</code> (the frame loop) and <code>machine.c</code> (all ten System calls); the reference&#39;s <code>crates/terse-core/src/machine.rs</code> and <code>system.rs</code>.</li>

@@ -27,7 +27,7 @@ int main(void)
         terse_wait_frame();
 }</pre>
 <ul>
-<li><code>mach_start_named</code> starts a program by its publisher&#39;s key and its name; 32 zero bytes, <code>built_in</code>, mean a program built into the host. It returns a handle, 1 to 8 (0 if all eight are in use).</li>
+<li><code>mach_start_named</code> starts a program by its publisher&#39;s key and its name, with the name&#39;s length (5); 32 zero bytes, <code>built_in</code>, mean a program built into the host. It returns a handle, 1 to 8 (0 if all eight are in use).</li>
 <li><code>mach_place</code> sets the rectangle of the shell&#39;s screen where that machine&#39;s screen is shown: here all of it, 640 by 480 units.</li>
 <li><code>mach_focus</code> sends the keyboard to that machine.</li>
 </ul>
