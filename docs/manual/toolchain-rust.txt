@@ -132,6 +132,6 @@ terse pack --rom game.bin --title game --ram-pages 4 \
     --device 2:0 --device 3:0 -o game.terse
 ```
 
-The linker script's path is relative to the package's root, where cargo runs the linker. This gives the same ROM as `terse build` for the same source (checked with hello.rs). A debug build (`opt-level = 0`) works but is far larger and slower: 11,701 bytes of ROM for hello instead of 1,716, and a larger program may not fit in 128 KiB of ROM or in a frame's budget.
+The linker script's path is relative to the package's root, where cargo runs the linker. This gives the same ROM as `terse build` for the same source (checked with hello.rs). A debug build (`opt-level = 0`) works but is far larger and slower: 11,701 bytes of ROM for hello instead of 1,716, and a larger program may not fit in 256 KiB of ROM or in a frame's budget.
 
 Next: [Building by hand, and other languages](terse:{toolchain-other}).

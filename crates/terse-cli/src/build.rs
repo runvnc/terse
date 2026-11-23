@@ -242,7 +242,7 @@ pub fn build(all: &[String]) -> Result<ExitCode, String> {
     };
     let ram_pages = match args.get("--ram-pages") {
         None => None,
-        Some(n) => Some(n.parse().ok().filter(|n| (1..=RAM_PAGES_MAX).contains(n)).ok_or(format!("bad RAM page count {n} (1 to 128)"))?),
+        Some(n) => Some(n.parse().ok().filter(|n| (1..=RAM_PAGES_MAX).contains(n)).ok_or(format!("bad RAM page count {n} (1 to {RAM_PAGES_MAX})"))?),
     };
     let devices = devices(&args)?;
     let show = args.has("--show");
@@ -269,7 +269,8 @@ pub fn build(all: &[String]) -> Result<ExitCode, String> {
         None => {
             let n = (ram_used + STACK).div_ceil(PAGE);
             u8::try_from(n).ok().filter(|&n| n <= RAM_PAGES_MAX).ok_or(format!(
-                "the program's data and .bss take {ram_used} bytes: with 8 KiB of stack that is more than 128 RAM pages (1 MiB)"
+                "the program's data and .bss take {ram_used} bytes: with 8 KiB of stack that is more than {RAM_PAGES_MAX} RAM pages ({} KiB)",
+                RAM_PAGES_MAX as u32 * 8
             ))?
         }
     };
@@ -448,7 +449,9 @@ pub fn rom_from_elf(elf: &[u8]) -> Result<(Vec<u8>, u32), String> {
         }
         if paddr < ROM_BASE || paddr.saturating_add(filesz) > ROM_BASE + ROM_MAX {
             return Err(format!(
-                "{filesz} bytes to load at {paddr:08x}h, outside the ROM (00010000h, at most 128 KiB): is the program larger than 128 KiB?"
+                "{filesz} bytes to load at {paddr:08x}h, outside the ROM (00010000h, at most {} KiB): is the program larger than {} KiB?",
+                ROM_MAX / 1024,
+                ROM_MAX / 1024
             ));
         }
         let at = (paddr - ROM_BASE) as usize;

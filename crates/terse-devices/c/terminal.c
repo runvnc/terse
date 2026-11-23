@@ -641,7 +641,7 @@ static int shm_open_bus(const char *bus_path) {
 /* ------------------------------------------------------------ instances */
 
 /* A machine the driver serves (DEVICES.md 1.2): its terminal and, on shared
- * memory, its memory file (ROM at 0, RAM at 131,072). */
+ * memory, its memory file (ROM at 0, RAM at 262,144). */
 typedef struct {
     uint32_t id;
     Terminal *t;
@@ -686,7 +686,7 @@ static const uint8_t *guest(uint32_t addr, uint32_t len) {
     if (len == 0) return none;
     if (!cur->mem) fail("instance %u has no memory file", cur->id);
     if (a >= 0x10000 && end <= 0x10000 + (uint64_t)cur->rom_len) return cur->mem + (a - 0x10000);
-    if (a >= 0x100000 && end <= 0x100000 + (uint64_t)cur->ram_len) return cur->mem + 131072 + (a - 0x100000);
+    if (a >= 0x100000 && end <= 0x100000 + (uint64_t)cur->ram_len) return cur->mem + 262144 + (a - 0x100000);
     fail("buffer %08Xh+%u is not in ROM or RAM", addr, len);
     return NULL;
 }
@@ -726,7 +726,7 @@ static void open_instance(const uint8_t *m, size_t n, Buf *r) {
     if (mem_path[0]) {
         i.mem = map_file(mem_path, &i.mem_size);
         if (!i.mem) fail("%s: cannot map the memory file", mem_path);
-        if (i.mem_size < 131072 + (size_t)ram_len || rom_len > 131072) fail("%s: the memory file is too short", mem_path);
+        if (i.mem_size < 262144 + (size_t)ram_len || rom_len > 262144) fail("%s: the memory file is too short", mem_path);
     } else if (shm) {
         fail("shared memory without a memory file");
     }
