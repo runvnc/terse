@@ -17,9 +17,26 @@ import (
 	"reader/relay"
 )
 
+const (
+	keySize       = 32
+	typeSubscribe = 0x04
+	typeEntry     = 0x90
+	requestNumber = 2
+	after         = 0
+	statusAt      = 5
+	statusDone    = 1
+	highestAt     = 6
+	highestEnd    = 10
+	seqAt         = 32
+	seqEnd        = 36
+	kindArticle   = 1
+)
+
+var le = binary.LittleEndian
+
 func main() {
 	key, err := hex.DecodeString(os.Args[2])
-	if err != nil || len(key) != 32 {
+	if err != nil || len(key) != keySize {
 		log.Fatal("a feed key is 64 hexadecimal digits")
 	}
 	url := os.Args[1]
@@ -27,32 +44,35 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	subscribe := append([]byte{0x04, 2, 0, 0, 0}, key...)
-	subscribe = append(subscribe, 0, 0, 0, 0)
-	err = conn.WriteMessage(websocket.BinaryMessage, subscribe)
+	request := []byte{typeSubscribe}
+	request = le.AppendUint32(request, requestNumber)
+	request = append(request, key...)
+	request = le.AppendUint32(request, after)
+	err = conn.WriteMessage(websocket.BinaryMessage, request)
 	if err != nil {
 		log.Fatal(err)
 	}
 	_, reply, err := conn.ReadMessage()
-	if err != nil || len(reply) < 10 || reply[5] != 1 {
+	if err != nil || len(reply) < highestEnd ||
+		reply[statusAt] != statusDone {
 		log.Fatal("the relay refused the subscription")
 	}
-	highest := binary.LittleEndian.Uint32(reply[6:])
-	articles := map[uint32][32]byte{}
-	for caughtUp := highest == 0; !caughtUp; {
-		_, message, err := conn.ReadMessage()
+	highest := le.Uint32(reply[highestAt:highestEnd])
+	articles := map[uint32]relay.ID{}
+	for caughtUp := highest == after; !caughtUp; {
+		_, msg, err := conn.ReadMessage()
 		if err != nil {
 			log.Fatal(err)
 		}
-		if len(message) < 37 || message[0] != 0x90 {
+		entry, ok := bytes.CutPrefix(msg, []byte{typeEntry})
+		if !ok || len(entry) < seqEnd {
 			continue
 		}
-		entry := message[1:]
-		seq := binary.LittleEndian.Uint32(entry[32:])
+		seq := le.Uint32(entry[seqAt:seqEnd])
 		caughtUp = seq >= highest
 		e, err := tersenet.VerifyEntry(entry)
 		mine := err == nil && bytes.Equal(e.Feed[:], key)
-		if mine && e.Kind == 1 {
+		if mine && e.Kind == kindArticle {
 			title := article.Visible(e.Title)
 			fmt.Printf("%d  %s\n", seq, title)
 			articles[seq] = e.Blob

@@ -3,66 +3,87 @@ package main
 import (
 	"encoding/binary"
 	"io"
+	"math"
 	"net"
 	"os"
+	"slices"
+	"unicode/utf8"
 )
 
 var le = binary.LittleEndian
 
 const (
-	columns  = 80
-	rows     = 30
-	none     = 0xff
-	deferred = 2
-	buffered = 4
-	reads    = 1
-	inROM    = 4
+	columns      = 80
+	rows         = 30
+	cells        = columns * rows
+	cellSize     = 4
+	grays        = 24
+	continuation = 0xffff
+)
+
+const (
+	write      = 0
+	command    = 1
+	setCursor  = 2
+	setColours = 4
+	cellsWrite = 7
+)
+
+const (
+	clearScreen = 1
+	scrollDown  = 3
+	clearToEnd  = 4
+)
+
+const (
+	a0, a1, a2   = 0, 1, 2
+	none         = 0xff
+	deferred     = 2
+	buffered     = 4
+	reads        = 1
+	inROM        = 4
+	failed       = 0xfffffffe
+	returnsValue = 1
+	returnsArg   = 2
+	perFour      = 1
 )
 
 type entry struct {
-	fn, flags, buffer, length byte
-	scale, most               uint32
-	access, checked           byte
-	checkedMost               uint32
-	rule, ruleArg             byte
-	perFour, chargeArg        byte
-	perByte                   uint16
-	low, high, add            uint32
+	function, flags, buffer, length byte
+	scale, least, most              uint32
+	access, checked                 byte
+	_                               [2]byte
+	checkedMost                     uint32
+	lengthResult, placeResult       uint32
+	rule, ruleArg                   byte
+	_                               [2]byte
+	value, value2, charge           uint32
+	chargeFlags, chargeArg          byte
+	perByte                         uint16
+	low, high, add                  uint32
 }
 
 var table = []entry{
-	{fn: 0, flags: deferred | buffered, length: 1, scale: 1,
-		most: 4096, access: reads | inROM, checked: none,
-		rule: 2, ruleArg: 1, chargeArg: none, perByte: 2},
-	{fn: 1, flags: deferred, length: none, checked: none,
-		rule: 1, chargeArg: 0, low: 1, high: 3, add: 150},
-	{fn: 2, flags: deferred, length: none, checked: none,
-		rule: 1, chargeArg: none},
-	{fn: 4, flags: deferred, length: none, checked: none,
-		rule: 1, chargeArg: none},
-	{fn: 7, flags: deferred | buffered, buffer: 1, length: 2,
-		scale: 4, most: 9600, access: reads | inROM, checked: 0,
-		checkedMost: 2399, rule: 2, ruleArg: 2, perFour: 1,
+	{function: write, flags: deferred | buffered, buffer: a0,
+		length: a1, scale: 1, most: 4096,
+		access: reads | inROM, checked: none,
+		lengthResult: failed, placeResult: failed,
+		rule: returnsArg, ruleArg: a1, chargeArg: none,
+		perByte: 2},
+	{function: command, flags: deferred, length: none,
+		checked: none, rule: returnsValue, chargeArg: a0,
+		low: clearScreen, high: scrollDown, add: 150},
+	{function: setCursor, flags: deferred, length: none,
+		checked: none, rule: returnsValue, chargeArg: none},
+	{function: setColours, flags: deferred, length: none,
+		checked: none, rule: returnsValue, chargeArg: none},
+	{function: cellsWrite, flags: deferred | buffered,
+		buffer: a1, length: a2, scale: cellSize,
+		most: cells * cellSize, access: reads | inROM,
+		checked: a0, checkedMost: cells - 1,
+		lengthResult: failed, placeResult: failed,
+		rule: returnsArg, ruleArg: a2, chargeFlags: perFour,
 		chargeArg: none},
-}
-
-func words(b []byte, values ...uint32) []byte {
-	for _, v := range values {
-		b = le.AppendUint32(b, v)
-	}
-	return b
-}
-
-func (e entry) encode() []byte {
-	b := []byte{e.fn, e.flags, e.buffer, e.length}
-	b = words(b, e.scale, 0, e.most)
-	b = append(b, e.access, e.checked, 0, 0)
-	b = words(b, e.checkedMost, 0xfffffffe, 0xfffffffe)
-	b = append(b, e.rule, e.ruleArg, 0, 0)
-	b = words(b, 0, 0, 0)
-	b = append(b, e.perFour, e.chargeArg)
-	b = le.AppendUint16(b, e.perByte)
-	return words(b, e.low, e.high, e.add)
 }
 
 var xterm = []byte{
@@ -73,32 +94,36 @@ var xterm = []byte{
 }
 
 type terminal struct {
-	grid                          [columns * rows * 4]byte
+	grid                          [cells * cellSize]byte
 	col, row, fg, bg, shown, wrap byte
-	palette                       [768]byte
+	palette                       []byte
+	partial                       [4]byte
 }
 
 func newTerminal() *terminal {
 	t := &terminal{fg: 7, shown: 1}
-	for cell := range columns * rows {
+	t.palette = slices.Clone(xterm)
+	for cell := range cells {
 		t.put(cell, ' ')
 	}
-	copy(t.palette[:], xterm)
 	levels := []byte{0, 95, 135, 175, 215, 255}
-	for i := range 216 {
-		r, g, b := levels[i/36], levels[i/6%6], levels[i%6]
-		copy(t.palette[48+3*i:], []byte{r, g, b})
+	for _, r := range levels {
+		for _, g := range levels {
+			for _, b := range levels {
+				t.palette = append(t.palette, r, g, b)
+			}
+		}
 	}
-	for i := range 24 {
-		gray := byte(8 + 10*i)
-		copy(t.palette[696+3*i:], []byte{gray, gray, gray})
+	for i := range byte(grays) {
+		gray := 8 + 10*i
+		t.palette = append(t.palette, gray, gray, gray)
 	}
 	return t
 }
 
 func (t *terminal) put(cell int, code uint16) {
-	le.PutUint16(t.grid[4*cell:], code)
-	t.grid[4*cell+2], t.grid[4*cell+3] = t.fg, t.bg
+	bytes := append(le.AppendUint16(nil, code), t.fg, t.bg)
+	copy(t.grid[cellSize*cell:], bytes)
 }
 
 func (t *terminal) newline() {
@@ -107,7 +132,7 @@ func (t *terminal) newline() {
 		t.row++
 		return
 	}
-	copy(t.grid[:], t.grid[columns*4:])
+	copy(t.grid[:], t.grid[columns*cellSize:])
 	for col := range columns {
 		t.put((rows-1)*columns+col, ' ')
 	}
@@ -118,15 +143,15 @@ func (t *terminal) write(text []byte) {
 		if r == '\n' {
 			t.newline()
 		}
-		if r < ' ' || r == 0x7f {
+		if r < ' ' || r == '\x7f' {
 			continue
 		}
 		if t.wrap == 1 {
 			t.newline()
 		}
 		code := uint16(r)
-		if r >= 0xffff {
-			code = 0xfffd
+		if r >= continuation {
+			code = utf8.RuneError
 		}
 		t.put(int(t.row)*columns+int(t.col), code)
 		if t.col == columns-1 {
@@ -138,35 +163,37 @@ func (t *terminal) write(text []byte) {
 }
 
 func (t *terminal) call(body []byte) (result, charge uint32) {
-	a := func(i int) uint32 { return le.Uint32(body[4+4*i:]) }
-	data := body[40 : 40+le.Uint32(body[36:])]
-	switch body[1] {
-	case 0:
+	args := body[argsAt:]
+	a := func(i int) uint32 { return le.Uint32(args[4*i:]) }
+	data := body[dataAt:][:le.Uint32(body[sizeAt:])]
+	switch body[functionAt] {
+	case write:
 		t.write(data)
 		return a(1), 2 * a(1)
-	case 1:
-		if a(0) == 4 {
+	case command:
+		if a(0) == clearToEnd {
 			for col := int(t.col); col < columns; col++ {
 				t.put(int(t.row)*columns+col, ' ')
 			}
 		}
-		if a(0) >= 1 && a(0) <= 3 {
+		if a(0) >= clearScreen && a(0) <= scrollDown {
 			return 0, 150
 		}
-	case 2:
+	case setCursor:
 		t.col = byte(min(a(0), columns-1))
 		t.row = byte(min(a(1), rows-1))
 		t.wrap = 0
-	case 4:
-		if a(0) < 256 {
+	case setColours:
+		if a(0) <= math.MaxUint8 {
 			t.fg = byte(a(0))
 		}
-		if a(1) < 256 {
+		if a(1) <= math.MaxUint8 {
 			t.bg = byte(a(1))
 		}
-	case 7:
+	case cellsWrite:
 		for i, b := range data {
-			t.grid[(4*int(a(0))+i)%len(t.grid)] = b
+			at := cellSize*int(a(0)) + i
+			t.grid[at%len(t.grid)] = b
 		}
 		return a(2), uint32(len(data)+3) / 4
 	}
@@ -176,23 +203,62 @@ func (t *terminal) call(body []byte) (result, charge uint32) {
 func (t *terminal) state() []byte {
 	state := append(t.grid[:], t.col, t.row, t.fg, t.bg)
 	state = append(state, t.shown, t.wrap)
-	state = append(state, t.palette[:]...)
-	return append(state, 0, 0, 0, 0)
+	state = append(state, t.palette...)
+	return append(state, t.partial[:]...)
+}
+
+const (
+	HELLO    = 0x01
+	OPEN     = 0x03
+	CLOSE    = 0x04
+	CALL     = 0x10
+	BATCH    = 0x11
+	BEGIN    = 0x30
+	END      = 0x31
+	STATE    = 0x40
+	SHUTDOWN = 0x60
+	ERROR    = 0x7f
+	REPLY    = 0x80
+)
+
+const (
+	addressSize   = 8
+	protocol      = 1
+	onSocket      = 0
+	took          = 1
+	terminalSlot  = 2
+	deviceVersion = 0
+	slotsAt       = 8
+	functionAt    = 1
+	argsAt        = 4
+	sizeAt        = 36
+	dataAt        = 40
+	batchCountAt  = 4
+	batchCallsAt  = 8
+)
+
+func words(b []byte, values ...uint32) []byte {
+	for _, v := range values {
+		b = le.AppendUint32(b, v)
+	}
+	return b
 }
 
 func hello(body []byte) []byte {
 	name := "terminal (Go example)"
-	reply := []byte{0x81, 1, 0, 0, byte(len(name)), 0}
-	reply = append(append(reply, name...), 0, 0, 0, 0, body[8])
-	for _, slot := range body[9 : 9+body[8]] {
-		if slot != 2 {
-			reply = append(reply, slot, 0, 0, 0)
-			continue
+	reply := []byte{HELLO | REPLY, protocol, onSocket, 0}
+	reply = le.AppendUint16(reply, uint16(len(name)))
+	reply = append(reply, name...)
+	slots := body[slotsAt+1:][:body[slotsAt]]
+	reply = append(reply, 0, 0, 0, 0, byte(len(slots)))
+	for _, slot := range slots {
+		var entries []entry
+		if slot == terminalSlot {
+			entries = table
 		}
-		reply = append(reply, 2, 0, 0, byte(len(table)))
-		for _, e := range table {
-			reply = append(reply, e.encode()...)
-		}
+		count := byte(len(entries))
+		reply = append(reply, slot, deviceVersion, 0, count)
+		reply, _ = binary.Append(reply, le, entries)
 	}
 	return append(reply, 0, 0, 0)
 }
@@ -203,54 +269,59 @@ func main() {
 		panic(err)
 	}
 	send := func(address, body []byte) {
-		message := words(nil, uint32(8+len(body)))
+		message := words(nil, uint32(addressSize+len(body)))
 		conn.Write(append(append(message, address...), body...))
 	}
 	machines := map[uint32]*terminal{}
 	for {
-		var length [4]byte
-		if _, err := io.ReadFull(conn, length[:]); err != nil {
+		var size [4]byte
+		if _, err := io.ReadFull(conn, size[:]); err != nil {
 			return
 		}
-		message := make([]byte, le.Uint32(length[:]))
+		message := make([]byte, le.Uint32(size[:]))
 		if _, err := io.ReadFull(conn, message); err != nil {
 			return
 		}
-		address, body := message[:8], message[8:]
-		t := machines[le.Uint32(address)]
+		address := message[:addressSize]
+		body := message[addressSize:]
+		instance := le.Uint32(address)
+		t := machines[instance]
 		switch body[0] {
-		case 0x01:
+		case HELLO:
 			send(address, hello(body))
-		case 0x03:
-			machines[le.Uint32(address)] = newTerminal()
-			send(address, []byte{0x83, 1, 0, 0, 0, 0})
-		case 0x04:
-			delete(machines, le.Uint32(address))
-		case 0x10:
+		case OPEN:
+			machines[instance] = newTerminal()
+			reply := []byte{OPEN | REPLY, took, 0, 0, 0, 0}
+			send(address, reply)
+		case CLOSE:
+			delete(machines, instance)
+		case CALL:
 			result, charge := t.call(body)
-			reply := []byte{0x90, 0, 0, 0}
+			reply := []byte{CALL | REPLY, 0, 0, 0}
 			send(address, words(reply, result, 0, charge, 0))
-		case 0x11:
-			at := 8
-			for range le.Uint32(body[4:]) {
-				size := int(le.Uint32(body[at:]))
-				call := body[at+4 : at+4+size]
-				machines[le.Uint32(call)].call(call[8:])
-				at += 4 + size
+		case BATCH:
+			calls := body[batchCallsAt:]
+			for range le.Uint32(body[batchCountAt:]) {
+				size := le.Uint32(calls)
+				call := calls[4:][:size]
+				instance := le.Uint32(call)
+				machines[instance].call(call[addressSize:])
+				calls = calls[4+size:]
 			}
-		case 0x30:
-			inputs := [20]byte{0xb0}
-			send(address, inputs[:])
-		case 0x31:
-		case 0x40:
+		case BEGIN:
+			reply := []byte{BEGIN | REPLY, 0, 0, 0}
+			send(address, words(reply, 0, 0, 0, 0))
+		case END:
+		case STATE:
 			state := t.state()
-			size := uint32(len(state))
-			reply := words([]byte{0xc0, 0, 0, 0}, size)
+			reply := []byte{STATE | REPLY, 0, 0, 0}
+			reply = words(reply, uint32(len(state)))
 			send(address, append(reply, state...))
-		case 0x60:
+		case SHUTDOWN:
 			return
 		default:
-			send(address, []byte("\x7fnot handled"))
+			reply := append([]byte{ERROR}, "not handled"...)
+			send(address, reply)
 			return
 		}
 	}

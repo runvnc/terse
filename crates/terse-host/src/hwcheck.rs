@@ -144,7 +144,8 @@ pub fn cached(looks: &Looks, cache: Option<PathBuf>) -> Option<(Check, bool)> {
     Some((c, false))
 }
 
-/// `$XDG_CACHE_HOME/terse`, else `~/.cache/terse` (`%LOCALAPPDATA%\terse`
+/// `$XDG_CACHE_HOME/terse`, else `~/.cache/terse` (`~/Library/Caches/terse` on
+/// macOS, `%LOCALAPPDATA%\terse`
 /// on Windows; `terse_dirs`).
 pub fn default_cache() -> Option<PathBuf> {
     terse_dirs::user_dir(terse_dirs::Kind::Cache)

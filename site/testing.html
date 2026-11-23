@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Testing a program - the Tersenet manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Contents</a></nav></header>
+<main>
+<article>
+<h1 id="testing-a-program">Testing a program</h1>
+<p>A program is tested in two ways. <code>terse run</code> runs it without a window, exactly: the same image and input give the same screen and the same state hash on every computer, so a test can compare them. <code>terse-host --drive</code> runs it in the real window, in real time, with input from a script, and checks what the window shows over time: the picture as drawn, the page laid out on its own thread, figures drawn late, keys as a keyboard sends them. Use the first for what the program computes and the second for what the user sees. Both read the same script.</p>
+<h2 id="headless-terse-run">Headless: terse run</h2>
+<pre>terse run prog.terse --frames 60 --events keys.txt --dump</pre>
+<div class="table"><table>
+<thead><tr><th>Option</th><th>What it does</th></tr></thead>
+<tbody>
+<tr><td><code>--frames N</code></td><td>runs at most N frames (default 36,000); the run ends earlier when the program exits or faults</td></tr>
+<tr><td><code>--events &lt;file&gt;</code></td><td>input from a script (below)</td></tr>
+<tr><td><code>--dump</code></td><td>after the last frame, prints the text grid: 30 lines, each row&#39;s 80 cells without the spaces at its end</td></tr>
+<tr><td><code>--dump-vectors</code></td><td>after the grid, the 2D display&#39;s list, one shape a line (<code>line 5120 6400 4800 1280 w 16 c ffffffff</code>)</td></tr>
+<tr><td><code>--dump-page</code></td><td>after the grid, the page as the reference layout lays it out</td></tr>
+<tr><td><code>--hash</code></td><td>after the last frame, the machine&#39;s state hash: 64 hexadecimal digits</td></tr>
+<tr><td><code>--hash-every N</code></td><td>after each frame whose number is a multiple of N, <code>&lt;frame&gt; &lt;hash&gt;</code></td></tr>
+<tr><td><code>--save-state &lt;file&gt;</code>, <code>--load-state &lt;file&gt;</code></td><td>saves the machine&#39;s state after the last frame; starts from a saved state</td></tr>
+<tr><td><code>--without &lt;slot&gt;</code></td><td>runs without an optional device, as a host that lacks it</td></tr>
+<tr><td><code>--shell</code></td><td>runs the image as a shell, with the machines it starts; <code>--hash-all</code> hashes each</td></tr>
+</tbody></table></div>
+<p>A headless run has no clock (the Unix time is 0), no random bytes (<code>random</code> gives zeros) and no controllers but the script&#39;s, and content requests complete at the start of the next frame: so it is reproducible. The hash covers the whole machine (CPU, RAM, devices); <a href="state.html">State, replay and conformance</a> says what it holds.</p>
+<div class="table"><table>
+<thead><tr><th>Exit status</th><th>When</th></tr></thead>
+<tbody>
+<tr><td>the program&#39;s exit code</td><td>it exited; 0 also when it is still running after the last frame</td></tr>
+<tr><td>ended by SIGTERM (a shell shows 143)</td><td>it faulted; the fault is printed on standard error</td></tr>
+<tr><td>2</td><td>the run did not start: a bad command line or script, an image refused, a driver that did not start</td></tr>
+<tr><td>3</td><td>a driver failed while the machine ran</td></tr>
+<tr><td>4</td><td>the host stopped the machine: a device did not keep up</td></tr>
+</tbody></table></div>
+<p><code>terse-host prog.terse --screenshot out.png --frames 30</code> runs headless in the same way, with <code>--events</code> if given, and writes the picture of the last frame as PNG; <code>--size WxH</code> sets its size in pixels.</p>
+<h2 id="the-script">The script</h2>
+<p>One line a step: a frame number, a command and its arguments (<code>5 press left</code>). The frame number may be left out: the line then belongs to the frame of the line before it (0 for the first). Blank lines, and everything from a <code>#</code> (except in <code>text</code>), are ignored.</p>
+<div class="table"><table>
+<thead><tr><th>Command</th><th>What it gives</th></tr></thead>
+<tbody>
+<tr><td><code>down &lt;key&gt; [shift] [ctrl] [alt] [meta]</code></td><td>a key down, with those modifiers</td></tr>
+<tr><td><code>up &lt;key&gt; [modifiers]</code></td><td>a key up</td></tr>
+<tr><td><code>press &lt;key&gt; [modifiers]</code></td><td>a key down and its key up, in that frame</td></tr>
+<tr><td><code>type &lt;text&gt;</code></td><td>the rest of the line typed, a character a frame: key down, its text, key up (Shift for capitals; a newline is Enter); the next line comes after the last character</td></tr>
+<tr><td><code>text &lt;text&gt;</code></td><td>the rest of the line as text events, without keys (as a paste gives them)</td></tr>
+<tr><td><code>pointer &lt;x&gt; &lt;y&gt; [buttons]</code></td><td>the pointer at a screen unit (640 by 480), buttons 0 to 7 (1 the primary)</td></tr>
+<tr><td><code>click &lt;x&gt; &lt;y&gt;</code></td><td>the primary button pressed there, then released</td></tr>
+<tr><td><code>wheel &lt;down&gt; [right]</code></td><td>wheel steps, −127 to 127</td></tr>
+<tr><td><code>home</code></td><td>the host&#39;s home key (F12), with a shell</td></tr>
+<tr><td><code>pad &lt;n&gt; &lt;buttons&gt; &lt;lx&gt; &lt;ly&gt; [&lt;rx&gt; &lt;ry&gt;]</code>, <code>pad &lt;n&gt; off</code></td><td>controller n&#39;s state from this frame on; or disconnected</td></tr>
+<tr><td><code>feeds-updated</code></td><td>a feeds-updated event</td></tr>
+<tr><td><code>wait &lt;n&gt;</code></td><td>the next line comes n frames later</td></tr>
+</tbody></table></div>
+<p>A key is a name (<code>a</code> to <code>z</code>, <code>0</code> to <code>9</code>, <code>f1</code> to <code>f12</code>, <code>enter</code>, <code>esc</code>, <code>backspace</code>, <code>tab</code>, <code>space</code>, <code>up</code>, <code>down</code>, <code>left</code>, <code>right</code>, <code>home</code>, <code>end</code>, <code>pageup</code>, <code>pagedown</code>, <code>insert</code>, <code>delete</code>) or a USB HID usage (<code>40</code>, <code>0x28</code>). <a href="events.html">Events and input</a> has every event.</p>
+<p>A headless run reads the window&#39;s commands below and does nothing with them, saying how many it passed over: one script serves both.</p>
+<h2 id="in-the-window-terse-host-drive">In the window: terse-host --drive</h2>
+<pre>terse-host prog.terse --drive script.txt --renderer software</pre>
+<p>runs the program alone (or, with <code>--shell</code> or no image, the shell) in its window at 60 frames a second, and carries out the script&#39;s lines in order, each in its frame. It prints what it sees on standard output.</p>
+<p>**It never opens a window on your desktop.** On Linux it starts a headless display of its own (the compositor weston, which must be installed) and runs inside it; on Windows and macOS, which have none, it refuses. Only <code>TERSE_DRIVE_DISPLAY=current</code> puts the window on the current display, where it shows: set it only on a computer whose desktop nobody uses, such as a CI machine. Sound is off.</p>
+<div class="table"><table>
+<thead><tr><th>Option</th><th>What it does</th></tr></thead>
+<tbody>
+<tr><td><code>--drive &lt;file&gt;</code></td><td>the script; <code>-</code> reads standard input, and a FIFO is read line by line as each writer writes, for driving by hand (<code>echo &#39;press down&#39; &gt; ctl</code>)</td></tr>
+<tr><td><code>--size WxH</code></td><td>the window&#39;s inner size in pixels (default: the text grid at the font&#39;s size); the screen is letterboxed in it at 4:3</td></tr>
+<tr><td><code>--renderer gpu|software|auto</code></td><td>how the picture is drawn (default auto: the GPU if there is one)</td></tr>
+<tr><td><code>--store</code>, <code>--config</code>, <code>--data &lt;dir&gt;</code></td><td>the directories to use; without them, scratch directories, removed afterwards</td></tr>
+<tr><td><code>--relay &lt;url&gt;</code></td><td>a relay to use; without it, none</td></tr>
+<tr><td><code>--consent ask|allow|deny</code></td><td>how a program&#39;s requests are answered; ask shows the prompt, answered with <code>press y</code></td></tr>
+</tbody></table></div>
+<p><code>--events</code> and <code>--frames</code> are refused with <code>--drive</code>: the script is the input, and <code>quit</code> or its end ends the run.</p>
+<p>In the window, input enters where the window system&#39;s does: <code>press g ctrl</code> is Control down, G down, G up, Control up; a key that types a character also gives its text; <code>pointer</code> and <code>click</code> positions go through the window&#39;s mapping to pixels and back. These commands are the window&#39;s own:</p>
+<div class="table"><table>
+<thead><tr><th>Command</th><th>What it does</th></tr></thead>
+<tbody>
+<tr><td><code>pointer-px</code>, <code>click-px &lt;x&gt; &lt;y&gt; [buttons]</code></td><td>as <code>pointer</code> and <code>click</code>, at a pixel of the window</td></tr>
+<tr><td><code>drag</code>, <code>drag-px &lt;x0&gt; &lt;y0&gt; &lt;x1&gt; &lt;y1&gt;</code></td><td>the primary button pressed at the first point, the pointer moved to the second over 8 frames, released in the 9th</td></tr>
+<tr><td><code>hold &lt;key&gt; &lt;frames&gt; [modifiers]</code></td><td>the key held down that many frames, repeating as a keyboard does (after 30 frames, every 2)</td></tr>
+<tr><td><code>resize &lt;w&gt; &lt;h&gt;</code></td><td>asks for the window&#39;s inner size in pixels; the next line waits 3 frames</td></tr>
+<tr><td><code>sleep &lt;ms&gt;</code></td><td>the next line waits that long in real time</td></tr>
+<tr><td><code>say &lt;text&gt;</code></td><td>prints the text</td></tr>
+<tr><td><code>quit</code></td><td>ends the run (so does the end of a script file)</td></tr>
+</tbody></table></div>
+<p>A line that looks (<code>shot</code>, <code>dump</code>, <code>watch</code>, <code>settle</code>, <code>expect</code>, <code>perf</code>, <code>budget</code>) looks at the first picture presented after its frame, and the next line waits for it:</p>
+<div class="table"><table>
+<thead><tr><th>Command</th><th>What it does</th></tr></thead>
+<tbody>
+<tr><td><code>settle [max &lt;n&gt;] [still &lt;k&gt;]</code></td><td>waits until k pictures in a row are the same (10), at most n frames (600)</td></tr>
+<tr><td><code>shot &lt;file&gt;</code></td><td>writes the picture presented, as PNG</td></tr>
+<tr><td><code>dump terminal|page|vectors|state [&lt;machine&gt;] [&gt; &lt;file&gt;]</code></td><td>prints the text grid, the page as this host laid it out (each line in view: top, height, x, text), the vector lists, or the frame, window and machines; to a file after <code>&gt;</code></td></tr>
+<tr><td><code>watch &lt;n&gt; [every &lt;k&gt;] [save &lt;dir&gt;]</code></td><td>reports, after n pictures, how many changed, where (a box of pixels), by how much, and blinks: parts that changed and came back within 2 pictures; <code>save</code> keeps the changed pictures (and every k-th) as PNG</td></tr>
+<tr><td><code>perf</code></td><td>the late frames and slow-frame notes so far</td></tr>
+<tr><td><code>budget</code></td><td>each machine&#39;s worst and last use of a frame&#39;s budget since the last <code>budget</code></td></tr>
+<tr><td><code>expect idle &lt;n&gt; [tolerance &lt;pixels&gt;]</code></td><td>fails if a picture in the next n differs from the one before by more pixels than the tolerance (0), or blinks</td></tr>
+<tr><td><code>expect terminal|page|vectors|state contains|lacks &lt;text&gt;</code></td><td>fails unless that dump holds (lacks) the rest of the line</td></tr>
+<tr><td><code>expect budget &lt;percent&gt;</code></td><td>fails if a machine used more of a frame&#39;s budget in any frame so far</td></tr>
+<tr><td><code>expect no-slow</code></td><td>fails if a frame was late or the host acted on a slow one; this depends on how busy the computer is</td></tr>
+</tbody></table></div>
+<p>Each report is a line starting with its frame: <code>frame 3-13: settle: 10 pictures, 0 changed, settled (10 unchanged)</code>, <code>frame 14: ok: vectors contains &quot;line 5120 6400 5120 1280&quot;</code>, <code>frame 14: shot start.png (880x660)</code>. A failed expectation prints <code>frame N: FAIL:</code> and what was there instead. The run ends with <code>drive: done, no expectation failed</code>, or the number that failed and each one.</p>
+<div class="table"><table>
+<thead><tr><th>Exit status</th><th>When</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>an expectation failed</td></tr>
+<tr><td>2</td><td>it did not start: a bad command line or script line (named, with its number), no weston, or Windows or macOS without <code>TERSE_DRIVE_DISPLAY=current</code></td></tr>
+<tr><td>otherwise</td><td>as the window&#39;s: the program&#39;s exit code (0 if it was still running), SIGTERM after a fault, 4 if the host stopped it</td></tr>
+</tbody></table></div>
+<p><code>scripts/drive-shots.py &lt;terse-host&gt; &lt;out dir&gt;</code> in the Tersenet sources drives hello, sparks and the sheet with the scripts in <code>scripts/drive-shots/</code> and keeps their pictures and reports, for comparing one system&#39;s window with another&#39;s.</p>
+</article>
+</main>
+<footer><nav class="pn"><a rel="prev" href="running-programs.html">← Running and publishing a program</a><a rel="next" href="using.html">Using the shell →</a></nav></footer>
+</body>
+</html>

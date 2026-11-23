@@ -134,6 +134,8 @@ pub struct Drive {
     flushed: bool,
     pads: [Controller; CONTROLLERS],
     pads_set: bool,
+    /// The Unix time held by a `time` line (the clock's own otherwise).
+    time: Option<u32>,
     failures: Vec<String>,
     /// Budget use per machine serial: (worst, last, frame of the worst).
     budget: Vec<(u32, u64, u64, u32)>,
@@ -327,6 +329,10 @@ fn parse(line: &str) -> Result<Option<(Option<u32>, String, String)>, String> {
         "sleep" => {
             num(0, "milliseconds")?;
         }
+        "time" => {
+            let v = w.first().ok_or("missing Unix time")?;
+            v.parse::<u32>().map_err(|_| format!("bad Unix time {v}"))?;
+        }
         "resize" => {
             num(0, "width")?;
             num(1, "height")?;
@@ -431,6 +437,7 @@ impl Drive {
             flushed: false,
             pads: [Controller::default(); CONTROLLERS],
             pads_set: false,
+            time: None,
             failures: Vec::new(),
             budget: Vec::new(),
             budget_since: 0,
@@ -454,6 +461,11 @@ impl Drive {
     /// The controllers, once a `pad` line has set one.
     pub fn controllers(&self) -> Option<[Controller; CONTROLLERS]> {
         self.pads_set.then_some(self.pads)
+    }
+
+    /// The Unix time the machines latch, if a `time` line holds it.
+    pub fn time(&self) -> Option<u32> {
+        self.time
     }
 
     /// Whether the next picture presented is wanted.
@@ -706,6 +718,7 @@ impl Drive {
                 self.resume_time = Some(Instant::now() + Duration::from_millis(int(0).max(0) as u64));
                 return true;
             }
+            "time" => self.time = w.first().and_then(|v| v.parse().ok()),
             "resize" => {
                 out.push(Action::Resize(int(0).max(1) as u32, int(1).max(1) as u32));
                 // The window system answers in a frame or two.
@@ -1270,10 +1283,10 @@ mod tests {
 
     #[test]
     fn lines_check() {
-        for ok in ["press a ctrl", "10 click 3 4", "type =SUM(A1:A3)", "shot a.png", "dump page > p.txt", "expect idle 60 tolerance 0", "expect page contains Total", "settle max 100", "drag 100 50 300 50", "hold down 40", "resize 1900 1000", "wait 3", "# x", ""] {
+        for ok in ["press a ctrl", "10 click 3 4", "type =SUM(A1:A3)", "shot a.png", "dump page > p.txt", "expect idle 60 tolerance 0", "expect page contains Total", "settle max 100", "drag 100 50 300 50", "hold down 40", "resize 1900 1000", "wait 3", "time 1800000000", "# x", ""] {
             assert!(parse(ok).is_ok(), "{ok}");
         }
-        for bad in ["press nokey", "dump nothing", "expect what", "click 1", "jump"] {
+        for bad in ["press nokey", "dump nothing", "expect what", "click 1", "jump", "time", "time -1", "time 4294967296"] {
             assert!(parse(bad).is_err(), "{bad}");
         }
     }

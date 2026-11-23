@@ -9,6 +9,20 @@
 //! each part, and the whole process's while it draws (the renderer's
 //! threads); on Windows the wait is inferred from the CPU time and the
 //! processors' idle time (`terse_perflog::probe::infer`). `rule.rs` judges the frame; the host carries out what it asks.
+//!
+//! Every part has its time on a CPU where the system gives it (`RECORD.md`
+//! 4), so that a memory stall excuses no more of it than it can explain:
+//! a machine's frame, `core` (the emulation stage less the machines'
+//! frames), `present` (acquiring the picture's buffer) and `outside` (the
+//! time from the last picture to the frame's start) are the frame loop
+//! thread's CPU time over them; `compose` is the frame loop thread's over
+//! the upload, and the whole process's over the drawing less the frame loop
+//! thread's over the acquire: the drawing runs on other threads too (the
+//! software renderer's pool, a GPU driver's threads). The process's CPU
+//! time includes threads that do not draw (the page layout thread, which
+//! the frame loop never waits for; the relay, the content service, sound):
+//! their time while it draws is counted as the drawing's, which can only
+//! excuse less, never more.
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -42,6 +56,9 @@ struct Stepped {
     /// The frame loop's wait in the emulation, the upload, and before the
     /// frame began (since the last frame was presented).
     waits: Option<(u64, u64, u64)>,
+    /// The frame loop thread's CPU time in the same three (`None`: not
+    /// read).
+    cpu: [Option<u64>; 3],
 }
 
 /// The watch.
@@ -55,11 +72,17 @@ pub struct HostWatch {
     psi: Pressure,
     thread_wait: bool,
     process_wait: bool,
+    thread_cpu: bool,
+    process_cpu: bool,
     at_begin: Option<ProcSample>,
     psi_begin: Option<u64>,
     at_machine: Option<ProcSample>,
     at_emulated: Option<ProcSample>,
     at_draw: Option<ProcSample>,
+    /// The frame loop thread as it began to acquire the picture's buffer,
+    /// and its CPU time in the acquire.
+    at_acquire: Option<ProcSample>,
+    acquire_cpu: Option<u64>,
     last_presented: Option<ProcSample>,
     machines: Vec<MachinePart>,
     /// The machine parts of the frame judged last.
@@ -78,6 +101,11 @@ pub struct HostWatch {
 
 fn wait(a: Option<ProcSample>, b: Option<ProcSample>) -> Option<u64> {
     Some(a?.since(&b?).wait_ns)
+}
+
+/// CPU time from `b` to `a` (a thread's or the process's, as sampled).
+fn cpu(a: Option<ProcSample>, b: Option<ProcSample>) -> Option<u64> {
+    Some(a?.since(&b?).cpu_ns)
 }
 
 impl HostWatch {
@@ -104,6 +132,8 @@ impl HostWatch {
             dir,
             thread_wait: thread.has_wait(),
             process_wait: process.has_wait(),
+            thread_cpu: thread.has_cpu(),
+            process_cpu: process.has_cpu(),
             thread,
             process,
             psi,
@@ -112,6 +142,8 @@ impl HostWatch {
             at_machine: None,
             at_emulated: None,
             at_draw: None,
+            at_acquire: None,
+            acquire_cpu: None,
             last_presented: None,
             machines: Vec::new(),
             judged: Vec::new(),
@@ -178,12 +210,28 @@ impl HostWatch {
             (Some(e), Some(u)) => Some((e, u, before)),
             _ => None,
         };
-        self.step = Some(Stepped { emulate, upload, late, waits });
+        // Before the frame began: everything the thread did on a CPU since
+        // the last picture (handling events; asleep until its tick it uses
+        // none), at most the time it began late (`Part::cpu`).
+        let cpu = [cpu(self.at_emulated, self.at_begin), cpu(now, self.at_emulated), cpu(self.at_begin, self.last_presented)].map(|c| c.filter(|_| self.thread_cpu));
+        self.step = Some(Stepped { emulate, upload, late, waits, cpu });
     }
 
     /// The picture is about to be drawn and presented.
     pub fn drawing(&mut self) {
         self.at_draw = self.process.sample();
+        self.at_acquire = None;
+        self.acquire_cpu = None;
+    }
+
+    /// Acquiring the picture's buffer (or swapchain image) begins.
+    pub fn acquiring(&mut self) {
+        self.at_acquire = self.thread.sample();
+    }
+
+    /// The picture's buffer is acquired.
+    pub fn acquired(&mut self) {
+        self.acquire_cpu = cpu(self.thread.sample(), self.at_acquire.take());
     }
 
     /// The look was shed to `level` (`why`: `late`, `recover`, `check`).
@@ -219,12 +267,17 @@ impl HostWatch {
         let mut opened = Vec::with_capacity(parts.capacity());
         let mut machines_wall = 0;
         let mut machines_wait = 0;
+        let mut machines_cpu = Some(0);
         for m in &self.machines {
             let wall = ns(m.wall);
             machines_wall += wall;
             let starved = m.sample.filter(|_| thread_ok).map(|x| x.wait_ns);
             machines_wait += starved.unwrap_or(0);
-            parts.push(Part { component: Component::Core, wall_ns: wall, run_ns: m.sample.filter(|_| thread_ok).map(|x| x.run_ns), starved_ns: starved, image: Some(m.image) });
+            // The thread's CPU clock (exact; Linux's schedstat run time
+            // lags by up to a scheduler tick while the thread runs).
+            let run = m.sample.filter(|_| self.thread_cpu).map(|x| x.cpu_ns);
+            machines_cpu = machines_cpu.zip(run).map(|(a, b)| a + b);
+            parts.push(Part { component: Component::Core, wall_ns: wall, run_ns: run, starved_ns: starved, image: Some(m.image) });
             who.push(Culprit::Machine(m.serial));
             opened.push(m.opened);
         }
@@ -237,15 +290,25 @@ impl HostWatch {
             (Some(u), Some(d)) => Some(u + d),
             _ => None,
         };
-        let mut host = |c: Component, wall: u64, starved: Option<u64>| {
-            parts.push(Part { component: c, wall_ns: wall, run_ns: None, starved_ns: starved, image: None });
+        // Their time on a CPU: the frame loop thread's, and the whole
+        // process's while it drew less the frame loop's in the acquire.
+        let acquire_cpu = self.acquire_cpu.take().filter(|_| self.thread_cpu);
+        let draw_cpu = cpu(pnow, draw_process).filter(|_| self.process_cpu);
+        let [emulate_cpu, upload_cpu, outside_cpu] = s.cpu;
+        let core_cpu = emulate_cpu.zip(machines_cpu).map(|(e, m)| e.saturating_sub(m));
+        let compose_cpu = match (upload_cpu, draw_cpu, acquire_cpu) {
+            (Some(u), Some(d), Some(a)) => Some(u + d.saturating_sub(a)),
+            _ => None,
+        };
+        let mut host = |c: Component, wall: u64, run: Option<u64>, starved: Option<u64>| {
+            parts.push(Part { component: c, wall_ns: wall, run_ns: run, starved_ns: starved, image: None });
             who.push(Culprit::Host(c));
             opened.push(false);
         };
-        host(Component::Core, ns(s.emulate).saturating_sub(machines_wall), thread_starved(emulate_wait.saturating_sub(machines_wait)));
-        host(Component::Compose, ns(s.upload) + ns(render), compose_starved);
-        host(Component::Present, ns(acquire), thread_starved(0));
-        host(Component::Outside, ns(s.late), thread_starved(before_wait));
+        host(Component::Core, ns(s.emulate).saturating_sub(machines_wall), core_cpu, thread_starved(emulate_wait.saturating_sub(machines_wait)));
+        host(Component::Compose, ns(s.upload) + ns(render), compose_cpu, compose_starved);
+        host(Component::Present, ns(acquire), acquire_cpu, thread_starved(0));
+        host(Component::Outside, ns(s.late), outside_cpu, thread_starved(before_wait));
         let wall = parts.iter().map(|p| p.wall_ns).sum();
         let memory = match (self.psi.memory_full_ns(), self.psi_begin) {
             (Some(a), Some(b)) => Some(a.saturating_sub(b)),
@@ -306,6 +369,8 @@ mod tests {
         w.emulated();
         w.stepped(ms(1) + machine3 + ms(1), ms(1), Duration::ZERO);
         w.drawing();
+        w.acquiring();
+        w.acquired();
         w.presented(Duration::ZERO, render, false)
     }
 
@@ -393,6 +458,8 @@ mod tests {
             w.emulated();
             w.stepped(Duration::from_millis(1), Duration::from_millis(1), Duration::ZERO);
             w.drawing();
+            w.acquiring();
+            w.acquired();
             w.presented(Duration::ZERO, Duration::from_millis(2), true).unwrap();
         }
         let per = t.elapsed() / n;

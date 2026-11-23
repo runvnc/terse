@@ -21,7 +21,7 @@ int main(void)
 }
 ```
 
-- `mach_start_named` starts a program by its publisher's key and its name; 32 zero bytes, `built_in`, mean a program built into the host. It returns a handle, 1 to 8 (0 if all eight are in use).
+- `mach_start_named` starts a program by its publisher's key and its name, with the name's length (5); 32 zero bytes, `built_in`, mean a program built into the host. It returns a handle, 1 to 8 (0 if all eight are in use).
 - `mach_place` sets the rectangle of the shell's screen where that machine's screen is shown: here all of it, 640 by 480 units.
 - `mach_focus` sends the keyboard to that machine.
 

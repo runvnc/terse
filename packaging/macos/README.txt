@@ -48,10 +48,13 @@ your own feed, so the reader has something to show.
 
 Where Tersenet keeps things
 ---------------------------
-  ~/.config/terse         your feed key (identity.key) and subscriptions
-  ~/.local/share/terse    programs' records, and the store of the relay
+  ~/Library/Application Support/terse
+                          your feed key (identity.key) and subscriptions
+  ~/Library/Application Support/terse/data
+                          programs' records, and the store of the relay
                           terse-host starts when it finds none
-  ~/.cache/terse/blobs    downloaded articles and programs
+  ~/Library/Caches/terse/blobs
+                          downloaded articles and programs
 Keep identity.key safe: it is your feed. To remove Tersenet, delete this
 folder and the three above.
 

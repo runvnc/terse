@@ -66,10 +66,10 @@ int main(void)
             goal_y = 40 + terse_random_byte() * 3 / 2;
         }
         vec_begin(list, sizeof list);
-        vec_move(x * 16, y * 16);
-        vec_disc(4 * 16);
-        vec_move(goal_x * 16, goal_y * 16);
-        vec_circle(10 * 16);
+        vec_move(x * VEC_UNIT, y * VEC_UNIT);
+        vec_disc(4 * VEC_UNIT);
+        vec_move(goal_x * VEC_UNIT, goal_y * VEC_UNIT);
+        vec_circle(10 * VEC_UNIT);
         vec_end();
         vec_submit_list(list);
         terse_wait_frame();
@@ -98,7 +98,7 @@ circle 640 640 r 160 w 16 c ffffffff</pre>
 <h2 id="the-full-games">The full games</h2>
 <p>Two games come with Tersenet, both in C, and both are this loop grown up. <code>programs/sparks/sparks.c</code> adds turning and thrust, sparks to collect and sweepers to avoid, a controller, and a high score kept on the computer. <code>programs/reef/reef.c</code>, Lumen Reef, is a shooter in 3D wireframe on the 3D vector display, with its readouts in a stroke font on the 2D one. The user guide&#39;s page &quot;Find and play a game&quot; says how to play them.</p>
 <h2 id="what-you-have-now">What you have now</h2>
-<p>A game: input, movement, a goal and a score, tested without a window. It is <code>examples/program/c/chase.c</code> in the Tersenet sources. Next, <a href="guide-game-rust.html">the same in Rust</a>, or the next part of the guide, a host of your own: <a href="guide-host.html">Make a host, step 1: run a program to its end</a>.</p>
+<p>A game: input, movement, a goal and a score, tested without a window. It is <code>examples/program/c/chase.c</code> in the Tersenet sources. Next, <a href="guide-game-rust.html">the same in Rust</a>, or test a program in its real window: <a href="guide-test.html">Test your program in its window</a>.</p>
 <p>Random bytes, controllers and the clock are in <a href="device-system.html">The system device</a>.</p>
 </article>
 </main>

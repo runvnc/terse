@@ -427,6 +427,13 @@ fn a_slow_driver_stops_every_machine_that_uses_it() {
     }
     let stopped: Vec<(u32, String)> = lines.iter().filter_map(|l| if let Line::Stop { component, machine, saved, .. } = l { (*component == dev).then(|| (*machine, saved.clone())) } else { None }).collect();
     assert_eq!(stopped, [(1, "slot16".to_string()), (2, "slot17".to_string())], "{lines:?}");
+    // By the record's own count, whatever frames a busy computer excused
+    // on the way: warned at its 3rd blamed frame, both machines stopped at
+    // its 10th, none blamed before its slow frames.
+    let blamed: Vec<u64> = lines.iter().filter_map(|l| if let Line::Late { frame, verdict: terse_perflog::Verdict::Blamed, component, .. } = l { (*component == dev).then_some(*frame) } else { None }).collect();
+    let stops: Vec<u64> = lines.iter().filter_map(|l| if let Line::Stop { frame, component, .. } = l { (*component == dev).then_some(*frame) } else { None }).collect();
+    let warns: Vec<u64> = lines.iter().filter_map(|l| if let Line::Warn { frame, component, .. } = l { (*component == dev).then_some(*frame) } else { None }).collect();
+    assert!(blamed.len() == 10 && blamed[0] >= 60 && stops == [blamed[9], blamed[9]] && warns == [blamed[2]], "{blamed:?} {stops:?} {warns:?}");
     let dump = String::from_utf8_lossy(&o.stdout).into_owned();
     let m = machines(&dump);
     assert!(m.len() == 1 && m[0].0.contains("running") && m[0].0.ends_with("other242 --"), "only the machine that does not use it is shown running: {dump}");

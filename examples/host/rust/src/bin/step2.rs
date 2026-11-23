@@ -1,4 +1,5 @@
-use host::frames::{Machine, Status};
+use host::cpu::UNKNOWN_CALL;
+use host::frames::{BASE_CHARGE, Machine, Status};
 use host::image::load;
 use std::error::Error;
 use std::process::exit;
@@ -10,7 +11,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let (cpu, _) = load(&file)?;
     let mut m = Machine::new(cpu);
     while m.running() && m.frame < frames {
-        m.run_frame(|_, _, _, _| (u32::MAX, 4));
+        m.run_frame(|_, _, _, _| (UNKNOWN_CALL, BASE_CHARGE));
     }
     match m.status {
         Status::Faulted(fault) => {

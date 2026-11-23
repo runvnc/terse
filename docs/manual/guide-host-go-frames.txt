@@ -26,6 +26,24 @@ type Machine struct {
 
 `Machine` is the processor of step 1 with what the frame loop keeps: the budget, the frame counter, and how the machine stopped. `Devices` is for calls to other devices; it stays empty until step 3.
 
+Slot 1 is the System device. `BaseCharge` is the charge of its calls and of a call the machine does not have; `BadBuffer`, the result when a call's buffer is not where it must be. Its calls are numbered by function:
+
+```go from examples/host/go/machine/frames.go
+const (
+    System     = 1
+    BaseCharge = 4
+    BadBuffer  = 0xfffffffe
+    eventSize  = 4
+)
+
+const (
+    waitFrame  = 0
+    nextEvent  = 1
+    frameCount = 2
+    exit       = 6
+)
+```
+
 ```go from examples/host/go/machine/frames.go
 func (m *Machine) RunFrame() {
     m.Budget += FrameBudget
@@ -39,16 +57,16 @@ func (m *Machine) RunFrame() {
         if !ecall {
             continue
         }
-        slot, fn := m.X[17]>>8, m.X[17]&0xff
-        result, charge := uint32(0xffffffff), int64(4)
-        if slot == 1 {
+        slot, fn := m.X[A7]>>8, m.X[A7]&0xff
+        result, charge := uint32(UnknownCall), int64(BaseCharge)
+        if slot == System {
             result = m.system(fn)
         } else if m.Devices != nil {
             result, charge = m.Devices(slot, fn)
         }
-        m.X[10] = result
+        m.X[A0] = result
         m.Budget -= charge
-        if slot == 1 && fn == 0 {
+        if slot == System && fn == waitFrame {
             break
         }
     }
@@ -70,20 +88,20 @@ In order:
 ```go from examples/host/go/machine/frames.go
 func (m *Machine) system(fn uint32) uint32 {
     switch fn {
-    case 0:
+    case waitFrame:
         return m.Frame + 1
-    case 1:
-        if m.Memory(m.X[10], 4, true) == nil {
-            return 0xfffffffe
+    case nextEvent:
+        if m.Memory(m.X[A0], eventSize, true) == nil {
+            return BadBuffer
         }
         return 0
-    case 2:
+    case frameCount:
         return m.Frame
-    case 6:
-        m.Stopped, m.ExitCode = Exited, byte(m.X[10])
+    case exit:
+        m.Stopped, m.ExitCode = Exited, byte(m.X[A0])
         return 0
     }
-    return 0xffffffff
+    return UnknownCall
 }
 ```
 
@@ -163,7 +181,7 @@ prints `6`, as `terse run frames.terse --frames 10` does. Each pass of the loop 
 
 ## What you have now
 
-A machine that runs programs at exactly the reference's speed: `frames.go`, 66 lines, and `step2/main.go`, 32. Next, give it a screen: [Make a host in Go, step 3: a driver shows hello](terse:{guide-host-go-driver}).
+A machine that runs programs at exactly the reference's speed: `frames.go`, 80 lines, and `step2/main.go`, 32. Next, give it a screen: [Make a host in Go, step 3: a driver shows hello](terse:{guide-host-go-driver}).
 
 - The same step in Rust: [Make a host in Rust, step 2: frames and the budget](terse:{guide-host-rust-frames}).
 - Full implementations: `native/core-c/main.c` (the frame loop) and `machine.c` (all ten System calls); the reference's `crates/terse-core/src/machine.rs` and `system.rs`.

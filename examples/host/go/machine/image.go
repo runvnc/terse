@@ -1,6 +1,23 @@
 package machine
 
-import "errors"
+import (
+	"errors"
+	"strings"
+)
+
+const (
+	headerSize  = 32
+	magic       = "TERS\x00\x01"
+	romLenAt    = 6
+	ramPagesAt  = 9
+	devicesAt   = 10
+	maxROM      = 262144
+	maxRAMPages = 96
+	maxDevices  = 16
+	deviceSize  = 2
+	PageSize    = 8192
+	optional    = 0x80
+)
 
 type Device struct {
 	Slot, Version byte
@@ -8,24 +25,27 @@ type Device struct {
 }
 
 func Load(file []byte) (*CPU, []Device, error) {
-	if len(file) < 32 || string(file[:6]) != "TERS\x00\x01" {
+	if len(file) < headerSize ||
+		!strings.HasPrefix(string(file), magic) {
 		return nil, nil, errors.New("not a Terse32 program")
 	}
-	romLen := int(file[6]) | int(file[7])<<8 | int(file[8])<<16
-	pages, count := int(file[9]), int(file[10])
-	size := 32 + 2*count + romLen
-	if romLen < 1 || romLen > 262144 || pages < 1 ||
-		pages > 96 || count > 16 || len(file) != size {
+	r := file[romLenAt:]
+	romLen := int(r[0]) | int(r[1])<<8 | int(r[2])<<16
+	pages, count := int(file[ramPagesAt]), int(file[devicesAt])
+	romAt := headerSize + deviceSize*count
+	if romLen < 1 || romLen > maxROM || pages < 1 ||
+		pages > maxRAMPages || count > maxDevices ||
+		len(file) != romAt+romLen {
 		return nil, nil, errors.New("a malformed program file")
 	}
 	var devices []Device
-	for i := 32; i < 32+2*count; i += 2 {
+	for i := headerSize; i < romAt; i += deviceSize {
 		version := file[i+1]
-		devices = append(devices,
-			Device{file[i], version & 0x7f, version&0x80 != 0})
+		devices = append(devices, Device{file[i],
+			version &^ optional, version&optional != 0})
 	}
-	cpu := &CPU{PC: ROMBase, ROM: file[32+2*count:],
-		RAM: make([]byte, pages*8192)}
-	cpu.X[2] = RAMBase + uint32(len(cpu.RAM))
+	cpu := &CPU{PC: ROMBase, ROM: file[romAt:],
+		RAM: make([]byte, pages*PageSize)}
+	cpu.X[SP] = RAMBase + uint32(len(cpu.RAM))
 	return cpu, devices, nil
 }

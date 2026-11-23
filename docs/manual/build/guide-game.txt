@@ -1,6 +1,6 @@
 # Make a small game
 
-A dot you steer with the arrow keys, a ring to reach, and a score: the line program of the last pages grown into a game loop. In C here, and in Rust on [the next page](terse:e3431a9c7278fd8b081596377b1d4e2684c7eb029b7be7d37f23a4dcca12473d).
+A dot you steer with the arrow keys, a ring to reach, and a score: the line program of the last pages grown into a game loop. In C here, and in Rust on [the next page](terse:9ac1f39182979e18a96dd4f038a44088e5d6bb0389c7842621c69e179ee9878f).
 
 ## The program
 
@@ -59,10 +59,10 @@ int main(void)
             goal_y = 40 + terse_random_byte() * 3 / 2;
         }
         vec_begin(list, sizeof list);
-        vec_move(x * 16, y * 16);
-        vec_disc(4 * 16);
-        vec_move(goal_x * 16, goal_y * 16);
-        vec_circle(10 * 16);
+        vec_move(x * VEC_UNIT, y * VEC_UNIT);
+        vec_disc(4 * VEC_UNIT);
+        vec_move(goal_x * VEC_UNIT, goal_y * VEC_UNIT);
+        vec_circle(10 * VEC_UNIT);
         vec_end();
         vec_submit_list(list);
         terse_wait_frame();
@@ -112,6 +112,6 @@ Two games come with Tersenet, both in C, and both are this loop grown up. `progr
 
 ## What you have now
 
-A game: input, movement, a goal and a score, tested without a window. It is `examples/program/c/chase.c` in the Tersenet sources. Next, [the same in Rust](terse:e3431a9c7278fd8b081596377b1d4e2684c7eb029b7be7d37f23a4dcca12473d), or the next part of the guide, a host of your own: [Make a host, step 1: run a program to its end](terse:7051435a6f6f1f3b3d0e5bc2c77de16e2c3a30305069e382f459e7bc1e5fee7f).
+A game: input, movement, a goal and a score, tested without a window. It is `examples/program/c/chase.c` in the Tersenet sources. Next, [the same in Rust](terse:9ac1f39182979e18a96dd4f038a44088e5d6bb0389c7842621c69e179ee9878f), or test a program in its real window: [Test your program in its window](terse:3896a432a8e99e517c0ff2d549486ba378b75bf7c8d9fd09dc9d98d86d73e402).
 
-Random bytes, controllers and the clock are in [The system device](terse:3250192d7bd8b6022808c00a8fbc5c81bdc67d2bef438fd25b877c4b94237273).
+Random bytes, controllers and the clock are in [The system device](terse:5107ebd08fd51daad5ceea79195859e84f217c95e79ed4f8ad76dd18d8543a15).

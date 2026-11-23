@@ -1,5 +1,6 @@
-use host::bus::Bus;
-use host::frames::{Machine, Status};
+use host::bus::{Bus, TERMINAL};
+use host::cpu::UNKNOWN_CALL;
+use host::frames::{BASE_CHARGE, Machine, Status};
 use host::image::load;
 use std::error::Error;
 use std::process::exit;
@@ -18,7 +19,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         m.run_frame(|cpu, budget, slot, function| {
             let Some(bus) = &mut bus else {
-                return (u32::MAX, 4);
+                return (UNKNOWN_CALL, BASE_CHARGE);
             };
             bus.call(cpu, budget, slot, function)
         });
@@ -28,7 +29,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     let (grants, terminal) = match bus {
         Some(mut bus) => {
-            let terminal = bus.state(2);
+            let terminal = bus.state(TERMINAL);
             let grants = std::mem::take(&mut bus.grants);
             bus.close();
             (grants, Some(terminal))

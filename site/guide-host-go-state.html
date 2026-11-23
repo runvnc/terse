@@ -16,9 +16,16 @@
 <p>Between frames, a machine&#39;s whole state is one string of bytes; its BLAKE3-256 hash is the state hash. Two hosts given the same program and input agree exactly when their hashes agree after every frame.</p>
 <pre>package machine
 
+const (
+    stateTag    = &quot;terse-state-1&quot;
+    emptySystem = 37
+    absent      = 0
+    present     = 1
+)
+
 func (m *Machine) State(id [32]byte,
     grants, terminal []byte) []byte {
-    state := append([]byte(&quot;terse-state-1&quot;), id[:]...)
+    state := append([]byte(stateTag), id[:]...)
     state = le.AppendUint32(state, m.PC)
     for _, x := range m.X[1:] {
         state = le.AppendUint32(state, x)
@@ -35,14 +42,15 @@ func (m *Machine) State(id [32]byte,
     state = le.AppendUint32(state, uint32(m.Budget))
     state = le.AppendUint32(state, uint32(len(m.RAM)))
     state = append(append(state, m.RAM...), grants...)
-    state = append(state, make([]byte, 37)...)
+    state = append(state, make([]byte, emptySystem)...)
     if terminal == nil {
-        return append(state, 0, 0, 0, 0)
+        state = append(state, absent)
+    } else {
+        state = append(append(state, present), terminal...)
     }
-    state = append(append(state, 1), terminal...)
-    return append(state, 0, 0, 0)
+    return append(state, absent, absent, absent)
 }</pre>
-<p>In order: <code>terse-state-1</code> and the image ID; <code>pc</code> and the registers <code>x1</code> to <code>x31</code>; the frame counter, how the machine stopped (0 running, 1 exited, 2 faulted), the exit code, and a fault&#39;s kind, encoding, <code>pc</code> and address; the budget carried into the next frame; the RAM; one byte per optional device, 1 if granted. Then the System device: 37 zero bytes here (the time, 0 in a test; an empty event queue; four controllers, none connected). Then each device&#39;s section in a fixed order, from its driver&#39;s STATE: the terminal&#39;s with a byte 1 before it, or a 0 for a machine without one; then a 0 each for the vector display, content and the page, which this host never has.</p>
+<p>In order: <code>terse-state-1</code> and the image ID; <code>pc</code> and the registers <code>x1</code> to <code>x31</code>; the frame counter, how the machine stopped (0 running, 1 exited, 2 faulted), the exit code, and a fault&#39;s kind, encoding, <code>pc</code> and address; the budget carried into the next frame; the RAM; one byte per optional device, 1 if granted. Then the System device, <code>emptySystem</code>: 37 zero bytes here (the time, 4 bytes, 0 in a test; an event count of 0, 1 byte; four controllers of 8 bytes, none connected). Then each device&#39;s section in a fixed order, from its driver&#39;s STATE: the terminal&#39;s after <code>present</code> (1), or <code>absent</code> (0) for a machine without one; then a 0 each for the vector display, content and the page, which this host never has.</p>
 <h2 id="the-program">The program</h2>
 <pre>package main
 
@@ -85,7 +93,8 @@ func main() {
     }
     var grants, terminal []byte
     if bus != nil {
-        grants, terminal = bus.Grants, bus.State(2)
+        grants = bus.Grants
+        terminal = bus.State(machine.Terminal)
         bus.Close()
     }
     state := m.State(blake3.Sum256(file), grants, terminal)
@@ -126,7 +135,7 @@ done</pre>
 </ul>
 <p><code>tcore</code> (<code>native/core-c</code>) has all of it but snapshots in about 1,580 lines of C: its serialization is 46 lines, the events file about 160.</p>
 <h2 id="what-you-have-now">What you have now</h2>
-<p>A host that runs Terse32 programs exactly as the reference does, and proves it: <code>state.go</code>, 28 lines, <code>step4/main.go</code>, 52; 900 lines in all. Next, write a device as a separate program: <a href="guide-device.html">Make a device</a>.</p>
+<p>A host that runs Terse32 programs exactly as the reference does, and proves it: <code>state.go</code>, 36 lines, <code>step4/main.go</code>, 53; 1,050 lines in all. Next, write a device as a separate program: <a href="guide-device.html">Make a device</a>.</p>
 <ul>
 <li>The same step in Rust: <a href="guide-host-rust-state.html">Make a host in Rust, step 4: prove it exact</a>.</li>
 <li>The rules: <a href="state.html">State, replay and conformance</a>, sections &quot;The state serialization&quot;, &quot;The hash&quot;, &quot;Snapshots&quot; and &quot;The conformance image&quot;; the input in <a href="events.html">Events and input</a>.</li>

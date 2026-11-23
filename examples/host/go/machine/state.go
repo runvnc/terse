@@ -1,8 +1,15 @@
 package machine
 
+const (
+	stateTag    = "terse-state-1"
+	emptySystem = 37
+	absent      = 0
+	present     = 1
+)
+
 func (m *Machine) State(id [32]byte,
 	grants, terminal []byte) []byte {
-	state := append([]byte("terse-state-1"), id[:]...)
+	state := append([]byte(stateTag), id[:]...)
 	state = le.AppendUint32(state, m.PC)
 	for _, x := range m.X[1:] {
 		state = le.AppendUint32(state, x)
@@ -19,10 +26,11 @@ func (m *Machine) State(id [32]byte,
 	state = le.AppendUint32(state, uint32(m.Budget))
 	state = le.AppendUint32(state, uint32(len(m.RAM)))
 	state = append(append(state, m.RAM...), grants...)
-	state = append(state, make([]byte, 37)...)
+	state = append(state, make([]byte, emptySystem)...)
 	if terminal == nil {
-		return append(state, 0, 0, 0, 0)
+		state = append(state, absent)
+	} else {
+		state = append(append(state, present), terminal...)
 	}
-	state = append(append(state, 1), terminal...)
-	return append(state, 0, 0, 0)
+	return append(state, absent, absent, absent)
 }

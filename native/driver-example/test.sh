@@ -77,18 +77,22 @@ if "$TC" --help 2>&1 | grep -q -- --identities; then
         && ok "tcore --identities: its HELLO identity" || { no "tcore --identities"; cat "$T/ids"; }
 fi
 # The slow mode's sleeps, as terse-bus's record (RECORD.md) sees them: the
-# frames whose END was slow (counters 5 to 7) each show the driver blocked
-# (neither on a CPU nor waiting for one) for most of the 30 ms. Not the
-# run's wall time against a run without it: on a busy computer either run
-# may take any time. (Where the driver's CPU time is not read, its own
-# time stands for its blocked time.)
+# frames whose END was slow (counters 5 to 7; END's work is waited for by
+# the next frame's first request, so which frames is the protocol's doing)
+# each show the driver blocked (neither on a CPU nor waiting for one) for
+# more than its allowance, half a frame (8.3 ms), and no other frame does.
+# Not the run's wall time against a run without it, nor most of the 30 ms:
+# on a busy computer either run may take any time, and the frame loop may
+# take a while to ask for END's work, which the driver sleeps through
+# meanwhile. (Where the driver's CPU time is not read, its own time stands
+# for its blocked time.)
 a=$("$D/terse-bus" "$P/hello/hello.terse" --frames 10 --hash --driver "2=$X")
 b=$(TERSE_EXAMPLE_SLOW=sleep:30:5:8 "$D/terse-bus" "$P/hello/hello.terse" --frames 10 --hash --driver "2=$X" --perf-log "$T/perf")
 slow=$(cat "$T"/perf/*.log 2>/dev/null | awk '
     $1 == "readings" && $2 == "dev2" { cpu = ($3 ~ /cpu/) }
-    $1 == "late" && $5 == "dev2" && (cpu ? $8 : $6) >= 25 { printf "%s%s", s, $2; s = "," }')
-[ -n "$a" ] && [ "$a" = "$b" ] && [ "$slow" = 5,6,7 ] && ok "TERSE_EXAMPLE_SLOW=sleep:30:5:8: same hash, the driver blocked 25 ms or more in frames $slow" \
-    || { no "TERSE_EXAMPLE_SLOW: hashes '$a' '$b', blocked 25 ms or more in frames '$slow' (not 5,6,7)"; grep -h '^late' "$T"/perf/*.log; }
+    $1 == "late" && $5 == "dev2" && (cpu ? $8 : $6) > 8.3 { printf "%s%s", s, $2; s = "," }')
+[ -n "$a" ] && [ "$a" = "$b" ] && [ "$slow" = 5,6,7 ] && ok "TERSE_EXAMPLE_SLOW=sleep:30:5:8: same hash, the driver blocked beyond its allowance in frames $slow" \
+    || { no "TERSE_EXAMPLE_SLOW: hashes '$a' '$b', blocked beyond its allowance in frames '$slow' (not 5,6,7)"; grep -h '^late' "$T"/perf/*.log; }
 for k in spin:1.5:0:3 cpu:0.5:2; do
     b=$(TERSE_EXAMPLE_SLOW=$k TERSE_BUS_CPU=0 TERSE_EXAMPLE_IDLE=1 "$D/terse-bus" "$P/hello/hello.terse" --frames 10 --hash --driver "2=$X")
     [ "$a" = "$b" ] && ok "TERSE_EXAMPLE_SLOW=$k (pinned, SCHED_IDLE): same hash" || no "TERSE_EXAMPLE_SLOW=$k: '$a' '$b'"

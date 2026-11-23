@@ -27,8 +27,8 @@ int main(void)
                 return 0;
         }
         vec_begin(list, sizeof list);
-        vec_move(320 * 16, 400 * 16);
-        vec_line(x * 16, 80 * 16);
+        vec_move(320 * VEC_UNIT, 400 * VEC_UNIT);
+        vec_line(x * VEC_UNIT, 80 * VEC_UNIT);
         vec_end();
         vec_submit_list(list);
         terse_wait_frame();
@@ -42,7 +42,7 @@ Build it with `terse build line.c` and run it with `terse-host line.terse`.
 
 The 2D vector display draws from a display list: a few bytes of drawing commands that the program builds in its own memory and hands over with `vec_submit_list`. The display shows that list every frame until the program submits another. The list must be in RAM, which is why it is a variable: a `const` array, in the program's read-only memory, is refused.
 
-The screen is 640 by 480 units, (0, 0) at the top left, and a list's coordinates are in sixteenths of a unit: hence the `* 16`. `vec_move` moves the pen without drawing, and `vec_line` draws a line from it. There are also circles, discs, rectangles and triangles, colours and widths.
+The screen is 640 by 480 units, (0, 0) at the top left, and a list's coordinates are in sixteenths of a unit: `VEC_UNIT` is 16, so `320 * VEC_UNIT` is 320 units. `vec_move` moves the pen without drawing, and `vec_line` draws a line from it. There are also circles, discs, rectangles and triangles, colours and widths.
 
 ## Reading keys
 

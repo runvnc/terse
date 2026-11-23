@@ -43,7 +43,11 @@ if [ "${1:-}" = uninstall ] || [ "${1:-}" = --uninstall ]; then
         fi
     done
     say "your key, subscriptions and downloads are kept; to remove them too,"
-    say "delete ~/.config/terse, ~/.local/share/terse and ~/.cache/terse"
+    if [ "$(uname -s)" = Darwin ]; then
+        say "delete ~/Library/Application Support/terse and ~/Library/Caches/terse"
+    else
+        say "delete ~/.config/terse, ~/.local/share/terse and ~/.cache/terse"
+    fi
     exit 0
 fi
 [ $# -eq 0 ] || die "usage: install.sh [uninstall]"

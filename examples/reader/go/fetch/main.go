@@ -15,7 +15,7 @@ import (
 
 func main() {
 	id, err := hex.DecodeString(os.Args[2])
-	if err != nil || len(id) != 32 {
+	if err != nil || len(id) != relay.IDSize {
 		log.Fatal("an ID is 64 hexadecimal digits")
 	}
 	url := os.Args[1]
@@ -23,7 +23,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	blob, err := relay.Get(conn, [32]byte(id))
+	blob, err := relay.Get(conn, relay.ID(id))
 	if err != nil {
 		log.Fatal(err)
 	}

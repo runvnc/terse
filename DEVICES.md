@@ -542,6 +542,7 @@ a `--driver` option. The folder is in the user's configuration
 directory, beside the fonts (README "Fonts"):
 
     <config>/drivers/            $XDG_CONFIG_HOME/terse/drivers (else ~/.config/terse/drivers;
+                                 ~/Library/Application Support/terse/drivers on macOS;
                                  %APPDATA%\terse\drivers on Windows)
       use                        which installed driver serves which slots
       <name>/manifest            one installed driver: what it said it is

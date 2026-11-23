@@ -37,14 +37,31 @@ require (
 package relay
 
 import (
+    "encoding/binary"
     "errors"
 
     "github.com/gorilla/websocket"
     "lukechampine.com/blake3"
 )
 
-func Get(conn *websocket.Conn, id [32]byte) ([]byte, error) {
-    request := append([]byte{0x01, 1, 0, 0, 0}, id[:]...)
+type ID = [IDSize]byte
+
+const (
+    IDSize         = 32
+    typeGet        = 0x01
+    typeGetReply   = 0x81
+    requestNumber  = 1
+    statusAt       = 5
+    blobAt         = 6
+    statusFound    = 1
+    statusNotFound = 2
+)
+
+func Get(conn *websocket.Conn, id ID) ([]byte, error) {
+    request := []byte{typeGet}
+    le := binary.LittleEndian
+    request = le.AppendUint32(request, requestNumber)
+    request = append(request, id[:]...)
     err := conn.WriteMessage(websocket.BinaryMessage, request)
     if err != nil {
         return nil, err
@@ -54,14 +71,16 @@ func Get(conn *websocket.Conn, id [32]byte) ([]byte, error) {
         switch {
         case err != nil:
             return nil, err
-        case len(reply) < 6 || reply[0] != 0x81:
+        case len(reply) < blobAt || reply[0] != typeGetReply:
             continue
-        case reply[5] != 1:
+        case reply[statusAt] == statusNotFound:
             return nil, errors.New("the relay does not have it")
-        case blake3.Sum256(reply[6:]) != id:
+        case reply[statusAt] != statusFound:
+            return nil, errors.New("the relay refused it")
+        case blake3.Sum256(reply[blobAt:]) != id:
             return nil, errors.New("hash check failed")
         }
-        return reply[6:], nil
+        return reply[blobAt:], nil
     }
 }
 ```
@@ -86,7 +105,7 @@ import (
 
 func main() {
     id, err := hex.DecodeString(os.Args[2])
-    if err != nil || len(id) != 32 {
+    if err != nil || len(id) != relay.IDSize {
         log.Fatal("an ID is 64 hexadecimal digits")
     }
     url := os.Args[1]
@@ -94,7 +113,7 @@ func main() {
     if err != nil {
         log.Fatal(err)
     }
-    blob, err := relay.Get(conn, [32]byte(id))
+    blob, err := relay.Get(conn, relay.ID(id))
     if err != nil {
         log.Fatal(err)
     }
@@ -106,13 +125,28 @@ func main() {
 }
 ```
 
-They are 30 and 35 lines; the whole program, with step 1's `article` package, is 142.
+They are 49 and 35 lines; the whole program, with step 1's `article` package, is 161.
 
 ## How it works
 
-A relay is a WebSocket server, and every message is one binary WebSocket message. To ask for a blob, `Get` sends a Get message: the byte `01h`, a request number of 4 bytes, least significant first (here always 1), and the blob's ID, 32 bytes.
+A relay is a WebSocket server, and every message is one binary WebSocket message; numbers in it are least significant byte first. To ask for a blob, `Get` sends a Get:
 
-It then reads messages until the reply comes: one that starts with `81h`. Other messages are skipped; in step 3 the relay sends feed entries over the same connection. After the type and the request number comes a status byte: 1 found, followed by the blob's bytes; 2 not found; 3 refused.
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 1 | type: `01h`, Get |
+| 1 | 4 | request number: any; the reply repeats it |
+| 5 | 32 | the blob's ID |
+
+It then reads messages until the Get reply comes, skipping any other (in step 3 the relay sends feed entries over the same connection):
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 1 | type: `81h`, Get reply |
+| 1 | 4 | the request number |
+| 5 | 1 | status: `1` found, `2` not found, `3` or more refused |
+| 6 | the rest | the blob, if the status is `1` |
+
+The names in the `const` block are these offsets and values. A status other than `1` is an error, saying which.
 
 The hash check is the important line. Relays are not trusted, the hash is: if the BLAKE3 hash of the bytes is not the ID asked for, `Get` returns an error and the bytes are never shown.
 
@@ -164,6 +198,6 @@ The program asks one relay and keeps nothing. A complete reader keeps every blob
 
 A reader that fetches an article by its ID and knows it is genuine.
 
-- Next: [Make a reader in Go, step 3: follow a feed](terse:3cd463988b9538a9a994942ad7c2f96d27ad9b2dea131afddc10ec731a31835a).
-- The same step in Rust: [Make a reader in Rust, step 2: fetch an article](terse:f1ebf7ddb2a0c83f0b76a9f41588808b6ee587d2ac6c65bdbef50e75a8362b33).
-- Every relay message: [The network](terse:1dd0d8efcd9961657ab4e2a3eb3f72f651a0683a36f8495452fef4f5ce0752a5).
+- Next: [Make a reader in Go, step 3: follow a feed](terse:6522ed80b7a8090d18f266e21e30f7dbf5248aaf66bcb94a41a0c8d4d8a13fc8).
+- The same step in Rust: [Make a reader in Rust, step 2: fetch an article](terse:c1f71645728537567f401afbaa27ebe1b6716c70598f2b6703dbf2e0da665d80).
+- Every relay message, and why a relay refuses: [The network](terse:1dd0d8efcd9961657ab4e2a3eb3f72f651a0683a36f8495452fef4f5ce0752a5).

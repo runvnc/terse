@@ -525,6 +525,14 @@ impl BusSystem {
         }
     }
 
+    /// The composed picture is being presented (R14: its time on a CPU
+    /// from here is `present`'s).
+    pub fn presenting(&mut self) {
+        if let Some(m) = &mut self.monitor {
+            m.presenting();
+        }
+    }
+
     /// The frame's present waited `wait` for the window system to give a
     /// buffer back (its pacing, left out of the frame's time, R14).
     pub fn display_wait(&mut self, wait: std::time::Duration) {

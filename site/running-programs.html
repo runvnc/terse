@@ -40,7 +40,7 @@
 <p><code>--hash</code> prints the machine&#39;s state hash after the last frame, 64 hex digits; <code>--hash-every N</code> prints <code>&lt;frame&gt; &lt;hash&gt;</code> after every frame whose counter is a multiple of N. The hash covers the machine&#39;s whole state (CPU, RAM, devices), and the machine is deterministic: the same image and the same recorded inputs give the same hashes on every conforming host. Tests record a script and the expected hashes; <code>--save-state</code> and <code>--load-state</code> save and resume a run. See <a href="state.html">The state hash</a>.</p>
 <h2 id="running-it-in-a-window">Running it in a window</h2>
 <pre>cargo run -p terse-host -- prog.terse</pre>
-<p>runs the image alone in a window at 60 frames a second, with every key (F12 included) going to it. The window closes when the program exits; after a fault it stays open with the fault on the bottom row and in the title. <code>--screenshot out.png --frames 30</code> (with <code>--events</code> if wanted) runs headless and writes a picture instead. <a href="using.html">Using the shell</a> shows the shell, where programs run side by side.</p>
+<p>runs the image alone in a window at 60 frames a second, with every key (F12 included) going to it. The window closes when the program exits; after a fault it stays open with the fault on the bottom row and in the title. <code>--screenshot out.png --frames 30</code> (with <code>--events</code> if wanted) runs headless and writes a picture instead. <code>terse-host --drive</code> runs it in the window from a script and checks what it shows: <a href="testing.html">Testing a program</a>. <a href="using.html">Using the shell</a> shows the shell, where programs run side by side.</p>
 <h2 id="costs-to-keep-in-mind">Costs to keep in mind</h2>
 <p>An instruction from ROM costs 1 unit, one from RAM 4. A call costs 5 (the <code>ecall</code> and 4) plus 1 per 4 bytes it copies, or 65 if it is answered (it asks a device for its state: <code>get_cursor</code>, <code>get_colours</code>, <code>cells_read</code>, content <code>submit</code>, page <code>locate</code>); <code>write</code> costs 2 per byte, and a clear or scroll command 150. A frame has 125,000 units. Writing a whole row with one <code>write</code> or <code>term_cells_write</code> is far cheaper than a call per character, and building a display list or document once and submitting it costs 1 unit per 4 bytes. The full table is in <a href="charges.html">Charges and limits</a>.</p>
 <h2 id="publishing-it">Publishing it</h2>
@@ -51,6 +51,6 @@
 <p>Next: <a href="machine.html">The machine</a>, then the devices, from <a href="device-system.html">The system device</a> and <a href="device-terminal.html">The terminal</a> to <a href="events.html">Events</a>.</p>
 </article>
 </main>
-<footer><nav class="pn"><a rel="prev" href="toolchain-other.html">← Building by hand, and other languages</a><a rel="next" href="using.html">Using the shell →</a></nav></footer>
+<footer><nav class="pn"><a rel="prev" href="toolchain-other.html">← Building by hand, and other languages</a><a rel="next" href="testing.html">Testing a program →</a></nav></footer>
 </body>
 </html>
