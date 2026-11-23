@@ -416,16 +416,6 @@ fn publish(args: &[String]) -> Result<ExitCode, String> {
             missing.join(", ")
         )
     });
-    // A blob held here that no entry names goes up, but a relay that drops
-    // such blobs drops it after a while.
-    for l in linked.iter().filter(|l| l.keep == crate::links::Keep::Unnamed) {
-        eprintln!(
-            "terse: warning: {} is named by no entry: a relay that drops blobs no entry names (NETWORK.md 5.3) will \
-             drop it and the link will lead nowhere there; to keep it, publish it as an article of its own \
-             (terse feed publish <file> --title <t>)",
-            l.link()
-        );
-    }
     if dry_run || refusal.is_some() {
         let would = if dry_run { "would be uploaded" } else { "not uploaded" };
         for l in &linked {
@@ -467,6 +457,21 @@ fn publish(args: &[String]) -> Result<ExitCode, String> {
                 eprintln!("terse: no relay: stored locally only");
             }
             println!("seq {seq} blob {}", to_hex(&blob));
+            // The article's own parts that no entry names: an attachment
+            // entry each (NETWORK 4.2), so relays keep them with it.
+            for l in linked.iter().filter(|l| l.keep == crate::links::Keep::Unnamed) {
+                let Some(Ok(Some(bytes))) = l.upload.map(|id| node.store().read(&id)) else { continue };
+                let done = node.publish_attachment(&bytes, blob, now());
+                crate::say_delivery(&mut node);
+                match done {
+                    Done::Published { seq, .. } => println!("seq {seq} attachment {}", l.link()),
+                    _ => eprintln!(
+                        "terse: warning: no attachment entry for {}: a relay that drops blobs no entry names (NETWORK.md \
+                         5.3) will drop it",
+                        l.link()
+                    ),
+                }
+            }
             Ok(ExitCode::SUCCESS)
         }
         Done::Refused => Err("every relay refused the entry (each one's reason is above)".into()),
@@ -672,6 +677,8 @@ fn entry_line(entry: &Entry, article: Option<Article>, name: Option<&str>) -> St
             terse_net::entry::KIND_PROGRAM => format!("[program: {title}]"),
             terse_net::entry::KIND_DOCUMENT => format!("[document: {title}]"),
             terse_net::entry::KIND_ARTICLE => title,
+            // A part of an earlier article (NETWORK 4.2): listed here only.
+            terse_net::entry::KIND_ATTACHMENT => format!("[attachment of {}]", short_key(&entry.reply_to)),
             // A kind this revision does not define (NETWORK 6): listed, not
             // opened.
             kind => format!("[kind {kind}: {title}]"),

@@ -786,8 +786,10 @@ Commands:
   whether relays keep it (an entry of your feed names it) or it is link-only (another feed's,
   kept where that feed is kept, or unknown here). An entry names one blob (NETWORK.md 4.2),
   so a relay that drops blobs no entry names (NETWORK.md 5.3) keeps a linked article only
-  while an entry names it: a link to a blob held here that no entry names is uploaded with
-  a warning (publish that blob as an article of its own to keep it). An article linking to
+  while an entry names it: a link to a blob held here that no entry names is uploaded, and
+  after the article an attachment entry of your feed (kind 5, NETWORK.md 4.2: it names the
+  part, and the article in its reply-to; readers do not list it) names it, so relays keep
+  it with the article; publish prints `seq N attachment terse:<id>` for each. An article linking to
   a blob of your feed that this host does not hold is refused, unless `--force`.
   `--dry-run` lists the links and publishes nothing.
 - `feed publish --program <image.terse> [--name <n>]` checks the image and publishes

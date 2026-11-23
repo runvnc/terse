@@ -233,7 +233,7 @@ author's client holds the secret key and never sends it anywhere.
 | 0 | 32 | Feed key |
 | 32 | 4 | `seq`: 1 for the first entry, then increasing by 1 |
 | 36 | 4 | Time: Unix seconds, as claimed by the author |
-| 40 | 1 | Kind: `1` = article, `2` = profile (section 4.6), `3` = program, `4` = document; `0` and `255` are reserved; `5` to `254` are not defined by this revision |
+| 40 | 1 | Kind: `1` = article, `2` = profile (section 4.6), `3` = program, `4` = document, `5` = attachment; `0` and `255` are reserved; `6` to `254` are not defined by this revision |
 | 41 | 3 | Size of the blob in bytes |
 | 44 | 32 | Blob ID |
 | 76 | 32 | Reply-to: the blob ID this entry responds to, or all zeros |
@@ -350,6 +350,21 @@ blob starts with a document header.
 Clients that do not run programs still handle program and document
 entries as the network requires (they are valid entries, stored and
 passed on like any other) and need not open their blobs (section 6).
+
+An **attachment** entry (kind 5) keeps a part of an earlier entry of the
+same feed: its blob is something that entry's article links to (another
+article, a document), and its reply-to is that earlier entry's blob ID.
+Its title is empty or a short label, any title as for an article. It
+exists so that relays keep the part as long as they keep the entry (a
+relay that drops blobs no entry names, section 5.3, would otherwise drop
+it): relays store it, pass it on and count it like any entry (sections
+4.3, 5.2, 5.3). Readers do not list attachments in timelines, searches or
+lists of articles, and do not download their blobs automatically: a link
+reaches the blob, as any link does (section 4.4). The entry is valid by
+the rules above whether or not its reply-to names an entry the client
+holds. A relay or client of an earlier revision takes kind 5 as a kind
+not defined (above): it stores and passes it on and does not show it, so
+both keep working.
 
 If two different valid entries have the same feed key and `seq`, the one
 received first is kept.
@@ -812,7 +827,8 @@ users what happened (section 3.1).
   be named, in all or from the client's address, take up its allowance.
   So on such a relay, an article that is reached only by a link from
   another article (no entry names it) is not kept: a publisher who wants
-  it kept publishes an entry for it too.
+  it kept publishes an entry for it too, an attachment entry (section
+  4.2) if it is a part of that article.
 - **Rates per address.** A relay may limit, per client address, the
   puts and publishes, the bytes put, the entries of feeds it holds
   nothing of, the finds and lookups, and the connections (statuses `64`

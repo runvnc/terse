@@ -909,6 +909,17 @@ impl Node {
         self.start_publish(token, data, entry);
     }
 
+    /// Starts publishing an attachment (kind 5, NETWORK 4.2): `data`, a
+    /// part of the user's earlier entry whose blob is `of`.
+    pub fn start_publish_attachment(&mut self, token: Token, data: &[u8], of: BlobId, time: u32) {
+        let Some(identity) = &self.identity else { return self.ready.push((token, Done::Failed)) };
+        if !valid_size(data.len()) {
+            return self.ready.push((token, Done::Failed));
+        }
+        let entry = Entry::attachment(identity.feed_key(), 0, time, data, of);
+        self.start_publish(token, data, entry);
+    }
+
     fn publish_entry(&mut self, token: Token, mut entry: Entry) {
         let Some(identity) = &self.identity else { return self.ready.push((token, Done::Failed)) };
         let Ok(highest) = self.feeds.highest(&entry.feed) else { return self.ready.push((token, Done::Failed)) };
@@ -2034,6 +2045,13 @@ impl Node {
     pub fn publish_document(&mut self, data: &[u8], title: &str, time: u32) -> Done {
         self.connect_all();
         self.start_publish_document(0, data, title, time);
+        self.wait_for_all(0)
+    }
+
+    /// Publishes an attachment, blocking, like `publish_article`.
+    pub fn publish_attachment(&mut self, data: &[u8], of: BlobId, time: u32) -> Done {
+        self.connect_all();
+        self.start_publish_attachment(0, data, of, time);
         self.wait_for_all(0)
     }
 

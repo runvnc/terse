@@ -56,7 +56,7 @@ A feed is a numbered series of small signed entries from one author, each pointi
 | 0 | 32 | feed key |
 | 32 | 4 | `seq`: 1 for the first entry, then increasing |
 | 36 | 4 | time: Unix seconds, as claimed by the author |
-| 40 | 1 | kind: 1 article, 2 profile, 3 program, 4 document; 0 and 255 reserved; 5 to 254 not yet defined |
+| 40 | 1 | kind: 1 article, 2 profile, 3 program, 4 document, 5 attachment; 0 and 255 reserved; 6 to 254 not yet defined |
 | 41 | 3 | size of the blob in bytes |
 | 44 | 32 | blob ID |
 | 76 | 32 | reply-to: the blob ID this entry responds to, or all zero |
@@ -77,7 +77,9 @@ An entry is valid if: `n` is at most 120 and the entry's length matches it; the 
 
 Program and document entries are valid whatever their blob holds; that is found out on use. A feed's current version of a program is its valid program entry with that name and the highest `seq` the client or relay holds. A program's identity is (feed key, name).
 
-An entry of a kind not listed here (5 to 254) is valid if it meets the rules above (the kind-specific ones apply only to their kinds). Relays pass it on like any other, so that kinds a later revision adds reach clients that know them; a client keeps or skips it without error, and neither downloads, lists in the timeline nor opens it (`terse feed list` shows `[kind 9: title]`).
+An *attachment* (kind 5) keeps a part of an earlier entry of the same feed, something its article links to: its blob is the part, its reply-to that entry's blob. Relays keep it like any entry; readers do not list it, and reach its blob by the link.
+
+An entry of a kind not listed here (6 to 254) is valid if it meets the rules above (the kind-specific ones apply only to their kinds). Relays pass it on like any other, so that kinds a later revision adds reach clients that know them; a client keeps or skips it without error, and neither downloads, lists in the timeline nor opens it (`terse feed list` shows `[kind 9: title]`).
 
 ## Relay feed messages
 

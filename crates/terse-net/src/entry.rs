@@ -16,13 +16,19 @@ pub const KIND_PROGRAM: u8 = 3;
 /// A document (NETWORK 4.2, SPEC §content.documents): the title is the document's name
 /// and the blob starts with a document header.
 pub const KIND_DOCUMENT: u8 = 4;
+/// An attachment (NETWORK 4.2): the blob is a part of an earlier entry of
+/// the same feed (an article that links to it), whose blob ID is the
+/// reply-to. It is there so that relays keep the part; readers do not list
+/// it.
+pub const KIND_ATTACHMENT: u8 = 5;
 /// Reserved kinds (NETWORK 4.2): an entry of either is invalid. Every
-/// other kind is valid; 5 to 254 are not defined by this revision, and
+/// other kind is valid; 6 to 254 are not defined by this revision, and
 /// clients keep or skip such entries without opening them.
 pub const KIND_RESERVED_0: u8 = 0;
 pub const KIND_RESERVED_255: u8 = 255;
 
-/// Whether this revision defines `kind` (1 to 4).
+/// Whether `kind` is one a reader shows and opens (1 to 4). An attachment
+/// (5) is defined but not shown: its blob is reached by a link.
 pub fn known_kind(kind: u8) -> bool {
     matches!(kind, KIND_ARTICLE | KIND_PROFILE | KIND_PROGRAM | KIND_DOCUMENT)
 }
@@ -123,6 +129,12 @@ impl Entry {
     /// A program entry (NETWORK 4.2): `image` under the name `name`.
     pub fn program(feed: FeedKey, seq: u32, time: u32, image: &[u8], name: &str) -> Self {
         Entry { kind: KIND_PROGRAM, ..Self::article(feed, seq, time, image, None, name) }
+    }
+
+    /// An attachment entry (kind 5) for `data`, a part of the earlier
+    /// entry of the same feed whose blob is `of` (NETWORK 4.2).
+    pub fn attachment(feed: FeedKey, seq: u32, time: u32, data: &[u8], of: BlobId) -> Self {
+        Entry { kind: KIND_ATTACHMENT, ..Self::article(feed, seq, time, data, Some(of), "") }
     }
 
     /// A document entry (kind 4) for the document `data`, titled `title`.
