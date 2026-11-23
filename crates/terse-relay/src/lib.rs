@@ -678,7 +678,7 @@ impl Relay {
             let mut state = self.state.lock().unwrap();
             let mut ended = Vec::new();
             for c in state.conns.values_mut() {
-                let denied: Vec<FeedKey> = c.feeds.iter().filter(|f| feeds.contains(f)).copied().collect();
+                let denied: Vec<FeedKey> = c.feeds.iter().filter(|f| feeds.contains(*f)).copied().collect();
                 for f in denied {
                     c.feeds.remove(&f);
                     if !c.peer.load(Ordering::Relaxed) {
