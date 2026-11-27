@@ -369,7 +369,7 @@
 #define W_EMIT 7
 #define W_LINE 200
 #define W_HIT 120
-#define W_BLOCK 400
+#define W_BLOCK 430
 #define W_LINK 900
 #define W_TERSE 1200
 #define W_PSEP 14
@@ -380,14 +380,13 @@
 #define W_CODE 700   /* a code span: its Font, Size, Colour and back */
 #define W_TSCAN 28   /* a byte of a table's line, cut into cells */
 #define W_TROW 500   /* the end of a table's row */
-#define W_CELL 450   /* a cell: its Cell command */
+#define W_CELL 480   /* a cell: its Cell command */
 #define W_TABLE 400  /* a table's Table and End table commands */
 #define TC_MAX 1024  /* a table's cells kept (the page device's limit) */
 #define TABLE_SIZE 14
 #define CODE_DOWN 1  /* a code span is this much smaller than its text */
-#define W_HTOKEN 300 /* a token of a coloured fence classified (and its Colour command) */
-#define W_HLOOK 60   /* a word looked up in a keyword list */
-#define W_HLIST 700  /* ... and the list looked through */
+#define W_HTOKEN 380 /* a token of a coloured fence classified (and its Colour command) */
+#define W_HLOOK 100  /* a word looked up in a keyword list */
 
 /* Keys (USB HID). */
 #define KEY_F 0x09
@@ -2127,7 +2126,12 @@ static uint8_t find_block(uint32_t limit, uint8_t final)
  * string, a shell line ended by a backslash, a here-document) is hl_st.
  * A run of a class is a Colour command before it. So that a link with
  * text in a fence stays one ("[" ... "](terse:...)"), no colour changes
- * after a "[" not yet closed on the line when a "](" follows it. */
+ * after a "[" not yet closed on the line when a "](" follows it. Colours
+ * never cost text: when the document is short of room for the rest of
+ * the article, the code goes on in the plain colour (hl_step). Metered
+ * like the rest (W_HTOKEN a token, W_HLOOK a keyword lookup): the
+ * manual's page with the most code (Make a device in Go, 12 KB of Go) is
+ * built in 10 frames instead of 4; the first screenful still comes at once. */
 enum { HL_NONE, HL_C, HL_RUST, HL_GO, HL_SH, HL_GEN };
 /* Classes: keep the colour (blanks), plain, comment, string, number,
  * keyword, type, meta. */
@@ -2157,6 +2161,7 @@ static uint8_t hl_st;   /* what goes on to the next line: 1 a block comment, 2 a
                          * 3 a shell line ended by a backslash, 4 a here-document (its word at hl_hd) */
 static uint8_t hl_q, hl_bol, hl_cmd, hl_hdn;
 static uint16_t hl_at, hl_hd; /* the end of the token classified last; the here-document's word */
+static uint16_t hl_le;        /* the end of the line hl_at is on (its LF) */
 
 static uint8_t lower(uint8_t c)
 {
@@ -2165,35 +2170,39 @@ static uint8_t lower(uint8_t c)
 
 static const char *const hl_lists[] = {kw_c, ty_c, kw_rust, ty_rust, kw_go, ty_go, cmd_sh};
 enum { L_KW_C, L_TY_C, L_KW_RUST, L_TY_RUST, L_KW_GO, L_TY_GO, L_CMD_SH };
-/* Each list's first letters (bit c & 31) and lengths (bit n), to skip
- * most words without looking through the list. */
-static uint32_t hl_first[7], hl_lens[7];
+/* The lists' words, hashed when first needed: each word's first byte
+ * and length (its key), where it is, and the next word of its list with
+ * the same hash ((first byte + 7 x length) & 31), 1-based. */
+#define HL_WORDS 200
+static uint16_t hl_key[HL_WORDS];
+static uint8_t hl_next[HL_WORDS], hl_head[7][32], hl_ready;
+static const char *hl_word[HL_WORDS];
 
 /* Whether the word art[p .. p + n) is in list `id`. */
 static uint8_t in_list(uint8_t id, uint32_t p, uint32_t n)
 {
-    const char *w = hl_lists[id], *s;
-    uint32_t k;
-    spend(W_HLOOK);
-    if (!hl_lens[id])
-        for (s = w; *s; s++)
-            if (s == w || s[-1] == ' ') {
-                for (k = 0; s[k] != ' '; k++)
-                    ;
-                hl_first[id] |= 1u << (*s & 31);
-                hl_lens[id] |= 1u << k;
-            }
-    if (n > 31 || !(hl_lens[id] >> n & 1) || !(hl_first[id] >> (art[p] & 31) & 1))
-        return 0;
-    spend(W_HLIST);
-    while (*w) {
-        for (k = 0; k < n && (uint8_t)w[k] == art[p + k]; k++)
-            ;
-        if (k == n && w[k] == ' ')
-            return 1;
-        while (*w++ != ' ')
-            ;
+    const char *s;
+    uint32_t i, k, key = (uint32_t)art[p] << 8 | n;
+    if (!hl_ready) {
+        for (i = k = 0; i < 7; i++)
+            for (s = hl_lists[i]; *s; s++)
+                if ((s == hl_lists[i] || s[-1] == ' ') && k < HL_WORDS) {
+                    const char *e = s;
+                    uint8_t h;
+                    while (*e != ' ')
+                        e++;
+                    h = ((uint8_t)*s + 7 * (e - s)) & 31;
+                    hl_word[k] = s;
+                    hl_key[k] = (uint16_t)((uint8_t)*s << 8 | (e - s));
+                    hl_next[k] = hl_head[i][h];
+                    hl_head[i][h] = ++k;
+                }
+        hl_ready = 1;
     }
+    spend(W_HLOOK);
+    for (i = hl_head[id][(art[p] + 7 * n) & 31]; i; i = hl_next[i - 1])
+        if (hl_key[i - 1] == key && !memcmp(hl_word[i - 1], art + p, n))
+            return 1;
     return 0;
 }
 
@@ -2202,7 +2211,7 @@ static uint8_t word_lang(uint32_t p, uint32_t n)
 {
     const char *w = hl_words;
     uint32_t k;
-    spend(W_HLIST);
+    spend(W_BLOCK);
     while (*w) {
         uint8_t l = (uint8_t)*w++;
         for (k = 0; k < n && w[k] != ' ' && (uint8_t)w[k] == lower(art[p + k]); k++)
@@ -2485,23 +2494,45 @@ static uint32_t hl_token(uint32_t p, uint32_t le, uint8_t *cls)
         }
         return e;
     }
-    while (e < le && (art[e] & 0xC0) == 0x80)
+    /* Punctuation (and other characters): a run, up to what may start
+     * another token. */
+    while (e < le && !is_word(art[e]) && !is_blank(art[e]) && art[e] != '"' && art[e] != '\'' && art[e] != '`'
+           && art[e] != '/' && art[e] != '#' && art[e] != '<')
         e++;
     return e;
 }
 
 /* B_EMIT of a coloured block: the token at art[p] (p at or after hl_at)
  * is classified, and its colour set if it differs. */
-static void hl_step(uint32_t p, uint32_t end)
+static __attribute__((noinline)) void hl_step(uint32_t p, uint32_t end)
 {
-    uint32_t le = find2(art + p, art + end, '\n', '\n') - art, k;
+    uint32_t le, k, left;
     uint8_t cls;
     const uint8_t *rgb;
+    if (p > hl_le) { /* a new line: where it ends */
+        hl_le = find2(art + p, art + end, '\n', '\n') - art;
+        spend((hl_le - p) * W_FIND / 4);
+    }
+    le = hl_le;
+    /* Blanks keep the colour: the token is what follows them. */
+    for (k = p; p < le && is_blank(art[p]); p++)
+        ;
+    spend((p - k) * W_FIND);
+    if (p == le && (p == end || art[p] != '\n')) {
+        hl_at = p;
+        return;
+    }
     hl_at = hl_token(p, le, &cls);
     spend(W_HTOKEN + (hl_at - p) * W_FIND);
     if (cls == HC_KEEP)
         return;
     rgb = cls == HC_PLAIN ? rgb_pre : hl_rgb[cls];
+    /* Colours never take the room of text: a run is coloured only while the
+     * document has room for the rest of the article and a quarter more,
+     * and 1 KiB, besides (else the code goes on in the plain colour). */
+    left = (art_size < ART_CAP ? art_size : ART_CAP) - p;
+    if ((uint32_t)(doc_limit - doc_ptr) < left + left / 4 + 1024)
+        rgb = rgb_pre;
     if (rgb == b_colour)
         return;
     /* A "[" not closed since the text was last flushed, with a "](" after
@@ -2564,6 +2595,7 @@ static void start_block(void)
         doc_paragraph(DOC_START, PRE_INDENT, PARA_SPACE, DOC_NOWRAP);
         hl_lang = b_kind == K_FENCE ? b_lang : HL_NONE;
         hl_at = b_start;
+        hl_le = 0;
         hl_st = 0;
         hl_bol = 1;
         break;
