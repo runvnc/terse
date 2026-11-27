@@ -563,18 +563,22 @@ static uint8_t carried(uint8_t o)
     return l == L_HELD || l == L_WORN;
 }
 
-static int lit(void)
+/* Whether the place can be seen: it is not dark, or a light is here (with
+ * `beams` 0, a light other than the lantern's beam). */
+static int lit_by(uint8_t beams)
 {
     if (!rooms[G.room].dark)
         return 1;
     for (uint8_t o = 0; o < N_OBJS; o++)
-        if ((objs[o].kinds & K_LIGHT) && (G.st[o] & S_ON)) {
+        if ((objs[o].kinds & K_LIGHT) && (G.st[o] & S_ON) && (beams || !(objs[o].kinds & K_BEAM))) {
             uint8_t l = reach(o);
             if (l == L_HELD || l == L_WORN || l == L_ROOM(G.room))
                 return 1;
         }
     return 0;
 }
+
+static int lit(void) { return lit_by(1); }
 
 static uint8_t here(uint8_t o)
 {
@@ -1418,7 +1422,8 @@ static void scene_build(uint8_t draw)
     if (G.ended && G.picture != 0xFF) {
         draw_art(picture_art[G.picture], 0, 0, 0, 0, draw, 1);
     } else if (is_lit || beam) {
-        uint8_t mode = is_lit ? 0 : 1;
+        /* A dark place lit only by the lantern is seen only in its beam. */
+        uint8_t mode = lit_by(0) ? 0 : 1;
         draw_art(rooms[G.room].art, 0, 0, mode, beam, draw, 1);
         for (uint8_t o = 0; o < N_OBJS; o++) {
             int16_t x, y;
@@ -3138,7 +3143,17 @@ int main(void)
     beam_on_shown = 0;
     dirty_scene = 1; /* the first place is drawn with its text */
     page_top = 0;
-    intro();
+    /* The intro in frame 0, the first place in frame 1, its picture in 2. */
+    curcol = C_TITLE;
+    say(TEXT_TITLE);
+    curcol = C_TEXT;
+    out_blank();
+    say(TEXT_INTRO);
+    out_blank();
+    terse_wait_frame();
+    look();
+    enter_events();
+    text_busy = 1;
     reply_done();
     if (nlines > TEXT_ROWS) {
         more = 1;

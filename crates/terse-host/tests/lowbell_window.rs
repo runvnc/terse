@@ -66,29 +66,39 @@ fn played_in_the_window() {
         return;
     }
     let dir = tempfile::tempdir().unwrap();
-    let mut script = String::from("settle max 300\nshot start.png\npress enter\nwait 4\n");
-    script += &typed(&["light lantern", "open box", "take key", "unlock door", "open door", "east"]);
-    // The dark boathouse: nothing animated, the picture is still; typing
-    // changes only the input line.
-    script += "settle\nexpect idle 60\nexpect terminal contains Inside the Boathouse\nwatch 40\ntype hint\nwait 10\n";
-    script += "press backspace\npress backspace\npress backspace\npress backspace\n";
-    script += &typed(&["shine lantern at wall"]);
-    script += "settle\nexpect terminal contains Chalk marks\nexpect vectors contains c ebebdcff\nshot chalk.png\nexpect idle 60\n";
-    script += "hold left 30\nsettle\nexpect vectors contains c 4e4e49ff\nshot faint.png\nexpect no-slow\nquit\n";
-    for (renderer, size) in [("software", "1900x1000"), ("software", "640x480"), ("gpu", "1900x1000")] {
+    // (renderer, size, strict): strict runs also expect the picture still
+    // where nothing moves, typing to change only the text, and no late
+    // frame. At 1900 x 1000 the host's phosphor look is shed and restored
+    // whenever drawing it runs long (PERFORMANCE.md R15), which changes the
+    // whole picture: there only what is drawn is checked.
+    for (renderer, size, strict) in [("software", "640x480", true), ("software", "1900x1000", false), ("gpu", "1900x1000", false)] {
+        let still = |s: &str| if strict { s.to_string() } else { String::new() };
+        let mut script = String::from("settle max 300\nexpect vectors contains c aa8250ff\nshot start.png\npress enter\nwait 4\n");
+        script += &typed(&["light lantern", "open box", "take key", "unlock door", "open door", "east"]);
+        // The dark boathouse: nothing animated.
+        script += "settle\nexpect terminal contains Inside the Boathouse\n";
+        script += &still("expect idle 60\nwatch 30\ntype hint\nwait 10\npress backspace\npress backspace\npress backspace\npress backspace\nwait 10\n");
+        script += &typed(&["shine lantern at wall"]);
+        script += "settle\nexpect terminal contains Chalk marks\nexpect vectors contains c ebebdcff\nshot chalk.png\n";
+        script += &still("expect idle 60\n");
+        script += "hold left 30\nsettle\nexpect vectors contains c 4e4e49ff\nshot faint.png\nexpect budget 50\n";
+        script += &still("expect no-slow\n");
+        script += "quit\n";
         let o = drive(dir.path(), &script, renderer, size);
         if no_gpu(renderer, &o) {
             continue;
         }
         let out = String::from_utf8_lossy(&o.stdout).to_string();
         assert!(o.status.success() && out.contains("drive: done, no expectation failed"), "{renderer} {size}: {}", text(&o));
-        // While "hint" was typed and rubbed out, only the bottom of the
-        // window (the input line) changed: never the picture.
-        let watch = out.lines().find(|l| l.contains("watch 40:")).unwrap_or_else(|| panic!("{}", text(&o)));
-        let h: f32 = size.split('x').nth(1).unwrap().parse().unwrap();
-        if let Some(y) = watch.split(" y ").nth(1) {
-            let top: f32 = y.split("..").next().unwrap().trim().parse().unwrap();
-            assert!(top > h * 0.85, "{renderer} {size}: typing changed more than the input line: {watch}");
+        if strict {
+            // While "hint" was typed and rubbed out, only the input line
+            // changed, never the picture (the top 256 of 480 units).
+            let watch = out.lines().find(|l| l.contains("watch 30:")).unwrap_or_else(|| panic!("{}", text(&o)));
+            let h: f32 = size.split('x').nth(1).unwrap().parse().unwrap();
+            if let Some(y) = watch.split(" y ").nth(1) {
+                let top: f32 = y.split("..").next().unwrap().trim().parse().unwrap();
+                assert!(top > h * 0.9, "{renderer} {size}: typing changed more than the input line: {watch}");
+            }
         }
         for shot in ["start.png", "chalk.png", "faint.png"] {
             let p = dir.path().join(shot);

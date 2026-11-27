@@ -23,6 +23,8 @@
 < You light the storm lantern.
 < Inside the Boathouse
 < An oilskin coat hangs from a hook
+# Lit only by the lantern: the workbench, outside the beam, is not drawn.
+novectors line 2880 2592 4672 2592
 > hint
 < Your lantern's beam reveals things.
 > hint
