@@ -11,7 +11,7 @@
 <main>
 <article>
 <h1 id="the-page-device-7">The page (device 7)</h1>
-<p>The page shows typeset prose in a rectangle of the screen: proportional fonts, shaped, bidirectional and wrapped, with figures and tables between the paragraphs. The program hands the device a document, a binary list of styled text much like a display list; the host lays it out with its fonts and draws the part in view. The device parses no markup. It is slot 7, version 0: an image gets it by listing it in its header (<code>terse pack --device 7:0</code>). Without it, and for the unknown functions <code>706h</code>..<code>7FFh</code>, a call returns <code>FFFF_FFFFh</code>. The exact rules are in spec/page.md.</p>
+<p>The page shows typeset prose in a rectangle of the screen: proportional fonts, shaped, bidirectional and wrapped, with figures and tables between the paragraphs. The program hands the device a document, a binary list of styled text much like a display list; the host lays it out with its fonts and draws the part in view. The device parses no markup. It is slot 7, version 0: an image gets it by listing it in its header (<code>terse pack --device 7:0</code>). Without it, and for the unknown functions <code>707h</code>..<code>7FFh</code>, a call returns <code>FFFF_FFFFh</code>. The exact rules are in spec/page.md.</p>
 <p>Layout differs between hosts, because fonts differ. A program learns only two facts about it, both as input events: the document&#39;s height and, when it asks, where an anchor is. So a recorded run replays exactly whatever the fonts.</p>
 <h2 id="rectangle-and-scrolling">Rectangle and scrolling</h2>
 <p>The page is drawn inside its rectangle (x, y, width, height in screen units) and nothing of it outside, above the terminal&#39;s cell backgrounds and below the vector shapes and terminal characters. The document is one column as wide as the rectangle. The scroll value is the distance from the top of the document to the top of the rectangle. A width or height of 0 hides the page.</p>
@@ -25,6 +25,7 @@
 <tr><td><code>703h</code></td><td><code>scroll</code></td><td><code>a0</code> = y</td><td>0</td></tr>
 <tr><td><code>704h</code></td><td><code>background</code></td><td><code>a0</code> = colour</td><td>0</td></tr>
 <tr><td><code>705h</code></td><td><code>locate</code></td><td><code>a0</code> = anchor id</td><td>0 done, 1 rejected</td></tr>
+<tr><td><code>706h</code></td><td><code>layer</code></td><td><code>a0</code> layer, <code>a1</code> flags, <code>a2</code> x, <code>a3</code> y, <code>a4</code> scale</td><td>0 done, 1 rejected</td></tr>
 </tbody></table></div>
 <ul>
 <li><code>submit</code> copies <code>a1</code> bytes from <code>a0</code>, replacing the document, sets the scroll value to 0 and returns 0. A length of 0 or above 65,536 returns 1 (checked first); bytes not wholly in ROM or wholly in RAM return <code>FFFF_FFFEh</code>; either changes nothing. The same bytes again are still a new document.</li>
@@ -33,8 +34,9 @@
 <li><code>scroll</code> stores <code>a0</code> as given (32 bits). When presenting, the host reads it as signed and clamps it to 0 .. max(0, height - rectangle height); the stored value does not change.</li>
 <li><code>background</code> sets the colour behind the text: <code>a0</code> = r, g &lt;&lt; 8, b &lt;&lt; 16 and a &lt;&lt; 24 ORed together, a the opacity (255 opaque; 0 lets the terminal&#39;s cell backgrounds show).</li>
 <li><code>locate</code> asks where anchor <code>a0</code> is laid out in the current document; the answer comes later as two events. It returns 1, asking nothing, if <code>a0</code> is 0 or above 65,535, if there is no document, or if the program already made 8 locates this frame.</li>
+<li><code>layer</code> sets the state of layer <code>a0</code> (0..63) of the figures&#39; layers: flags bit 0 shown, bit 1 mirrored; the offset x = <code>a2</code>, y = <code>a3</code> in sixteenths of a unit (signed, clamped to -32,768..32,767); the scale <code>a4</code> in 256ths, clamped to 1..256. It returns 1, changing nothing, for a layer above 63. No new layout and no event: it is a deferred call of 4 units. See <a href="device-page-figures.html">figures on the page</a>.</li>
 </ul>
-<p>After reset: no document, rectangle (0, 0, 0, 0), scroll value 0, background <code>FF00_0000h</code> (opaque black).</p>
+<p>After reset: no document, rectangle (0, 0, 0, 0), scroll value 0, background <code>FF00_0000h</code> (opaque black), every layer shown at (0, 0), full size, not mirrored. <code>submit</code> and <code>clear</code> keep the layers&#39; state.</p>
 <h2 id="the-document">The document</h2>
 <p>A document is 1 to 65,536 bytes of commands, each an opcode byte and its operands, little-endian. It ends at End, at the end of the bytes, at an unknown opcode, at a command whose operands are cut off, or at a Table command whose column count is 0 or above 8. The commands before that are used.</p>
 <div class="table"><table>

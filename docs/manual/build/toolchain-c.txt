@@ -15,7 +15,7 @@ What `terse.h` provides, by area:
 - 2D vector display: a list builder (`vec_begin`, `vec_colour`, `vec_width`, `vec_origin`, `vec_move`, `vec_line`, `vec_circle`, `vec_disc`, `vec_rect`, `vec_tri`, `vec_end`, `vec_length`), `vec_submit`, `vec_submit_list`, `vec_clear`, `vec_style`, `vec_persistence`, `vec_fill`. The builder does not check the buffer's size.
 - 3D vector display: the same with `v3_` names.
 - Content: the 52-byte `content_req` block, `content_submit`, a `content_` function for each operation (`content_get`, `content_put`, `content_find` ...), and named records: `record_save`, `record_load`, `record_delete`, `record_list`.
-- Page: `page_submit`, `page_submit_doc`, `page_clear`, `page_region`, `page_scroll`, `page_background`, `page_locate`, `page_place_event`, and a document builder (`doc_begin`, `doc_text`, `doc_font`, `doc_size`, `doc_colour`, `doc_paragraph`, `doc_rule`, `doc_anchor`, `doc_figure`, `doc_end`) that never writes past its capacity and sets `doc_overflow` when full, and a path builder for figures (`path_begin`, `path_move`, `path_line` and so on).
+- Page: `page_submit`, `page_submit_doc`, `page_clear`, `page_region`, `page_scroll`, `page_background`, `page_locate`, `page_place_event`, `page_layer`, and a document builder (`doc_begin`, `doc_text`, `doc_font`, `doc_size`, `doc_colour`, `doc_paragraph`, `doc_rule`, `doc_anchor`, `doc_figure`, `doc_end`) that never writes past its capacity and sets `doc_overflow` when full, and a path builder for figures (`path_begin`, `path_move`, `path_line`, `path_layer` and so on).
 - Machines (the shell only): a `mach_` function for each call, such as `mach_start_program` and `mach_place`.
 - `memcpy`, `memset`, `memmove`, `memcmp`, which the compiler may call on its own.
 
@@ -67,4 +67,4 @@ int main(void)
 }
 ```
 
-Next: [Rust programs](terse:ae141cf63b6a9d1d0954bbaf246204e4ac3a380d009e5eb5798bdd0163a086dc).
+Next: [Rust programs](terse:bdb9c7bc62d360ed4ea572b769b0cb6a67e28593edd845b98f72602efa5aa736).

@@ -1,6 +1,6 @@
 # The page (device 7)
 
-The page shows typeset prose in a rectangle of the screen: proportional fonts, shaped, bidirectional and wrapped, with figures and tables between the paragraphs. The program hands the device a document, a binary list of styled text much like a display list; the host lays it out with its fonts and draws the part in view. The device parses no markup. It is slot 7, version 0: an image gets it by listing it in its header (`terse pack --device 7:0`). Without it, and for the unknown functions `706h`..`7FFh`, a call returns `FFFF_FFFFh`. The exact rules are in spec/page.md.
+The page shows typeset prose in a rectangle of the screen: proportional fonts, shaped, bidirectional and wrapped, with figures and tables between the paragraphs. The program hands the device a document, a binary list of styled text much like a display list; the host lays it out with its fonts and draws the part in view. The device parses no markup. It is slot 7, version 0: an image gets it by listing it in its header (`terse pack --device 7:0`). Without it, and for the unknown functions `707h`..`7FFh`, a call returns `FFFF_FFFFh`. The exact rules are in spec/page.md.
 
 Layout differs between hosts, because fonts differ. A program learns only two facts about it, both as input events: the document's height and, when it asks, where an anchor is. So a recorded run replays exactly whatever the fonts.
 
@@ -18,6 +18,7 @@ The page is drawn inside its rectangle (x, y, width, height in screen units) and
 | `703h` | `scroll` | `a0` = y | 0 |
 | `704h` | `background` | `a0` = colour | 0 |
 | `705h` | `locate` | `a0` = anchor id | 0 done, 1 rejected |
+| `706h` | `layer` | `a0` layer, `a1` flags, `a2` x, `a3` y, `a4` scale | 0 done, 1 rejected |
 
 - `submit` copies `a1` bytes from `a0`, replacing the document, sets the scroll value to 0 and returns 0. A length of 0 or above 65,536 returns 1 (checked first); bytes not wholly in ROM or wholly in RAM return `FFFF_FFFEh`; either changes nothing. The same bytes again are still a new document.
 - `clear` removes the document (the background stays); the scroll value is kept.
@@ -25,8 +26,9 @@ The page is drawn inside its rectangle (x, y, width, height in screen units) and
 - `scroll` stores `a0` as given (32 bits). When presenting, the host reads it as signed and clamps it to 0 .. max(0, height - rectangle height); the stored value does not change.
 - `background` sets the colour behind the text: `a0` = r, g << 8, b << 16 and a << 24 ORed together, a the opacity (255 opaque; 0 lets the terminal's cell backgrounds show).
 - `locate` asks where anchor `a0` is laid out in the current document; the answer comes later as two events. It returns 1, asking nothing, if `a0` is 0 or above 65,535, if there is no document, or if the program already made 8 locates this frame.
+- `layer` sets the state of layer `a0` (0..63) of the figures' layers: flags bit 0 shown, bit 1 mirrored; the offset x = `a2`, y = `a3` in sixteenths of a unit (signed, clamped to -32,768..32,767); the scale `a4` in 256ths, clamped to 1..256. It returns 1, changing nothing, for a layer above 63. No new layout and no event: it is a deferred call of 4 units. See [figures on the page](terse:0901b3be5c371baaa1c18f11d4de725247283d94a8ed4f1b9474c8cc0cbfdbe5).
 
-After reset: no document, rectangle (0, 0, 0, 0), scroll value 0, background `FF00_0000h` (opaque black).
+After reset: no document, rectangle (0, 0, 0, 0), scroll value 0, background `FF00_0000h` (opaque black), every layer shown at (0, 0), full size, not mirrored. `submit` and `clear` keep the layers' state.
 
 ## The document
 
@@ -42,7 +44,7 @@ A document is 1 to 65,536 bytes of commands, each an opcode byte and its operand
 | `05h` | Paragraph | align, indent, space, flags (1 byte each) | Starts a paragraph |
 | `06h` | Rule | none | A paragraph that is a horizontal line |
 | `07h` | Anchor | id (2 bytes) | Later text and figures belong to `id`; 0 is none |
-| `08h` | Figure | width (2), height (2), align (1), n (2), n bytes of path commands | A figure block, see [figures on the page](terse:e52720cb0004b8646460878d0fbd4a45b4c7292b15c73e4f1490b76c23dec7a5) |
+| `08h` | Figure | width (2), height (2), align (1), n (2), n bytes of path commands | A figure block, see [figures on the page](terse:0901b3be5c371baaa1c18f11d4de725247283d94a8ed4f1b9474c8cc0cbfdbe5) |
 | `09h` | Table | columns (1, 1..8), flags (bit 0 header), one align byte per column | Starts a table block |
 | `0Ah` | Cell | none | Starts the table's next cell |
 | `0Bh` | End table | none | Ends the table |

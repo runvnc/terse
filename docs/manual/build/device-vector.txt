@@ -77,7 +77,7 @@ Worked numbers: a rectangle over the whole screen counts 10240 x 7680 / 512 = 15
 In the clean style the host combines the displays in a fixed order, from the bottom:
 
 - 1. the terminal's cell backgrounds;
-- 2. [the page](terse:de1a5c4c631e150f29e91006ef5d6d4ee2b93c038ecdd62d0453ea9cb1450487): its background, then its text;
+- 2. [the page](terse:078acc2d4b31c3cba3d58062b379381cbf708ea99ac6c5f468aff278bf4dc535): its background, then its text;
 - 3. the vector displays: device 3's shapes, then device 9's;
 - 4. the terminal's characters and cursor.
 
@@ -105,7 +105,7 @@ Everything else is the host's choice: how the display looks, whether it is a rea
 | Any call, also a rejected one | 4 |
 | An accepted `submit` | 1 per 4 bytes of the list, rounded up |
 
-A rejected submit copies nothing and costs only the 4. Drawing, decoding and the ink cap are the host's work and are not charged. A full 16,384-byte list costs 4 + 4,096 units. See [charges](terse:700aa265f5d0ae8141b841e6eeecb0b6146ac6935da3121441ee039db69ecf7c).
+A rejected submit copies nothing and costs only the 4. Drawing, decoding and the ink cap are the host's work and are not charged. A full 16,384-byte list costs 4 + 4,096 units. See [charges](terse:ac10aae482c4ea948fe2bb12c874b4c2d9e5de9af3858088d51f763d82c86502).
 
 ## State
 
@@ -138,4 +138,4 @@ int main(void)
 }
 ```
 
-The list is 41 bytes, so each submit costs 4 + 11 units. The list stays on the screen until the next submit; a program whose picture does not change need not submit again. The next article, [the 3D vector display](terse:548c1529c2ab90f1a4eb805359b18debcdf379650a2be20225fb5bc84b8a58a2), shares this display's style and layers.
+The list is 41 bytes, so each submit costs 4 + 11 units. The list stays on the screen until the next submit; a program whose picture does not change need not submit again. The next article, [the 3D vector display](terse:d2a01bcc9bbbbd1ea120ccf09905604a46f83fc1575683b89d52851b238979f5), shares this display's style and layers.

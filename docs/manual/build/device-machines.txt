@@ -23,7 +23,7 @@ The shell starts machines under handles 1 to 8. Each is a complete, separate mac
 
 Each handle also has a run flag, a rectangle (x, y, width, height in the shell's screen units) and possibly an identity. The focus is a handle, or 0 for the shell. The system also has a view of the shell's 3D scene, set by `face` (see Screens and the view, below).
 
-A program's identity is (publisher's feed key, name), as in a program entry of a feed. Built-in programs have 32 zero bytes and their image title. A machine started with `start_program` keeps that identity for life; one started with `start` has none; a restored one has its snapshot's. Identity decides whose named records a machine reads ([named records](terse:c1747cb8a13bf9c5d05fe1d4cd2c66684d7f0248ddb6a534c04049ae9e0c6204)).
+A program's identity is (publisher's feed key, name), as in a program entry of a feed. Built-in programs have 32 zero bytes and their image title. A machine started with `start_program` keeps that identity for life; one started with `start` has none; a restored one has its snapshot's. Identity decides whose named records a machine reads ([named records](terse:218115b26388975cecd73f92491ec0b937a1e0679e84366e981ef1a4b2969b4f)).
 
 ## Calls
 
@@ -118,15 +118,15 @@ The `snapshot_info` record (122 bytes, `mach_snapshot_record`):
 | `0Fh` | Open requested | handle | 0 |
 | `10h` | Snapshot done | slot | 1 stored, 3 failed |
 
-`c` is 0. Machine changed is sent for each change the shell did not make by a call: loading to running, paused or failed; running to exited or faulted. If the focused machine exits, faults or fails, the focus becomes 0 (no home event). Open requested comes once per request. Snapshot done comes once per accepted `snapshot`, in call order; failed means the machine was stopped in the same frame or the host could not store it. See [events](terse:90c9d1da494e9438aeddf510a212a2f0cfd43daccb0b085d942e30639ef9d438).
+`c` is 0. Machine changed is sent for each change the shell did not make by a call: loading to running, paused or failed; running to exited or faulted. If the focused machine exits, faults or fails, the focus becomes 0 (no home event). Open requested comes once per request. Snapshot done comes once per accepted `snapshot`, in call order; failed means the machine was stopped in the same frame or the host could not store it. See [events](terse:dbc6abbfedb0790f69322a2b376174349ae1911ae326c23de1a7ee4fc1dba38b).
 
 ## Screens and input
 
-A machine's picture is its screen scaled into its rectangle. In the shell's 3D list a Screen shows a machine as a panel in space instead, and `face` flies a panel flat onto the glass. How pictures, panels and the view are drawn, how input is routed to them and the home key are in [screens, panels and input](terse:6c60c8fa7d1a7f8c2052d26843e70b5381dd5565e1b5d6c14033d6c1f6e552fa).
+A machine's picture is its screen scaled into its rectangle. In the shell's 3D list a Screen shows a machine as a panel in space instead, and `face` flies a panel flat onto the glass. How pictures, panels and the view are drawn, how input is routed to them and the home key are in [screens, panels and input](terse:701d7e0d07e224a2cd98ba157bf5b5917e00fec2204d5d2c699dd41a2e63b4a8).
 
 ## The system frame, snapshots and state
 
-The order in which a system runs its machines each frame, what a snapshot holds and how it is restored, what each machine's determinism rests on and what device 8's calls cost are in [the system frame, snapshots and state](terse:f514b5ad48ce285978fd6003d22ccb7e3fdfa6c6a08cf2a7214a11c8edab0f00).
+The order in which a system runs its machines each frame, what a snapshot holds and how it is restored, what each machine's determinism rests on and what device 8's calls cost are in [the system frame, snapshots and state](terse:1efc4db83893aff0fe2f9a99d0bdaff6b70eef6dd801263a1176f06790c13ea0).
 
 ## Example: a minimal shell
 

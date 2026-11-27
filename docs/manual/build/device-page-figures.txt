@@ -41,8 +41,9 @@ Each command is an opcode byte and its operands. Coordinates are signed 16-bit n
 | `05h` | Quadratic | x1, y1, x, y | Quadratic Bezier to (x, y), control point (x1, y1) |
 | `06h` | Cubic | x1, y1, x2, y2, x, y | Cubic Bezier to (x, y), control points (x1, y1), (x2, y2) |
 | `07h` | Close | none | Straight segment back to the subpath's start, ending the subpath; nothing if none is open |
+| `08h` | Layer | id (1 byte) | Ends the path; later paths are in layer id (below) |
 
-Operand sizes: Fill 4 bytes, Stroke 6, Move and Line 4, Quadratic 8, Cubic 12, Close 0. The commands end at the end of the n bytes, at an unknown opcode or at a command whose operands are cut off; the ones before are used.
+Operand sizes: Fill 4 bytes, Stroke 6, Move and Line 4, Quadratic 8, Cubic 12, Close 0, Layer 1. The commands end at the end of the n bytes, at an unknown opcode or at a command whose operands are cut off; the ones before are used.
 
 At the start: no fill; stroke in the document's text colour at the Figure command, opaque, 16 sixteenths (one unit) wide; current point (0, 0); no subpath open.
 
@@ -77,6 +78,27 @@ Worked example: a figure 100 x 50 units, so the area cap is 8 x 100 x 50 = 40,00
 
 So seven such paths fit this figure's area cap (35,168); an eighth would take the total to 40,192 and would not be drawn, nor anything after it. The length cap alone would allow 70.
 
+## Layers
+
+A program can show, hide, move, scale and mirror parts of a figure without submitting the document again: a painted scene with an actor in it, each frame of a walk a layer of its own, and the scenery in front of the actor in a later layer, hiding it by the order of the paths alone.
+
+- Groups. A Layer command (`08h`, id 0..63) ends the path; the paths after it, up to the next Layer command or the end, are a group of that layer. An id above 63 ends the path commands. The paths before the first Layer command are the figure's base, which belongs to no layer. Several groups may share a layer. Fill, stroke and current point carry on.
+- State. Each of the 64 layers is shown or hidden, has an offset (x, y) in sixteenths, a scale s of 1..256 and is mirrored or not; only `layer` sets it, and only reset clears it (shown, at (0, 0), 256, not mirrored: drawn where its paths are).
+- Drawing. Groups are drawn in their order, each over the ones before: the base as it is, a hidden layer's group not at all, a shown layer's group as its picture (what its paths draw, clipped to the figure's box) with each point (x, y) drawn at (x0 + s x / 256, y0 + s y / 256), or (x0 - s x / 256, ...) when mirrored, then clipped to the figure's box. A scale below 256 only makes a picture smaller. How smoothly is the host's.
+- Layers change neither the layout nor the figure's box: height, `locate` and presses are as without them.
+- In outlines (below) the same groups are drawn in the same order, shown and placed the same; nothing being filled, a layer in front hides nothing.
+
+| Limit | Value |
+|---|---|
+| Layers | 64 (ids 0..63) |
+| Layer commands in a document | 64, counted over all its figures; later ones end their figure's path commands |
+| Layered area | 614,400 square units (2 x 640 x 480) for a document |
+| Scale | 1..256 256ths, never larger than drawn |
+
+A figure with a Layer command is layered. Each of its groups, base included, has a box: the smallest box holding the boxes its drawn paths count for the area cap. The boxes' areas (width x height in sixteenths / 256, rounded up) of all groups of all layered figures add up to at most the layered area; the first path that would pass it is not drawn, nor any path after it in its figure. The three caps above count every path of every group, shown or hidden.
+
+What a host does: it draws each group's picture once, when it lays the document out, outside the frames; in a frame where a layer changed it draws the shown pictures again, placed, which is at most the layered area of drawing. A `layer` call costs 4 units whatever it changes, and the host draws the page once a frame however many calls came.
+
 ## Outlines
 
 When the vector display (device 3) is in the phosphor style or in fill mode 1, figures are drawn as outlines: nothing is filled, and a path that is filled but not stroked is stroked one unit wide in its fill colour. In the phosphor style they are light on the black screen like the rest of the page. An image without the vector display has the clean style and fill mode 0, so its figures are filled.
@@ -97,6 +119,14 @@ path_close();
 doc_figure(120, 80, DOC_CENTRE, path, path_length(path));
 ```
 
+`path_layer(id)` writes a Layer command; `page_layer(id, flags, x, y, scale)` is the call, with `PAGE_LAYER_SHOWN`, `PAGE_LAYER_MIRRORED` and `PAGE_SCALE_FULL` (256). A pose painted with its feet at (30, 168) units, shown with its feet at (fx, fy) sixteenths at scale s:
+
+```
+page_layer(3, PAGE_LAYER_SHOWN, fx - (30 * 16 * s >> 8), fy - (168 * 16 * s >> 8), s);
+```
+
+`programs/painted-test` builds a whole scene this way.
+
 ## Figures in articles
 
 The article format writes a figure as text: a fence whose opening line is three backquotes, `path`, the width W and the height H (1..1024 units each, 1 to 4 digits with no sign; a column of the recommended width, about 68 characters of body text, is 512 units), holding a path string up to a closing line of three backquotes. The path string is SVG path data:
@@ -113,7 +143,8 @@ The article format writes a figure as text: a fence whose opening line is three 
 | `Z` | 0 | Close the subpath |
 
 - Lowercase commands are relative to the current point. More numbers after a command's last one repeat it. The first command is `M` or `m`. There are no arcs.
-- `fill <colour>` and `stroke <colour> [<width>]` may stand wherever a command may and set how the following subpaths are drawn; until the first one, no fill and stroke `fg` 1 unit wide. A word ends the path so far. Colours: `#rgb`, `#rrggbb`, `#rrggbbaa` (aa the opacity), `none`, `fg` (the text colour). A width is 0..2047 units; 0 draws no outline.
+- `fill <colour>` and `stroke <colour> [<width>]` may stand wherever a command may and set how the following subpaths are drawn; until the first one, no fill and stroke `fg` 1 unit wide. A word ends the path so far.
+- `layer <n>` (1 or 2 digits, 0..63) puts the following paths in layer n and changes nothing else. In an article every layer is drawn, in order, where its paths are: the word only ends a path. It is there so that one figure text serves an article and a program (whose layers the page can move); readers older than the word find it malformed. Colours: `#rgb`, `#rrggbb`, `#rrggbbaa` (aa the opacity), `none`, `fg` (the text colour). A width is 0..2047 units; 0 draws no outline.
 - Numbers have an optional sign and decimal point, at most 32 characters, no exponent; separators are blanks, line breaks and commas, or nothing where unambiguous (`M10-5`, `L5 5L6 6`); a word starts the path string or follows a separator (`L5 5fill` is malformed). Every number is rounded to the nearest sixteenth (halves away from zero), and every point reached, control points included, must lie within plus or minus 2047 units as written, before rounding (a relative point: the current point plus the numbers as written); a width likewise lies within 0..2047 as written.
 - Anything else makes the figure malformed, and it is shown as the text of its fence.
 
@@ -121,6 +152,7 @@ The reader turns each figure into a Figure command this way:
 
 - Centred, W x H units, one screen unit each (its column, 512 screen units, has the recommended width, so figures are at their natural size); if W is over 512, scaled down to 512 x round(H x 512 / W), at least 1, with every coordinate and width scaled by 512 / W after rounding to sixteenths (halves away from zero); a width that comes to 0 becomes 1, and the initial 1-unit stroke is scaled too.
 - Coordinates become absolute sixteenths: `M` is Move, `L`, `H` and `V` Line, `Q` and `T` Quadratic, `C` and `S` Cubic, `Z` Close, with the reflected control points of `S` and `T` worked out. A Move is put before the first segment after a `Z` or a word unless that is an `M`.
+- `layer` becomes a Stroke command repeating the stroke in force (it ends the path), not a Layer command, so the page's layer limits never cut an article.
 - `fill` becomes Fill and `stroke` Stroke; colours become r, g, b, a, with `fg` the reader's body text colour (218, 218, 218) opaque and `none` alpha 0. A `stroke` without a width gets 1 unit. The document's text colour at the figure is the body colour, so the initial stroke is `fg`.
 - A figure that is malformed, has no closing fence line, or whose commands do not fit in the document (or in 65,535 bytes) is shown as the fence's text.
 

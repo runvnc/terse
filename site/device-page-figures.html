@@ -44,8 +44,9 @@
 <tr><td><code>05h</code></td><td>Quadratic</td><td>x1, y1, x, y</td><td>Quadratic Bezier to (x, y), control point (x1, y1)</td></tr>
 <tr><td><code>06h</code></td><td>Cubic</td><td>x1, y1, x2, y2, x, y</td><td>Cubic Bezier to (x, y), control points (x1, y1), (x2, y2)</td></tr>
 <tr><td><code>07h</code></td><td>Close</td><td>none</td><td>Straight segment back to the subpath&#39;s start, ending the subpath; nothing if none is open</td></tr>
+<tr><td><code>08h</code></td><td>Layer</td><td>id (1 byte)</td><td>Ends the path; later paths are in layer id (below)</td></tr>
 </tbody></table></div>
-<p>Operand sizes: Fill 4 bytes, Stroke 6, Move and Line 4, Quadratic 8, Cubic 12, Close 0. The commands end at the end of the n bytes, at an unknown opcode or at a command whose operands are cut off; the ones before are used.</p>
+<p>Operand sizes: Fill 4 bytes, Stroke 6, Move and Line 4, Quadratic 8, Cubic 12, Close 0, Layer 1. The commands end at the end of the n bytes, at an unknown opcode or at a command whose operands are cut off; the ones before are used.</p>
 <p>At the start: no fill; stroke in the document&#39;s text colour at the Figure command, opaque, 16 sixteenths (one unit) wide; current point (0, 0); no subpath open.</p>
 <h2 id="segments-subpaths-and-paths">Segments, subpaths and paths</h2>
 <ul>
@@ -77,6 +78,25 @@
 <li>Fill count 2 x 3,520 + 4 x 16 x 4 = 7,296; stroke count 7,040 + 4 x 32 x 4 = 7,552; together 14,848 / 16 = 928 of 65,536.</li>
 </ul>
 <p>So seven such paths fit this figure&#39;s area cap (35,168); an eighth would take the total to 40,192 and would not be drawn, nor anything after it. The length cap alone would allow 70.</p>
+<h2 id="layers">Layers</h2>
+<p>A program can show, hide, move, scale and mirror parts of a figure without submitting the document again: a painted scene with an actor in it, each frame of a walk a layer of its own, and the scenery in front of the actor in a later layer, hiding it by the order of the paths alone.</p>
+<ul>
+<li>Groups. A Layer command (<code>08h</code>, id 0..63) ends the path; the paths after it, up to the next Layer command or the end, are a group of that layer. An id above 63 ends the path commands. The paths before the first Layer command are the figure&#39;s base, which belongs to no layer. Several groups may share a layer. Fill, stroke and current point carry on.</li>
+<li>State. Each of the 64 layers is shown or hidden, has an offset (x, y) in sixteenths, a scale s of 1..256 and is mirrored or not; only <code>layer</code> sets it, and only reset clears it (shown, at (0, 0), 256, not mirrored: drawn where its paths are).</li>
+<li>Drawing. Groups are drawn in their order, each over the ones before: the base as it is, a hidden layer&#39;s group not at all, a shown layer&#39;s group as its picture (what its paths draw, clipped to the figure&#39;s box) with each point (x, y) drawn at (x0 + s x / 256, y0 + s y / 256), or (x0 - s x / 256, ...) when mirrored, then clipped to the figure&#39;s box. A scale below 256 only makes a picture smaller. How smoothly is the host&#39;s.</li>
+<li>Layers change neither the layout nor the figure&#39;s box: height, <code>locate</code> and presses are as without them.</li>
+<li>In outlines (below) the same groups are drawn in the same order, shown and placed the same; nothing being filled, a layer in front hides nothing.</li>
+</ul>
+<div class="table"><table>
+<thead><tr><th>Limit</th><th>Value</th></tr></thead>
+<tbody>
+<tr><td>Layers</td><td>64 (ids 0..63)</td></tr>
+<tr><td>Layer commands in a document</td><td>64, counted over all its figures; later ones end their figure&#39;s path commands</td></tr>
+<tr><td>Layered area</td><td>614,400 square units (2 x 640 x 480) for a document</td></tr>
+<tr><td>Scale</td><td>1..256 256ths, never larger than drawn</td></tr>
+</tbody></table></div>
+<p>A figure with a Layer command is layered. Each of its groups, base included, has a box: the smallest box holding the boxes its drawn paths count for the area cap. The boxes&#39; areas (width x height in sixteenths / 256, rounded up) of all groups of all layered figures add up to at most the layered area; the first path that would pass it is not drawn, nor any path after it in its figure. The three caps above count every path of every group, shown or hidden.</p>
+<p>What a host does: it draws each group&#39;s picture once, when it lays the document out, outside the frames; in a frame where a layer changed it draws the shown pictures again, placed, which is at most the layered area of drawing. A <code>layer</code> call costs 4 units whatever it changes, and the host draws the page once a frame however many calls came.</p>
 <h2 id="outlines">Outlines</h2>
 <p>When the vector display (device 3) is in the phosphor style or in fill mode 1, figures are drawn as outlines: nothing is filled, and a path that is filled but not stroked is stroked one unit wide in its fill colour. In the phosphor style they are light on the black screen like the rest of the page. An image without the vector display has the clean style and fill mode 0, so its figures are filled.</p>
 <h2 id="building-a-figure-in-c">Building a figure in C</h2>
@@ -90,6 +110,9 @@ path_line(<span class=n>960</span>, <span class=n>160</span>);
 path_line(<span class=n>1600</span>, <span class=n>1120</span>);
 path_close();
 doc_figure(<span class=n>120</span>, <span class=n>80</span>, DOC_CENTRE, path, path_length(path));</pre>
+<p><code>path_layer(id)</code> writes a Layer command; <code>page_layer(id, flags, x, y, scale)</code> is the call, with <code>PAGE_LAYER_SHOWN</code>, <code>PAGE_LAYER_MIRRORED</code> and <code>PAGE_SCALE_FULL</code> (256). A pose painted with its feet at (30, 168) units, shown with its feet at (fx, fy) sixteenths at scale s:</p>
+<pre>page_layer(3, PAGE_LAYER_SHOWN, fx - (30 * 16 * s &gt;&gt; 8), fy - (168 * 16 * s &gt;&gt; 8), s);</pre>
+<p><code>programs/painted-test</code> builds a whole scene this way.</p>
 <h2 id="figures-in-articles">Figures in articles</h2>
 <p>The article format writes a figure as text: a fence whose opening line is three backquotes, <code>path</code>, the width W and the height H (1..1024 units each, 1 to 4 digits with no sign; a column of the recommended width, about 68 characters of body text, is 512 units), holding a path string up to a closing line of three backquotes. The path string is SVG path data:</p>
 <div class="table"><table>
@@ -106,7 +129,8 @@ doc_figure(<span class=n>120</span>, <span class=n>80</span>, DOC_CENTRE, path, 
 </tbody></table></div>
 <ul>
 <li>Lowercase commands are relative to the current point. More numbers after a command&#39;s last one repeat it. The first command is <code>M</code> or <code>m</code>. There are no arcs.</li>
-<li><code>fill &lt;colour&gt;</code> and <code>stroke &lt;colour&gt; [&lt;width&gt;]</code> may stand wherever a command may and set how the following subpaths are drawn; until the first one, no fill and stroke <code>fg</code> 1 unit wide. A word ends the path so far. Colours: <code>#rgb</code>, <code>#rrggbb</code>, <code>#rrggbbaa</code> (aa the opacity), <code>none</code>, <code>fg</code> (the text colour). A width is 0..2047 units; 0 draws no outline.</li>
+<li><code>fill &lt;colour&gt;</code> and <code>stroke &lt;colour&gt; [&lt;width&gt;]</code> may stand wherever a command may and set how the following subpaths are drawn; until the first one, no fill and stroke <code>fg</code> 1 unit wide. A word ends the path so far.</li>
+<li><code>layer &lt;n&gt;</code> (1 or 2 digits, 0..63) puts the following paths in layer n and changes nothing else. In an article every layer is drawn, in order, where its paths are: the word only ends a path. It is there so that one figure text serves an article and a program (whose layers the page can move); readers older than the word find it malformed. Colours: <code>#rgb</code>, <code>#rrggbb</code>, <code>#rrggbbaa</code> (aa the opacity), <code>none</code>, <code>fg</code> (the text colour). A width is 0..2047 units; 0 draws no outline.</li>
 <li>Numbers have an optional sign and decimal point, at most 32 characters, no exponent; separators are blanks, line breaks and commas, or nothing where unambiguous (<code>M10-5</code>, <code>L5 5L6 6</code>); a word starts the path string or follows a separator (<code>L5 5fill</code> is malformed). Every number is rounded to the nearest sixteenth (halves away from zero), and every point reached, control points included, must lie within plus or minus 2047 units as written, before rounding (a relative point: the current point plus the numbers as written); a width likewise lies within 0..2047 as written.</li>
 <li>Anything else makes the figure malformed, and it is shown as the text of its fence.</li>
 </ul>
@@ -114,6 +138,7 @@ doc_figure(<span class=n>120</span>, <span class=n>80</span>, DOC_CENTRE, path, 
 <ul>
 <li>Centred, W x H units, one screen unit each (its column, 512 screen units, has the recommended width, so figures are at their natural size); if W is over 512, scaled down to 512 x round(H x 512 / W), at least 1, with every coordinate and width scaled by 512 / W after rounding to sixteenths (halves away from zero); a width that comes to 0 becomes 1, and the initial 1-unit stroke is scaled too.</li>
 <li>Coordinates become absolute sixteenths: <code>M</code> is Move, <code>L</code>, <code>H</code> and <code>V</code> Line, <code>Q</code> and <code>T</code> Quadratic, <code>C</code> and <code>S</code> Cubic, <code>Z</code> Close, with the reflected control points of <code>S</code> and <code>T</code> worked out. A Move is put before the first segment after a <code>Z</code> or a word unless that is an <code>M</code>.</li>
+<li><code>layer</code> becomes a Stroke command repeating the stroke in force (it ends the path), not a Layer command, so the page&#39;s layer limits never cut an article.</li>
 <li><code>fill</code> becomes Fill and <code>stroke</code> Stroke; colours become r, g, b, a, with <code>fg</code> the reader&#39;s body text colour (218, 218, 218) opaque and <code>none</code> alpha 0. A <code>stroke</code> without a width gets 1 unit. The document&#39;s text colour at the figure is the body colour, so the initial stroke is <code>fg</code>.</li>
 <li>A figure that is malformed, has no closing fence line, or whose commands do not fit in the document (or in 65,535 bytes) is shown as the fence&#39;s text.</li>
 </ul>

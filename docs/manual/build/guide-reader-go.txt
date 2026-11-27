@@ -171,11 +171,11 @@ be the lines written.
 
 Everything else in the article format is shown as plain text: a list item, a table row, a preformatted line or a fence becomes part of a paragraph as written, and links and code spans appear as the text they are made of.
 
-For an article of headings and paragraphs it is correct: the test `crates/terse-cli/tests/reader_examples.rs` runs it on every article of `vectors/articles` made only of those, and compares with what the reference reader finds in each. The rest of the format is in [Writing an article](terse:50a1ba3a4f8c7ad968942e25597419478e8fd33e6fe39a1696fbee4fcf37fe8c). tersereader, the complete Go reader in `native/reader-go`, does all of it: `internal/article/parse.go` and `inline.go` read every construct, and `internal/render/render.go` lays them out for a terminal.
+For an article of headings and paragraphs it is correct: the test `crates/terse-cli/tests/reader_examples.rs` runs it on every article of `vectors/articles` made only of those, and compares with what the reference reader finds in each. The rest of the format is in [Writing an article](terse:87bd751d6273567612397413ee860c8ce618e7b6e4b3d8d75973761d0eddfacc). tersereader, the complete Go reader in `native/reader-go`, does all of it: `internal/article/parse.go` and `inline.go` read every construct, and `internal/render/render.go` lays them out for a terminal.
 
 ## What you have now
 
 A Go program of 94 lines that shows the headings and paragraphs of any Tersenet article file.
 
-- Next: [Make a reader in Go, step 2: fetch an article](terse:8f53c9b4997b672ca21ef8c89afe6ca7e2e3c42500eb04169aa9576367683f1b).
-- The same step in Rust: [Make a reader in Rust, step 1: show an article](terse:ad5aad33d75d2f378f2896d788416022e08419395b2ed05defebcd439e3b0e27).
+- Next: [Make a reader in Go, step 2: fetch an article](terse:ca69fb221cc99c9ffb66c9d8fea656e905b059e2644238c716b96b48b07ee47a).
+- The same step in Rust: [Make a reader in Rust, step 1: show an article](terse:2ea3b9b6ccafb8ef3ffd5b43b87d4cd55303d3703991f1ef027d47e1dfcc755b).

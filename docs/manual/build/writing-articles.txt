@@ -111,7 +111,7 @@ Articles do not link to the web. A web address such as https://example.org is or
 
 Written for real, a bare link to an article (the manual's page on figures), a feed, a feed with a hint, the built-in sketch program, and a link with text to another part of this manual:
 
-terse:e52720cb0004b8646460878d0fbd4a45b4c7292b15c73e4f1490b76c23dec7a5
+terse:0901b3be5c371baaa1c18f11d4de725247283d94a8ed4f1b9474c8cc0cbfdbe5
 
 terse:feed/0000000000000000000000000000000000000000000000000000000000000000
 
@@ -119,7 +119,7 @@ terse:feed/0000000000000000000000000000000000000000000000000000000000000000@rela
 
 terse:program/0000000000000000000000000000000000000000000000000000000000000000/sketch
 
-Read [the page device](terse:de1a5c4c631e150f29e91006ef5d6d4ee2b93c038ecdd62d0453ea9cb1450487) next.
+Read [the page device](terse:078acc2d4b31c3cba3d58062b379381cbf708ea99ac6c5f468aff278bf4dc535) next.
 
 The source of the last one is:
 
@@ -174,11 +174,12 @@ The panel, a green triangle with a light outline, and a yellow curve. In brief:
 - Commands `M L H V C S Q T Z`, lowercase relative, numbers as in SVG; the first is `M` or `m`; no arcs.
 - `fill <colour>` and `stroke <colour> [<width>]` set how what follows is drawn; at first no fill and stroke `fg` 1 unit wide. A `stroke` without a width is 1 unit wide again, whatever came before.
 - Colours `#rgb`, `#rrggbb`, `#rrggbbaa`, `none`, `fg` (the text colour).
+- `layer <n>` (0 to 63) puts what follows in layer n. In an article it changes nothing that is drawn (every layer is drawn, in order); it lets a program reuse the same figure and move its layers on the page. Readers older than the word show such a figure as its text.
 - Coordinates in units from the top left, y down, every point within 2047 either way as written, before rounding to sixteenths: `L2047.01 0` is out of range.
 - A command letter may follow a number directly (`L5 5L6 6`), but `fill` and `stroke` must start the path or follow a blank or comma: `L5 5fill #f00` is malformed.
 - A figure has no text: explain it in the prose or a table after it.
 
-Paths are filled with the non-zero rule, then stroked with round joins and ends, later ones over earlier ones. Anything malformed, or a missing closing line, shows the figure as its source text, which is why a figure still reads as text where it cannot be drawn. This reader's column is 512 units, so a unit is one screen unit; it shrinks a figure wider than the column to fit, uniformly. A reader with a narrower column scales figures down in proportion to it, and no reader draws them larger than that unless it enlarges its text the same way. The full rules are in ARTICLE.md; how the reader hands figures to the page device is in [figures on the page](terse:e52720cb0004b8646460878d0fbd4a45b4c7292b15c73e4f1490b76c23dec7a5).
+Paths are filled with the non-zero rule, then stroked with round joins and ends, later ones over earlier ones. Anything malformed, or a missing closing line, shows the figure as its source text, which is why a figure still reads as text where it cannot be drawn. This reader's column is 512 units, so a unit is one screen unit; it shrinks a figure wider than the column to fit, uniformly. A reader with a narrower column scales figures down in proportion to it, and no reader draws them larger than that unless it enlarges its text the same way. The full rules are in ARTICLE.md; how the reader hands figures to the page device is in [figures on the page](terse:0901b3be5c371baaa1c18f11d4de725247283d94a8ed4f1b9474c8cc0cbfdbe5).
 
 ## Compared with Markdown
 
@@ -208,6 +209,6 @@ Each article gets a page, drawn like this manual's web pages; an index lists the
 
 ## How the reader shows it
 
-In a column 512 units wide: paragraphs in 15-unit sans (about 68 characters a line), headings 21 bold, subheadings 17 bold, list items indented 10 behind a bullet, preformatted lines and fences 13-unit monospace, figures centred. The first 512 links get the link colour; Tab moves between them and Enter follows one. The reader builds a page document from the article; how such a document is laid out is in [the page device](terse:de1a5c4c631e150f29e91006ef5d6d4ee2b93c038ecdd62d0453ea9cb1450487).
+In a column 512 units wide: paragraphs in 15-unit sans (about 68 characters a line), headings 21 bold, subheadings 17 bold, list items indented 10 behind a bullet, preformatted lines and fences 13-unit monospace, figures centred. The first 512 links get the link colour; Tab moves between them and Enter follows one. The reader builds a page document from the article; how such a document is laid out is in [the page device](terse:078acc2d4b31c3cba3d58062b379381cbf708ea99ac6c5f468aff278bf4dc535).
 
 Other readers may look different: ARTICLE.md fixes what each construct means, not fonts, sizes or spacing, and a reader may show tables as paragraphs and figures as their text. Write so the article reads well either way.

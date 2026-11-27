@@ -6,7 +6,7 @@ Class sets the base charge: 4 for a deferred call (its result and charge
 follow from its arguments), 64 for an answered one (they depend on the
 device's state). System and Machines calls cost 4.
 
-[The system device](terse:65aa289e4c4fe3a2fffe74d82470b46ea37d343e88af96407cb5d0ae48314723), slot 1, always present:
+[The system device](terse:03dabf7773618aa5942ba03edef6fb8f823a786c8384fc101a4468b46278c2f2), slot 1, always present:
 
 | `a7` | Call | Arguments | Result |
 |---|---|---|---|
@@ -22,7 +22,7 @@ device's state). System and Machines calls cost 4.
 | `109h` | `device` | `a0` = device slot | its version, or `FFFF_FFFFh` if absent |
 | `10Ah` | `copy` | `a0` = text (read), `a1` = length, at most 65,536 | 0 (the host takes it only for the user's copy key, Enter or press) |
 
-[The terminal](terse:efa4fedc95f0b89f2003f8056d57ea8339ecf479eec1d9af97234ae8e6f6bfc7), slot 2:
+[The terminal](terse:80a949dab16ddf5f2251c453d13b7f0822e66b2f59a569211fabd1c3d350922e), slot 2:
 
 | `a7` | Call | Arguments | Result | Class |
 |---|---|---|---|---|
@@ -37,7 +37,7 @@ device's state). System and Machines calls cost 4.
 | `208h` | `palette_set` | `a0` = first entry, `a1` = buffer (read), `a2` = count | the count | deferred |
 | `209h` | `size` | none | `a0` = 80 columns, `a1` = 30 rows | deferred |
 
-[The 2D vector display](terse:8e70d93127c04072ee7ef89862fedd55d8ac64a5d7aa244cefeaa6accb3d38bc), slot 3:
+[The 2D vector display](terse:205489ab30513e94c4d2d2d464a79878469dfc0c50290b9ce0ab8c4711e5d58f), slot 3:
 
 | `a7` | Call | Arguments | Result | Class |
 |---|---|---|---|---|
@@ -47,13 +47,13 @@ device's state). System and Machines calls cost 4.
 | `303h` | `persistence` | `a0` = persistence | 0 done, 1 rejected | deferred |
 | `304h` | `fill` | `a0` = fill mode | 0 done, 1 rejected | deferred |
 
-The content device, slot 4 (see [blobs](terse:b1f7b75b4284fd9b417fdf741347ca06ef3d17d2cc1dff3002026a6bcbdcbcb0), [feeds](terse:593d468f17cde335492c6b9ecd45150b72417c385635494f4fc43eac2108dbd2) and [named records](terse:c1747cb8a13bf9c5d05fe1d4cd2c66684d7f0248ddb6a534c04049ae9e0c6204)):
+The content device, slot 4 (see [blobs](terse:3a5bb66b2924e9b6a58914fdf33336311d1624b42c07255eea936185dd2ba00b), [feeds](terse:7aeb159faac8671410f1c6d2ae3fa171af84804b7d50f633cad4323e5b4c078f) and [named records](terse:218115b26388975cecd73f92491ec0b937a1e0679e84366e981ef1a4b2969b4f)):
 
 | `a7` | Call | Arguments | Result | Class |
 |---|---|---|---|---|
 | `400h` | `submit` | `a0` = address of a request block | a handle 1 to 8, or 0 if rejected | answered |
 
-[The page](terse:de1a5c4c631e150f29e91006ef5d6d4ee2b93c038ecdd62d0453ea9cb1450487), slot 7:
+[The page](terse:078acc2d4b31c3cba3d58062b379381cbf708ea99ac6c5f468aff278bf4dc535), slot 7:
 
 | `a7` | Call | Arguments | Result | Class |
 |---|---|---|---|---|
@@ -63,8 +63,9 @@ The content device, slot 4 (see [blobs](terse:b1f7b75b4284fd9b417fdf741347ca06ef
 | `703h` | `scroll` | `a0` = y | 0 | deferred |
 | `704h` | `background` | `a0` = colour | 0 | deferred |
 | `705h` | `locate` | `a0` = anchor id | 0 done, 1 rejected | answered |
+| `706h` | `layer` | `a0` = layer, `a1` = flags, `a2` = x, `a3` = y, `a4` = scale | 0 done, 1 rejected | deferred |
 
-[Machines](terse:9f39c664b3f87c0b125b2be286072ffde5512d71cc34059f99b2e0b0684dcc7a), slot 8, the shell only (buffer sizes in bytes):
+[Machines](terse:7f01829acbd12740ab7a064d5fb9e83f19238a798c0cca751906cf3a86a4b86e), slot 8, the shell only (buffer sizes in bytes):
 
 | `a7` | Call | Arguments | Result |
 |---|---|---|---|
@@ -87,7 +88,7 @@ The content device, slot 4 (see [blobs](terse:b1f7b75b4284fd9b417fdf741347ca06ef
 | `810h` | `unface` | `a0` = frames | 1, or 0 if refused |
 | `811h` | `experimental` | `a0` = handle, `a1` = index, `a2` = buffer (32, written) | 2 granted, 1 not, 0 none |
 
-[The 3D vector display](terse:548c1529c2ab90f1a4eb805359b18debcdf379650a2be20225fb5bc84b8a58a2), slot 9:
+[The 3D vector display](terse:d2a01bcc9bbbbd1ea120ccf09905604a46f83fc1575683b89d52851b238979f5), slot 9:
 
 | `a7` | Call | Arguments | Result | Class |
 |---|---|---|---|---|

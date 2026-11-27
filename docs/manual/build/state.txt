@@ -76,7 +76,7 @@ Machines (device 8): absent (0 bytes) if the image does not list device 8. Other
 
 3D display (device 9): absent unless the machine has device 9; then m (u32, 0-16,384) and the list.
 
-Sound (device 6): absent unless the machine has device 6; then the 16 voices of 38 bytes (source, wavetable, sample slot, phase, increment, volume, pan, attack, decay, sustain, release, stage, level, modulator, depth, feedback, ring, mix, noise register, ended, last two outputs), the 32 wavetables of 64 bytes, and the 4 sample slots, each its length (u32), its loop start (u32) and its bytes: 2,688 bytes plus the samples. The layout is in STATE.md section 1.12 and the voice in [the sound device](terse:635a665e47b54bf2ae8fbba8ce658a99fda2ca761c9d28ef4aa4352479a6ac8c).
+Sound (device 6): absent unless the machine has device 6; then the 16 voices of 38 bytes (source, wavetable, sample slot, phase, increment, volume, pan, attack, decay, sustain, release, stage, level, modulator, depth, feedback, ring, mix, noise register, ended, last two outputs), the 32 wavetables of 64 bytes, and the 4 sample slots, each its length (u32), its loop start (u32) and its bytes: 2,688 bytes plus the samples. The layout is in STATE.md section 1.12 and the voice in [the sound device](terse:9f21629695f50f8a536ae09aa1d23dcb4d01c1a6ab8dc6edb56353464f63610c).
 
 Argument: 32 bytes, the blob ID the shell gave the machine, only if it gave one; else nothing. There is no flag: a reader finds the argument exactly when 32 bytes remain after the sound section, none when 0 remain, and refuses any other remainder.
 
@@ -136,7 +136,7 @@ The snapshot file:
 
 A writer stores exactly the pages that are not all zero; a reader accepts any page stored. Bits past the last page must be clear. A reader also refuses N below 200 or above 1,160,947 (the longest serialization; 1,423,155 with experimental sections), and L that is 0, not a multiple of 8,192, above 786,432 (96 pages) or more than N - 200. Bytes after the hash, or a hash that does not match, are refused.
 
-`terse run <image> --save-state <file>` writes the file after the last frame; `--load-state <file>` starts from one instead of reset (the image is the one given, else the one the snapshot names). `--frames 0 --hash` then prints the saved hash, and a continued run has the hashes of the uninterrupted one. Both are for a single machine. Shells take snapshots of their machines with [the Machines device](terse:9f39c664b3f87c0b125b2be286072ffde5512d71cc34059f99b2e0b0684dcc7a).
+`terse run <image> --save-state <file>` writes the file after the last frame; `--load-state <file>` starts from one instead of reset (the image is the one given, else the one the snapshot names). `--frames 0 --hash` then prints the saved hash, and a continued run has the hashes of the uninterrupted one. Both are for a single machine. Shells take snapshots of their machines with [the Machines device](terse:7f01829acbd12740ab7a064d5fb9e83f19238a798c0cca751906cf3a86a4b86e).
 
 ## The conformance image
 
@@ -152,4 +152,4 @@ Run it headless for 200 frames with an empty store and no subscriptions, and com
 
 With `--dump --dump-vectors` instead of `--hash-every 10` it prints the final screen (compare with `expected-screen.txt`): one PASS or FAIL line per section it can check itself, and the display list. The hashes are the authoritative check; they also cover what the program cannot see, such as the palette, the list, every register and every unit of budget. Esc exits with the number of failed sections.
 
-See [the machine](terse:5b5efc30244a8dfbb355db052e5c84b8fa812c81c04ec5847881fc74f72b3849) for frames and the budget, and [charges](terse:700aa265f5d0ae8141b841e6eeecb0b6146ac6935da3121441ee039db69ecf7c).
+See [the machine](terse:a278178e49f02a248e2d1e8afd093b2f7d99e32e29b8a702513decd183f96036) for frames and the budget, and [charges](terse:ac10aae482c4ea948fe2bb12c874b4c2d9e5de9af3858088d51f763d82c86502).
