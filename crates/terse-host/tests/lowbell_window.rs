@@ -38,6 +38,8 @@ fn drive(dir: &Path, script: &str, renderer: &str, size: &str) -> Output {
         // program draws: the look is kept whole, so that `expect idle`
         // sees only the program's picture.
         .arg("--no-shed")
+        // gpu runs on llvmpipe here: the host's slow-frame rule is about the host, the program's cost is still checked by expect budget.
+        .args(if renderer == "gpu" { &["--perf-rule", "off"][..] } else { &[] })
         .env("XDG_CACHE_HOME", dir.join("cache"))
         .env("XDG_CONFIG_HOME", dir.join("xdg-config"))
         .env("XDG_DATA_HOME", dir.join("xdg-data"))

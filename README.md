@@ -32,7 +32,7 @@ It picks the download for your system and processor, checks it against the
 release's `SHA256SUMS.txt`, copies `terse-host`, `terse` and `terse-relay`, and
 prints the `PATH` line for bash, zsh or fish if `~/.local/bin` is not on your
 `PATH` (it edits no shell profile). `TERSE_PREFIX=<dir>` installs into
-`<dir>/bin`, `TERSE_VERSION=0.1.0` a given release; `sh -s uninstall` removes
+`<dir>/bin`, `TERSE_VERSION=0.9.0` a given release; `sh -s uninstall` removes
 the programs again. Its source is
 [`docs/manual/site-files/install.sh`](docs/manual/site-files/install.sh), copied
 to the website by `terse manual site`. Until a release is published it says

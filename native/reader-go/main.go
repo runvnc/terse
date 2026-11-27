@@ -98,7 +98,7 @@ type config struct {
 // The reader's version, and its build identifier: "s2:" and the first 8
 // bytes of the SHA-256 hash of its own executable, in hex ("unknown" if it
 // cannot be read). Self-reported, for accountability, not security.
-const programVersion = "0.1.0"
+const programVersion = "0.9.0"
 
 func buildID() string {
 	exe, err := os.Executable()

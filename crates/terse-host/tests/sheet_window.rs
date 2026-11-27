@@ -50,6 +50,8 @@ fn drive(dir: &Path, script: &str, renderer: &str, size: &str) -> Output {
         .arg("--drive")
         .arg(&s)
         .args(["--renderer", renderer, "--size", size, "--consent", "deny"])
+        // gpu runs on llvmpipe here: the host's slow-frame rule is about the host; the software passes keep it on.
+        .args(if renderer == "gpu" { &["--perf-rule", "off", "--no-shed"][..] } else { &[] })
         .env("XDG_CACHE_HOME", dir.join("cache"))
         .env("XDG_CONFIG_HOME", dir.join("xdg-config"))
         .env("XDG_DATA_HOME", dir.join("xdg-data"))
