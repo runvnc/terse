@@ -45,6 +45,10 @@
 //!   and connections made in the process ([`Relay::connect`]) are not
 //!   limited.
 //! - **Write list** ([`writers`]): entries only of the listed feeds.
+//! - **Deny list** ([`deny`]): the operator's own refusals of feeds, blobs
+//!   and addresses (NETWORK 5.3, "Its own policy"); what a denied feed or
+//!   blob left in the store is removed in batches ([`Relay::purge`]).
+//!   Denials are this relay's only: peers do not pass them on.
 //! - **Subscriptions per connection** (`subscriptions_per_connection`): a
 //!   limited connection's subscribe beyond that many feeds is refused.
 //!
@@ -58,6 +62,8 @@
 //! asked of the peers are at most [`PULLS_PER_CONNECTION`] per connection
 //! and [`MAX_PULLS`] in all. [`Relay::bounds`] says where each stands.
 
+pub mod admin;
+pub mod deny;
 pub mod holdings;
 pub mod limits;
 pub mod writers;
@@ -127,8 +133,22 @@ pub const PULLS_PER_CONNECTION: usize = 16;
 pub const MAX_PULLS: usize = 1024;
 /// How often the maintenance thread runs.
 const TICK: Duration = Duration::from_millis(100);
-/// How often the write list's file is checked for changes.
+/// How often the write list's and the deny list's files are checked for
+/// changes.
 const WRITERS_CHECK: Duration = Duration::from_secs(2);
+/// Most entries or blobs a denial removes in one hold of the lock.
+pub const PURGE_BATCH: usize = 64;
+/// What one connection may hold at most, for the worst case of memory
+/// (`--memory`): a message being received (up to 2 MiB, the largest put
+/// with room to refuse a larger one), its queue of entries to send and
+/// its thread.
+pub const CONNECTION_MEMORY: u64 = 3 * MIB;
+/// What the relay needs besides its connections and its index: the
+/// program, the rate table, buffers.
+pub const BASE_MEMORY: u64 = 64 * MIB;
+/// What the index ([`holdings`], the profiles, the arrival log) takes per
+/// entry held, about.
+pub const ENTRY_MEMORY: u64 = 200;
 
 /// What a relay limits (module documentation; NETWORK 5.3). Every limit
 /// is off in [`Policy::unlimited`]; [`Policy::public`] has the defaults
@@ -163,6 +183,8 @@ pub struct Policy {
     pub table_size: usize,
     /// The write list's file.
     pub writers: Option<PathBuf>,
+    /// The deny list's file ([`deny`]).
+    pub deny: Option<PathBuf>,
     /// How long an address counts as a writer's after a listed feed
     /// published from it.
     pub writer_memory: Duration,
@@ -198,6 +220,7 @@ impl Policy {
             subscriptions_per_connection: None,
             table_size: 8192,
             writers: None,
+            deny: None,
             writer_memory: Duration::from_secs(24 * 3600),
             trust_proxy: Vec::new(),
             ping_every: Some(Duration::from_secs(30)),
@@ -208,7 +231,8 @@ impl Policy {
 
     /// The defaults proposed for a public relay (README "Running a public
     /// relay"): 16 MiB per feed, blobs no entry names kept an hour, rates
-    /// per address.
+    /// per address, and at most 150 connections (about 514 MiB at worst,
+    /// [`Relay::worst_memory`]: room on a 1 GB server).
     pub fn public() -> Self {
         use limits::{Rate, Rates};
         let minute = Duration::from_secs(60);
@@ -224,7 +248,7 @@ impl Policy {
             }),
             new_feeds_total: Some(Rate::new(60.0, hour)),
             connections_per_address: Some(32),
-            max_connections: Some(1000),
+            max_connections: Some(PUBLIC_MAX_CONNECTIONS),
             subscriptions_per_connection: Some(SUBSCRIPTIONS_PER_CONNECTION),
             status_every: Some(Duration::from_secs(600)),
             ..Policy::unlimited(DEFAULT_FEED_CAP)
@@ -232,9 +256,19 @@ impl Policy {
     }
 
     fn indexed(&self) -> bool {
-        self.feed_bytes.is_some() || self.unreferenced_ttl.is_some()
+        self.feed_bytes.is_some() || self.unreferenced_ttl.is_some() || self.deny.is_some()
+    }
+
+    /// The most connections that keep the worst case of memory within
+    /// `memory` (`--memory`), besides the index of `entries` entries.
+    pub fn connections_for_memory(memory: u64, entries: u64) -> usize {
+        (memory.saturating_sub(BASE_MEMORY + entries * ENTRY_MEMORY) / CONNECTION_MEMORY) as usize
     }
 }
+
+/// `--public`'s connections in all: 150 × [`CONNECTION_MEMORY`] and
+/// [`BASE_MEMORY`] is about 514 MiB.
+pub const PUBLIC_MAX_CONNECTIONS: usize = 150;
 
 /// Why something was refused, counted for the status line.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -249,9 +283,15 @@ pub enum Reason {
     WaitingRoom,
     Connections,
     Subscriptions,
+    /// The deny list: an entry of a denied feed, or naming a denied blob.
+    DeniedFeed,
+    /// A put of a denied blob.
+    DeniedBlob,
+    /// A connection from a denied address.
+    DeniedAddress,
 }
 
-const REASONS: [(Reason, &str); 10] = [
+const REASONS: [(Reason, &str); 13] = [
     (Reason::FeedFull, "feed-full"),
     (Reason::RelayFull, "relay-full"),
     (Reason::NotWriter, "not-writer"),
@@ -262,7 +302,17 @@ const REASONS: [(Reason, &str); 10] = [
     (Reason::WaitingRoom, "waiting-room"),
     (Reason::Connections, "connections"),
     (Reason::Subscriptions, "subscriptions"),
+    (Reason::DeniedFeed, "denied-feed"),
+    (Reason::DeniedBlob, "denied-blob"),
+    (Reason::DeniedAddress, "denied-address"),
 ];
+
+/// What denials left to remove from the store ([`Relay::purge`]).
+#[derive(Default)]
+struct Purge {
+    feeds: VecDeque<FeedKey>,
+    blobs: VecDeque<BlobId>,
+}
 
 struct Conn {
     queue: SyncSender<Vec<u8>>,
@@ -271,6 +321,9 @@ struct Conn {
     /// Set when the connection is to be closed (its queue overflowed).
     dropped: Arc<AtomicBool>,
     peer: Arc<AtomicBool>,
+    /// The client's address (for the deny list); `None` in the process
+    /// and for peer links this relay opened.
+    addr: Option<IpAddr>,
     /// For a peer: the last `req` this relay used on it, the gets it sent
     /// (by `req`, the pull they serve) and the feeds it subscribed to.
     next_req: u32,
@@ -364,6 +417,11 @@ pub struct Relay {
     rates: Mutex<limits::RateTable>,
     new_feeds_total: Mutex<Option<limits::Bucket>>,
     writers: Option<Mutex<writers::Writers>>,
+    deny: Option<Mutex<deny::DenyList>>,
+    purging: Mutex<Purge>,
+    /// Entries and blobs removed because of the deny list.
+    purged_entries: AtomicU64,
+    purged_blobs: AtomicU64,
     /// Added to the clock (tests).
     clock_offset: AtomicU64,
     /// The real time the clock stands still at, once stopped (tests):
@@ -466,6 +524,10 @@ impl Relay {
             Some(path) => Some(Mutex::new(writers::Writers::load(path)?)),
             None => None,
         };
+        let deny = match &policy.deny {
+            Some(path) => Some(Mutex::new(deny::DenyList::load(path)?)),
+            None => None,
+        };
         let cap = policy.feed_entries.max(1);
         let feeds = FeedStore::beside_blobs(blobs.dir());
         let mut profiles = HashMap::new();
@@ -512,6 +574,10 @@ impl Relay {
             rates: Mutex::new(limits::RateTable::new(policy.rates.clone(), policy.table_size)),
             new_feeds_total: Mutex::new(None),
             writers,
+            deny,
+            purging: Mutex::default(),
+            purged_entries: AtomicU64::new(0),
+            purged_blobs: AtomicU64::new(0),
             clock_offset: AtomicU64::new(0),
             frozen: Mutex::new(None),
             pings: AtomicUsize::new(0),
@@ -532,7 +598,188 @@ impl Relay {
         if relay.policy.indexed() {
             relay.holdings = Some(Mutex::new(relay.build_index()));
         }
+        // What was denied before a restart and is still on disk goes now.
+        relay.plan_purge();
         Ok(relay)
+    }
+
+    /// Whether the deny list denies `feed`.
+    fn denies_feed(&self, feed: &FeedKey) -> bool {
+        self.deny.as_ref().is_some_and(|d| d.lock().unwrap().denies_feed(feed))
+    }
+
+    /// Whether the deny list denies blob `id`.
+    fn denies_blob(&self, id: &BlobId) -> bool {
+        self.deny.as_ref().is_some_and(|d| d.lock().unwrap().denies_blob(id))
+    }
+
+    /// Whether the deny list denies connections from `ip`.
+    pub fn denies_address(&self, ip: IpAddr) -> bool {
+        self.deny.as_ref().is_some_and(|d| d.lock().unwrap().denies_address(ip))
+    }
+
+    /// Queues for removal what the deny list denies and the store holds:
+    /// the denied feeds' entries, and denied blobs.
+    fn plan_purge(&self) {
+        let (Some(d), Some(h)) = (&self.deny, &self.holdings) else { return };
+        let (feeds, blobs): (Vec<FeedKey>, Vec<BlobId>) = {
+            let d = d.lock().unwrap();
+            (d.feeds.keys().copied().collect(), d.blobs.keys().copied().collect())
+        };
+        let held: Vec<FeedKey> = {
+            let h = h.lock().unwrap();
+            feeds.into_iter().filter(|f| h.feeds.get(f).is_some_and(|f| !f.entries.is_empty())).collect()
+        };
+        // Not under the index's lock: a purge takes this one first.
+        let mut p = self.purging.lock().unwrap();
+        for f in held {
+            if !p.feeds.contains(&f) {
+                p.feeds.push_back(f);
+            }
+        }
+        for b in blobs {
+            if self.blobs.path(&b).exists() && !p.blobs.contains(&b) {
+                p.blobs.push_back(b);
+            }
+        }
+    }
+
+    /// Reads the deny list again (if its file changed, unless `force`) and
+    /// applies it: subscriptions to newly denied feeds end (the clients'
+    /// resubscribes are refused), connections from denied addresses close,
+    /// and what the store holds of denied feeds and blobs is queued for
+    /// [`Self::purge`]. Says so on stderr.
+    pub fn reload_deny(&self, force: bool) {
+        let Some(d) = &self.deny else { return };
+        let result = {
+            let mut d = d.lock().unwrap();
+            if force { Some(d.reload()) } else { d.reload_if_changed() }
+        };
+        match result {
+            Some(Ok(())) => {
+                let (f, b, a) = self.deny.as_ref().unwrap().lock().unwrap().counts();
+                eprintln!("terse-relay: deny list read: {f} feeds, {b} blobs, {a} address ranges");
+                self.apply_deny();
+            }
+            Some(Err(e)) => eprintln!("terse-relay: deny list not read, the previous one stays: {e}"),
+            None => {}
+        }
+    }
+
+    /// Applies the deny list in force to the connections and the store.
+    fn apply_deny(&self) {
+        let Some(d) = &self.deny else { return };
+        // Copied first: a publish takes the connections' lock, then this one.
+        let (feeds, addresses): (HashSet<FeedKey>, Vec<limits::Cidr>) = {
+            let d = d.lock().unwrap();
+            (d.feeds.keys().copied().collect(), d.addresses.iter().map(|(c, _)| *c).collect())
+        };
+        {
+            let mut state = self.state.lock().unwrap();
+            let mut ended = Vec::new();
+            for c in state.conns.values_mut() {
+                let denied: Vec<FeedKey> = c.feeds.iter().filter(|f| feeds.contains(*f)).copied().collect();
+                for f in denied {
+                    c.feeds.remove(&f);
+                    if !c.peer.load(Ordering::Relaxed) {
+                        ended.push(f);
+                    }
+                }
+                if c.addr.is_some_and(|ip| addresses.iter().any(|r| r.contains(ip))) {
+                    c.dropped.store(true, Ordering::Relaxed);
+                }
+            }
+            // The peer links follow: no client wants these feeds now.
+            for f in ended {
+                state.unwant(&f);
+            }
+        }
+        self.profiles.lock().unwrap().retain(|f, _| !feeds.contains(f));
+        self.plan_purge();
+    }
+
+    /// Removes what the deny list denies from the store, a batch at a time
+    /// (the locks are let go between batches, so requests are answered
+    /// meanwhile); returns how many entries and blobs it removed.
+    pub fn purge(&self) -> usize {
+        let mut total = 0;
+        loop {
+            let (done, more) = self.purge_batch();
+            total += done;
+            if !more {
+                return total;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    /// One batch of [`Self::purge`], under one hold of the locks: at most
+    /// [`PURGE_BATCH`] entries of denied feeds (with the blobs that only
+    /// they named) and denied blobs, and none after the first once
+    /// [`COLLECT_BATCH_TIME`] has passed on the relay's clock. Returns how
+    /// many it removed and whether more is left.
+    pub fn purge_batch(&self) -> (usize, bool) {
+        let Some(hl) = &self.holdings else { return (0, false) };
+        let mut p = self.purging.lock().unwrap();
+        if p.feeds.is_empty() && p.blobs.is_empty() {
+            return (0, false);
+        }
+        // The order of publish: no entry of a feed slips in meanwhile.
+        let _state = self.state.lock().unwrap();
+        let mut h = hl.lock().unwrap();
+        let started = self.instant();
+        let mut done = 0;
+        let remove_blob = |h: &mut holdings::Holdings, blob: &BlobId| {
+            h.unwait(blob);
+            match self.blobs.remove(blob) {
+                Ok(()) => {
+                    self.purged_blobs.fetch_add(1, Ordering::Relaxed);
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => eprintln!("terse-relay: removing a denied blob: {e}"),
+            }
+        };
+        while done < PURGE_BATCH {
+            if done > 0 && self.instant().duration_since(started) >= COLLECT_BATCH_TIME {
+                break;
+            }
+            if let Some(&feed) = p.feeds.front() {
+                let Some(seq) = h.feeds.get(&feed).and_then(|f| f.entries.keys().next().copied()) else {
+                    p.feeds.pop_front();
+                    continue;
+                };
+                done += 1;
+                if let Err(e) = self.feeds.remove(&feed, seq)
+                    && e.kind() != std::io::ErrorKind::NotFound
+                {
+                    // Left on disk; the next start tries again.
+                    eprintln!("terse-relay: removing an entry of a denied feed: {e}");
+                } else {
+                    self.purged_entries.fetch_add(1, Ordering::Relaxed);
+                }
+                // A blob no other entry names goes with it.
+                if let Some((blob, _)) = h.remove_entry(&feed, seq) {
+                    remove_blob(&mut h, &blob);
+                }
+            } else if let Some(blob) = p.blobs.pop_front() {
+                done += 1;
+                remove_blob(&mut h, &blob);
+            } else {
+                break;
+            }
+        }
+        let more = !p.feeds.is_empty() || !p.blobs.is_empty();
+        (done, more)
+    }
+
+    /// The most memory the relay may take with its connections all busy:
+    /// [`BASE_MEMORY`], [`CONNECTION_MEMORY`] for each connection allowed
+    /// (or for those open, without a limit) and the index's
+    /// [`ENTRY_MEMORY`] per entry held.
+    pub fn worst_memory(&self) -> u64 {
+        let conns = self.policy.max_connections.unwrap_or_else(|| self.connection_count()) as u64;
+        let entries = self.holdings.as_ref().map_or(0, |h| h.lock().unwrap().entries()) as u64;
+        BASE_MEMORY + conns * CONNECTION_MEMORY + entries * ENTRY_MEMORY
     }
 
     /// The index of what is on disk: every entry's blob and size, and the
@@ -693,6 +940,15 @@ impl Relay {
         if let Some(w) = &self.writers {
             line += &format!(", writers {}", w.lock().unwrap().len());
         }
+        if let Some(d) = &self.deny {
+            let (f, b, a) = d.lock().unwrap().counts();
+            line += &format!(
+                ", denied {f} feeds, {b} blobs, {a} address ranges, removed {} entries and {} blobs of them",
+                self.purged_entries.load(Ordering::Relaxed),
+                self.purged_blobs.load(Ordering::Relaxed)
+            );
+        }
+        line += &format!(", memory at worst {} MiB", self.worst_memory().div_ceil(MIB));
         let refused: Vec<String> =
             REASONS.iter().filter(|(r, _)| self.refused(*r) > 0).map(|(r, name)| format!("{name} {}", self.refused(*r))).collect();
         line += &format!("; refused: {}", if refused.is_empty() { "none".into() } else { refused.join(", ") });
@@ -961,9 +1217,11 @@ impl Relay {
                 relay.expire_pulls();
                 relay.collect();
                 relay.compact();
+                relay.purge();
                 if writers_at.elapsed() >= WRITERS_CHECK {
                     writers_at = Instant::now();
                     relay.reload_writers(false);
+                    relay.reload_deny(false);
                 }
                 if let Some(every) = relay.policy.status_every
                     && status_at.elapsed() >= every
@@ -1015,6 +1273,10 @@ impl Relay {
     }
 
     pub fn connect(&self) -> Connection {
+        self.connect_at(None)
+    }
+
+    fn connect_at(&self, addr: Option<IpAddr>) -> Connection {
         let (queue, rx) = sync_channel(self.cap + QUEUE_SLACK);
         let dropped = Arc::new(AtomicBool::new(false));
         let peer = Arc::new(AtomicBool::new(false));
@@ -1026,6 +1288,7 @@ impl Relay {
             feeds: HashSet::new(),
             dropped: dropped.clone(),
             peer: peer.clone(),
+            addr,
             next_req: 0,
             pulls_sent: HashMap::new(),
             peer_feeds: HashSet::new(),
@@ -1038,6 +1301,12 @@ impl Relay {
     /// policy's rates.
     pub fn connect_from(&self, group: limits::Group) -> Connection {
         Connection { group: Some(group), ..self.connect() }
+    }
+
+    /// [`Self::connect_from`] for a client at `ip` (closed if the deny
+    /// list comes to deny it).
+    pub fn connect_from_address(&self, ip: IpAddr) -> Connection {
+        Connection { group: Some(limits::Group::of(ip)), ..self.connect_at(Some(ip)) }
     }
 
     pub fn disconnect(&self, conn: &Connection) {
@@ -1183,6 +1452,9 @@ impl Relay {
     /// A blob to serve to a get: one this relay holds and, if blobs no
     /// entry names expire here, that an entry names (NETWORK 5.3).
     fn served(&self, id: &BlobId) -> Option<Vec<u8>> {
+        if self.denies_blob(id) {
+            return None;
+        }
         let data = self.blobs.read(id).ok()??;
         if self.policy.unreferenced_ttl.is_some()
             && let Some(h) = &self.holdings
@@ -1199,6 +1471,11 @@ impl Relay {
     pub fn put_blob(&self, data: &[u8], group: Option<limits::Group>) -> Result<(BlobId, bool), u8> {
         // Empty and oversize blobs are refused without a reason.
         if data.is_empty() || !valid_size(data.len()) {
+            return Err(status::REFUSED);
+        }
+        // NETWORK 5.3: refused by this relay's own policy.
+        if self.deny.is_some() && self.denies_blob(&blob_id(data)) {
+            self.count(Reason::DeniedBlob);
             return Err(status::REFUSED);
         }
         if let Some(g) = group {
@@ -1411,6 +1688,13 @@ impl Relay {
             return status::FEED_FULL;
         }
         let mut state = self.state.lock().unwrap();
+        // NETWORK 5.3: refused by this relay's own policy (checked under the
+        // lock that a purge takes, so no entry of a denied feed is stored
+        // after the purge began).
+        if self.denies_feed(&feed) || self.denies_blob(&signed.entry.blob) {
+            self.count(Reason::DeniedFeed);
+            return status::REFUSED;
+        }
         let Ok(seqs) = self.feeds.seqs(&feed) else { return status::REFUSED };
         if seqs.is_empty()
             && let Some(g) = group
@@ -1534,7 +1818,7 @@ impl Relay {
     /// the queue is drained, so it precedes the backlog. A client's
     /// subscription is repeated on the peers (NETWORK 5).
     fn subscribe(&self, conn: &Connection, feed: FeedKey, after: u32) -> Option<u32> {
-        if !valid_feed_key(&feed) {
+        if !valid_feed_key(&feed) || self.denies_feed(&feed) {
             return None;
         }
         // Under the lock, so `highest` and the backlog agree and no publish
@@ -1586,7 +1870,7 @@ impl Relay {
                 _ => None,
             };
         }
-        let listed = profiles.iter().filter(|(_, p)| p.listed == Some(true));
+        let listed = profiles.iter().filter(|(k, p)| p.listed == Some(true) && !self.denies_feed(k));
         if scope == SCOPE_FEEDS {
             let mut hits: Vec<(bool, FeedKey, &Vec<u8>)> = listed
                 .filter(|(_, p)| profile::matches(p.name.as_bytes(), query))
@@ -1636,6 +1920,9 @@ impl Relay {
     /// The current version of program `name` of `feed` that this relay
     /// holds: its program entry of that name with the highest `seq`.
     pub fn lookup(&self, feed: &FeedKey, name: &[u8]) -> Option<Vec<u8>> {
+        if self.denies_feed(feed) {
+            return None;
+        }
         let seqs = self.feeds.seqs(feed).ok()?;
         seqs.into_iter().rev().find_map(|seq| {
             let bytes = self.feeds.get(feed, seq).ok()??;
@@ -1853,7 +2140,13 @@ fn handle(stream: TcpStream, relay: &Relay) -> Result<(), (String, tungstenite::
     let counted = std::cell::Cell::new(None);
     let check = |request: &tungstenite::handshake::server::Request, response| {
         let header = |name: &str| request.headers().get(name).and_then(|v| v.to_str().ok()).map(String::from);
-        let group = limits::Group::of(limits::client_ip(peer, &relay.policy.trust_proxy, header));
+        let ip = limits::client_ip(peer, &relay.policy.trust_proxy, header);
+        let group = limits::Group::of(ip);
+        // NETWORK 3, 5.3: refused by this relay's own policy.
+        if relay.denies_address(ip) {
+            relay.count(Reason::DeniedAddress);
+            return Err(refusal(403, "this relay does not accept connections from this address"));
+        }
         if relay.policy.max_connections.is_some_and(|m| relay.connections.load(Ordering::Relaxed) >= m) {
             relay.count(Reason::Connections);
             return Err(refusal(503, "this relay has too many connections; try again later"));
@@ -1863,11 +2156,12 @@ fn handle(stream: TcpStream, relay: &Relay) -> Result<(), (String, tungstenite::
             return Err(refusal(429, "too many connections from this address"));
         }
         relay.connections.fetch_add(1, Ordering::Relaxed);
-        counted.set(Some(group));
+        counted.set(Some((group, ip)));
         Ok(response)
     };
     let accepted = tungstenite::accept_hdr_with_config(stream, check, Some(websocket_config()));
-    let counted = counted.get().map(|group| Counted { relay, group });
+    let client = counted.get().map(|(_, ip)| ip);
+    let counted = counted.get().map(|(group, _)| Counted { relay, group });
     if let Some(c) = &counted {
         who = c.group.for_log();
     }
@@ -1883,8 +2177,8 @@ fn handle(stream: TcpStream, relay: &Relay) -> Result<(), (String, tungstenite::
         ws.get_ref().tcp().set_write_timeout(Some(WRITE_TIMEOUT))
     })();
     ready.map_err(|e| (who.clone(), e.into()))?;
-    let conn = match &counted {
-        Some(c) => relay.connect_from(c.group),
+    let conn = match client {
+        Some(ip) => relay.connect_from_address(ip),
         None => relay.connect(),
     };
     let result = serve_connection(&mut ws, relay, &conn);

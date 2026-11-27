@@ -164,8 +164,8 @@ saved transforms, current point (0, 0, 0).
 - **What is drawn of a hidden line.** A line, and each chord of a circle,
   is drawn as its pieces that are not hidden. Each piece has, along it,
   the depth cue that part of the whole line has (§vector3d.presentation). An end
-  where a piece was cut is a butt end, as where a circle's chords join
-  (and has no dwell where a host draws one, §vector3d.presentation); the line's own ends keep their own. A piece with a
+  where a piece was cut is a butt end, as where a circle's chords join;
+  the line's own ends keep their own. A piece with a
   cut end that is shorter than 1/2 screen unit on the glass is not drawn,
   unless the whole line is that short. The whole line's length is that of
   its part in front of the near plane, on the glass, seen from the eye in
@@ -314,12 +314,7 @@ never the machine's state, which holds the list as submitted (§vector3d.determi
 **The host's choice**: where the eye is, within §vector3d.space's range;
 the trigonometry and the projection, in which hosts may differ in the last
 pixel; smoothing and the exact colour of blended pixels; and in the
-phosphor style all of the look that §vector.phosphor leaves to the host
-(glow, afterglow and smear, the beam's profile, dwell). *Note, not a
-requirement:* `terse-host` draws the 3D lines, points and circles in the
-phosphor style as it draws the 2D display's lines, with extra light (dwell)
-at line ends and points but not where a circle's chords join or where a
-face cut a line.
+phosphor style everything that §vector.phosphor leaves to the host.
 
 - **Depth cue.** Light dims with depth. Each end of a line (after the cut
   at z = −800) has the factor min(1, 960 / (960 + z)); along the line on

@@ -69,6 +69,7 @@ device-vector
 device-vector3
 device-vector3-caps
 device-vector3-surfaces
+reference-look
 device-sound
 device-page
 device-page-figures
@@ -81,6 +82,7 @@ content-records
 experimental
 network
 network-names
+relay-settings
 signatures
 events
 charges

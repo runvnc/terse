@@ -30,7 +30,7 @@
                          Tab link  Enter follow  ↑↓ PgUp PgDn  Esc/← back
 -- page: height 316, scroll 0 (stored 0), region 64 0 512 464 --
    14  33     0   sans26b |Tersenet
-   53  15     0   sans12 |terse:157517…c7742f  ·  not in your timeline  ·  694 bytes
+   53  15     0   sans12 |terse:b75dc9…fcec6a  ·  not in your timeline  ·  694 bytes
    78   8     0  -- rule --
    96  19     0   sans15 |First and foremost, Tersenet is a way to share information:
   115  19     0   sans15 |formatted text, with diagrams where they help, without the bloat of

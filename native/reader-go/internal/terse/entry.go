@@ -15,6 +15,9 @@ const (
 	KindProfile  = 2
 	KindProgram  = 3
 	KindDocument = 4
+	// KindAttachment keeps a part of an earlier entry of the feed (the
+	// blob its reply-to names links to it): stored, never listed.
+	KindAttachment = 5
 )
 
 // MaxBlob is the largest blob, MaxProfile the largest profile document,
@@ -57,6 +60,8 @@ func KindName(k byte) string {
 		return "program"
 	case KindDocument:
 		return "document"
+	case KindAttachment:
+		return "attachment"
 	}
 	return fmt.Sprintf("kind %d", k)
 }

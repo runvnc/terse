@@ -135,8 +135,20 @@ pub fn volume_key(key: KeyCode, mods: ModifiersState) -> Option<crate::audio::Vo
     }
 }
 
-/// The characters of pasted text the program receives: newlines (a CR LF
-/// pair or a lone CR counts as one) and no other control characters.
+/// The text events a key press gives the program (SPEC §events): none for
+/// a chord with Control (unless Alt is held too: Control+Alt is AltGr on
+/// some systems) or with the logo key, whatever text the window system
+/// reports for it (Wayland reports "c" for Ctrl+C, others U+0003), and
+/// never a control character.
+pub fn typed_text(text: Option<&str>, mods: ModifiersState) -> Vec<char> {
+    if (mods.control_key() && !mods.alt_key()) || mods.super_key() {
+        return Vec::new();
+    }
+    text.map(|t| t.chars().filter(|c| !c.is_control()).collect()).unwrap_or_default()
+}
+
+/// The characters of pasted text the program receives: tabs, newlines (a
+/// CR LF pair or a lone CR counts as one) and no other control characters.
 pub fn paste_chars(text: &str) -> impl Iterator<Item = char> + '_ {
     let mut prev = '\0';
     text.chars().filter_map(move |c| {
@@ -144,6 +156,7 @@ pub fn paste_chars(text: &str) -> impl Iterator<Item = char> + '_ {
             '\r' => Some('\n'),
             '\n' if prev == '\r' => None,
             '\n' => Some('\n'),
+            '\t' => Some('\t'),
             c if c.is_control() => None,
             c => Some(c),
         };

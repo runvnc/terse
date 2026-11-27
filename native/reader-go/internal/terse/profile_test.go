@@ -44,19 +44,25 @@ func TestIsRelayURL(t *testing.T) {
 }
 
 func TestProfileTakesFirstFourRelays(t *testing.T) {
-	doc := "relay: http://no\n" +
-		"relay: ws://a\n" +
-		"relay: ws:///no\n" +
+	// A plain (ws://) line is invalid and skipped (NETWORK.md 4.6).
+	doc := "listed: yes\n" +
+		"relay: http://no\n" +
+		"relay: wss://a\n" +
+		"relay: wss:///no\n" +
+		"relay: ws://plain.example:7878\n" +
 		"relay: wss://b\n" +
-		"relay: ws://c d\n" +
-		"relay: ws://c\n" +
-		"relay: ws://d\n" +
-		"relay: ws://e\n"
+		"relay: wss://c d\n" +
+		"relay: wss://c\n" +
+		"relay: wss://d\n" +
+		"relay: wss://e\n"
 	p, ok := ParseProfile([]byte(doc))
-	if !ok {
-		t.Fatal("profile does not parse")
+	if !ok || !p.Listed {
+		t.Fatal("profile does not parse, or the plain line spoilt the rest")
 	}
-	want := []string{"ws://a", "wss://b", "ws://c", "ws://d"}
+	if ProfileRelay("ws://relay.example") || !ProfileRelay("wss://relay.example") {
+		t.Error("ProfileRelay")
+	}
+	want := []string{"wss://a", "wss://b", "wss://c", "wss://d"}
 	if len(p.Relays) != len(want) {
 		t.Fatalf("relays %q, want %q", p.Relays, want)
 	}

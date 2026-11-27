@@ -13,9 +13,9 @@ The profile document is UTF-8 text of at most 4,096 bytes, lines ending with `0A
 | Field | Value |
 |---|---|
 | `listed` | `yes`: search may find the name; anything else, or no line, means not listed |
-| `relay` | a `ws://` or `wss://` URL of a relay where the author publishes; 0 to 4 lines; readers take the first four that are URLs |
+| `relay` | a `wss://` URL of a relay where the author publishes; 0 to 4 lines; readers take the first four that are URLs; a plain `ws://` line is invalid and skipped |
 
-A client writing its user's profile adds a `relay` line for each of its non-loopback relays. Names are self-declared and not unique, so a feed's name is always shown with its key or a short form of it (first and last six hex digits). A nickname is a name the user gives a feed (same rules), kept in the client's configuration, never sent anywhere, and shown in preference to the declared name.
+A client writing its user's profile adds a `relay` line for each of its encrypted, non-loopback relays; a plain relay is never listed. Names are self-declared and not unique, so a feed's name is always shown with its key or a short form of it (first and last six hex digits). A nickname is a name the user gives a feed (same rules), kept in the client's configuration, never sent anywhere, and shown in preference to the declared name.
 
 ## Search
 

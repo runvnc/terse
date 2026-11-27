@@ -171,11 +171,11 @@ be the lines written.
 
 Everything else in the article format is shown as plain text: a list item, a table row, a preformatted line or a fence becomes part of a paragraph as written, and links and code spans appear as the text they are made of.
 
-For an article of headings and paragraphs it is correct: the test `crates/terse-cli/tests/reader_examples.rs` runs it on every article of `vectors/articles` made only of those, and compares with what the reference reader finds in each. The rest of the format is in [Writing an article](terse:d114ee24a46f18a8e21bf8f96eb968f2b976e17b474cef33dc7f04d61337ca37). tersereader, the complete Go reader in `native/reader-go`, does all of it: `internal/article/parse.go` and `inline.go` read every construct, and `internal/render/render.go` lays them out for a terminal.
+For an article of headings and paragraphs it is correct: the test `crates/terse-cli/tests/reader_examples.rs` runs it on every article of `vectors/articles` made only of those, and compares with what the reference reader finds in each. The rest of the format is in [Writing an article](terse:2c34635be0d3910e4131c8f41559778e0e4beea2e3e0e8dd2a5a20f080752eda). tersereader, the complete Go reader in `native/reader-go`, does all of it: `internal/article/parse.go` and `inline.go` read every construct, and `internal/render/render.go` lays them out for a terminal.
 
 ## What you have now
 
 A Go program of 94 lines that shows the headings and paragraphs of any Tersenet article file.
 
-- Next: [Make a reader in Go, step 2: fetch an article](terse:37eed8d964a71b68ee6a0dacfd45a451760f83a1fb9aa1f91715cb17a6baa5a1).
-- The same step in Rust: [Make a reader in Rust, step 1: show an article](terse:0502913c881b4ace5e5c8bd36ff19f14cf1ba64c9ba5bd65bfb0feb10066867d).
+- Next: [Make a reader in Go, step 2: fetch an article](terse:55c8b6c054d92a189fd04f94e69b8de02b3f75c86f4aba5e89e10a9433659f51).
+- The same step in Rust: [Make a reader in Rust, step 1: show an article](terse:f6f6792d15b4d5be8e1fcbfedfb72e8fdabf79c2ba412982138657b9611d8cfa).

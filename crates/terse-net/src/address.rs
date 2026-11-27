@@ -10,7 +10,7 @@ use std::fmt;
 use crate::blob::to_hex;
 use crate::identity::{FeedKey, valid_feed_key};
 use crate::profile;
-pub use terse_core::hints::{DEFAULT_PORT, Hint, Host, MAX_HINT, MAX_HINT_LIST, MAX_HINTS, Malformed, TLS_PORT, parse_hint, parse_hints};
+pub use terse_core::hints::{Hint, Host, MAX_HINT, MAX_HINT_LIST, MAX_HINTS, Malformed, WS_PORT, WSS_PORT, parse_hint, parse_hints};
 
 /// A feed key and the hints of its address.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -107,9 +107,10 @@ pub fn parse_address(text: &str) -> Result<FeedAddress, AddressError> {
 }
 
 /// The hint for a relay URL, if it can be written as one (NETWORK 4.9): a
-/// host a hint can name and no path but `/`, with `ws://` and a port that
-/// is not 443 (7878 when none is given), or `wss://` and port 443 (given or
-/// not).
+/// `wss://` URL with a host a hint can name and no path but `/` (a port
+/// left out is 443). A plain relay has no hint, but on a loopback host
+/// (which no hint given out names, NETWORK 5.1), where `ws://` is what a
+/// hint without a scheme means there.
 pub fn hint_of_url(url: &str) -> Option<Hint> {
     let (tls, rest) = match (url.strip_prefix("ws://"), url.strip_prefix("wss://")) {
         (Some(r), _) => (false, r),
@@ -121,18 +122,19 @@ pub fn hint_of_url(url: &str) -> Option<Hint> {
         return None;
     }
     let mut hint = parse_hint(rest.as_bytes()).ok()?;
-    // A URL without a port means 80 or 443 (NETWORK 3), not the hint's 7878.
     let port_given = rest.rsplit_once(']').map_or(rest, |(_, p)| p).contains(':');
     if !port_given {
-        hint.port = if tls { TLS_PORT } else { 80 };
+        hint.port = if tls { WSS_PORT } else { WS_PORT };
     }
-    (tls == (hint.port == TLS_PORT)).then_some(hint)
+    // A plain relay elsewhere, or wss:// on a loopback host: no hint says so.
+    (hint.encrypted() == tls).then_some(hint)
 }
 
 /// The hints a host gives for its own address (NETWORK 4.9): from the
 /// relay lines of its profile in force, then its configured relays, those
-/// that can be written as hints and are not loopback, private or link-local
-/// addresses (NETWORK 5.1), without repeats, at most two.
+/// that are encrypted, can be written as hints and are not loopback,
+/// private or link-local addresses (NETWORK 5.1), without repeats, at
+/// most two.
 pub fn own_hints(profile_relays: &[String], configured: &[String]) -> Vec<Hint> {
     let mut out: Vec<Hint> = Vec::new();
     for url in profile_relays.iter().chain(configured) {
@@ -142,7 +144,7 @@ pub fn own_hints(profile_relays: &[String], configured: &[String]) -> Vec<Hint> 
         if !profile::usable_profile_relay(url) {
             continue;
         }
-        if let Some(h) = hint_of_url(url).filter(|h| !out.iter().any(|o| same_relay(o, h))) {
+        if let Some(h) = hint_of_url(url).filter(|h| h.encrypted() && !out.iter().any(|o| same_relay(o, h))) {
             out.push(h);
         }
     }
@@ -154,10 +156,11 @@ pub fn hint_text(hints: &[Hint]) -> String {
     hints.iter().map(Hint::to_string).collect::<Vec<_>>().join(",")
 }
 
-/// Whether two hints name the same relay (names compared without regard
-/// to case).
+/// Whether two hints name the same relay: the same encryption, port and
+/// host (names compared without regard to case).
 pub fn same_relay(a: &Hint, b: &Hint) -> bool {
     a.port == b.port
+        && a.encrypted() == b.encrypted()
         && match (&a.host, &b.host) {
             (Host::Name(x), Host::Name(y)) => x.eq_ignore_ascii_case(y),
             (x, y) => x == y,
@@ -197,28 +200,31 @@ mod tests {
 
     #[test]
     fn urls_and_own_hints() {
-        assert_eq!(hint_of_url("ws://relay.example:7878/").unwrap().to_string(), "relay.example");
-        // A URL without a port is port 80 (NETWORK 3), not the hint default.
-        assert_eq!(hint_of_url("ws://relay.example").unwrap().to_string(), "relay.example:80");
-        assert_eq!(hint_of_url("ws://[2001:db8::1]:9").unwrap().to_string(), "[2001:db8::1]:9");
-        // Over TLS: port 443, given or not.
-        assert_eq!(hint_of_url("wss://relay.example").unwrap().to_string(), "relay.example:443");
+        // Encrypted: no scheme in the hint, the port only when not 443.
+        assert_eq!(hint_of_url("wss://relay.example").unwrap().to_string(), "relay.example");
         assert_eq!(hint_of_url("wss://relay.example:443/").unwrap().url(), "wss://relay.example");
-        assert_eq!(hint_of_url("wss://[2001:db8::1]").unwrap().to_string(), "[2001:db8::1]:443");
-        let urls = ["wss://relay.example:8443", "ws://relay.example:443", "ws://relay.example/x", "wss://a/x", "ws://", "wss://"];
+        assert_eq!(hint_of_url("wss://relay.example:8443").unwrap().to_string(), "relay.example:8443");
+        assert_eq!(hint_of_url("wss://[2001:db8::1]").unwrap().to_string(), "[2001:db8::1]");
+        // Loopback: plain without a scheme.
+        assert_eq!(hint_of_url("ws://127.0.0.1:7878").unwrap().to_string(), "127.0.0.1:7878");
+        // Plain relays elsewhere: no hint.
+        let urls = ["ws://relay.example:7878/", "ws://relay.example", "ws://[2001:db8::1]:9", "wss://127.0.0.1:7878", "ws://relay.example/x", "wss://a/x", "ws://", "wss://", "ws://ws:a"];
         for url in urls.into_iter().chain(["http://relay.example", "ws://a_b"]) {
             assert!(hint_of_url(url).is_none(), "{url}");
         }
         let s = |v: &[&str]| v.iter().map(|u| u.to_string()).collect::<Vec<_>>();
+        // Plain relays are not given as hints; private and loopback ones neither.
         let own = own_hints(
             &s(&["ws://127.0.0.1:7878", "wss://secure.example:8443", "ws://A.example:7878"]),
-            &s(&["ws://a.example:7878", "ws://192.168.1.2:7878", "ws://b.example:9000", "ws://c.example"]),
+            &s(&["wss://192.168.1.2", "ws://b.example:9000", "wss://c.example"]),
         );
-        assert_eq!(hint_text(&own), "A.example,b.example:9000");
-        let own = own_hints(&s(&["wss://relay.tersenet.org"]), &s(&["ws://b.example:9000"]));
-        assert_eq!(hint_text(&own), "relay.tersenet.org:443,b.example:9000");
+        assert_eq!(hint_text(&own), "secure.example:8443,c.example");
+        let own = own_hints(&s(&["wss://relay.tersenet.org"]), &s(&["wss://b.example:9000"]));
+        assert_eq!(hint_text(&own), "relay.tersenet.org,b.example:9000");
         assert!(url_is_hint("wss://relay.tersenet.org", &parse_hint(b"relay.tersenet.org:443").unwrap()));
-        assert!(own_hints(&[], &s(&["ws://127.0.0.1:7878", "ws://10.0.0.1"])).is_empty());
-        assert!(url_is_hint("ws://relay.example:7878", &parse_hint(b"RELAY.example").unwrap()));
+        assert!(url_is_hint("wss://relay.tersenet.org:443/", &parse_hint(b"RELAY.tersenet.org").unwrap()));
+        assert!(own_hints(&[], &s(&["ws://127.0.0.1:7878", "wss://10.0.0.1"])).is_empty());
+        // A plain relay is never the relay of a hint.
+        assert!(!url_is_hint("ws://relay.example:7878", &parse_hint(b"relay.example:7878").unwrap()));
     }
 }

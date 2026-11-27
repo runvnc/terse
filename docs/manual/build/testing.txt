@@ -21,7 +21,7 @@ terse run prog.terse --frames 60 --events keys.txt --dump
 | `--without <slot>` | runs without an optional device, as a host that lacks it |
 | `--shell` | runs the image as a shell, with the machines it starts; `--hash-all` hashes each |
 
-A headless run has no clock (the Unix time is 0), no random bytes (`random` gives zeros) and no controllers but the script's, and content requests complete at the start of the next frame: so it is reproducible. The hash covers the whole machine (CPU, RAM, devices); [State, replay and conformance](terse:31a4fc1aebbf7cdef5d86ae39947513bfe9438eeb5f917d755984b81a0961eb2) says what it holds.
+A headless run has no clock (the Unix time is 0), no random bytes (`random` gives zeros) and no controllers but the script's, and content requests complete at the start of the next frame: so it is reproducible. The hash covers the whole machine (CPU, RAM, devices); [State, replay and conformance](terse:8239606bf062b334e2448dcc6be4781d11ef5b04d094ecb14581b09e7d78095d) says what it holds.
 
 | Exit status | When |
 |---|---|

@@ -78,7 +78,7 @@
 </ul>
 <p>So seven such paths fit this figure&#39;s area cap (35,168); an eighth would take the total to 40,192 and would not be drawn, nor anything after it. The length cap alone would allow 70.</p>
 <h2 id="outlines">Outlines</h2>
-<p>When the vector display (device 3) is in the phosphor style or in fill mode 1, figures are drawn as outlines: nothing is filled, and a path that is filled but not stroked is stroked one unit wide in its fill colour. In the phosphor style they are light on the tube like the rest of the page. An image without the vector display has the clean style and fill mode 0, so its figures are filled.</p>
+<p>When the vector display (device 3) is in the phosphor style or in fill mode 1, figures are drawn as outlines: nothing is filled, and a path that is filled but not stroked is stroked one unit wide in its fill colour. In the phosphor style they are light on the black screen like the rest of the page. An image without the vector display has the clean style and fill mode 0, so its figures are filled.</p>
 <h2 id="building-a-figure-in-c">Building a figure in C</h2>
 <p>While building a document (see The page (device 7)), the library&#39;s path builder writes these commands and <code>doc_figure</code> wraps them in a Figure command, whose head is <code>DOC_FIGURE_HEAD</code> (8) bytes. This is the red triangle above, in a box of 120 x 80 units:</p>
 <pre>static uint8_t path[64];

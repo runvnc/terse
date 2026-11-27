@@ -145,7 +145,7 @@ the request is its own policy, and the machine is not told. The built-in
 shell, for example, takes requests only from the machine with the
 keyboard, asks the user before starting a program that is not built in,
 and opens a blob according to its first bytes. See [the machines
-device](terse:90fe2f90b2cf0e4241e8e642ac485d82e04cd85b01721315ab238700a6877be8).
+device](terse:38b9bf3e50d09f10cd38c647ac8b0da8d5068a709ccab98eaf5114bec910d046).
 
 In C, `terse_open(request)` with the kinds `OPEN_BLOB` and `OPEN_PROGRAM`:
 
@@ -217,7 +217,7 @@ these devices, and `--without S` withholds one more.
 
 Events, the latched Unix time, the random bytes and the controller state
 are the only inputs from this device. With the content completions (see
-[blobs](terse:f5ca53b100a2234cee09280d95cfc4e5f9c9c29f1bf72e20e6ef02a06636151d)), they are what a host records per frame to
+[blobs](terse:226a65d577235a6967dec9f65f2640363e15d088d0499a1de3c953726d19aec8)), they are what a host records per frame to
 replay a run exactly. For a machine a shell started, whether `open` passes
 a request on depends on whether the shell has read the previous one, and
 is an input like a completion.

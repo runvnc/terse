@@ -22,6 +22,17 @@ fn in_process(dir: &std::path::Path) -> (String, Arc<Relay>) {
     (url, relay)
 }
 
+/// A relay serving wss:// with the test certificate, trusted in this
+/// process through the test authority: a profile names only encrypted
+/// relays (NETWORK 4.6).
+fn in_process_tls(dir: &std::path::Path) -> (String, Arc<Relay>) {
+    let certs = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../terse-testkit/tls");
+    terse_net::tls::trust_ca_file(&certs.join("ca.pem")).unwrap();
+    let (url, relay) = in_process(dir);
+    relay.set_tls(Some(terse_net::tls::server_config(&certs.join("localhost.pem"), &certs.join("localhost.key")).unwrap()));
+    (url.replace("ws://", "wss://"), relay)
+}
+
 /// The hint that names a relay at `url` (`ws://127.0.0.1:<port>`).
 fn hint(url: &str) -> &str {
     url.strip_prefix("ws://").unwrap()
@@ -130,7 +141,7 @@ fn the_profile_supersedes_the_hint() {
     let mut s = setup(true);
     let feed = s.author.feed_key();
     let dir_c = tempfile::tempdir().unwrap();
-    let (url_c, c) = in_process(dir_c.path());
+    let (url_c, c) = in_process_tls(dir_c.path());
     // On B, after the article: a profile that names C; on C, another article.
     let doc = format!("listed: no\nrelay: {url_c}\n").into_bytes();
     s.b.blobs().put(&doc).unwrap();

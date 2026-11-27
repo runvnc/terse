@@ -193,11 +193,16 @@ impl ContentOptions {
     /// data directory's records; caught up with the relays first.
     pub fn start(&self) -> Result<ContentService, String> {
         use terse_net::{Node, Records, Subscriptions, builtin, local, profile::Nicknames};
-        let relays = if self.relays.is_empty() { Vec::new() } else { local::find_relays(&self.relays, None, 0)?.urls() };
+        let config = self.config.clone().or_else(terse_net::default_config_dir).ok_or("no config directory (use --config)")?;
+        let relays = if self.relays.is_empty() {
+            local::apply_trust(&[], Some(&config))?;
+            Vec::new()
+        } else {
+            local::find_relays(&self.relays, Some(&config), 0)?.urls()
+        };
         let mut node = Node::open(self.store.clone(), &relays, terse_net::relay::DEFAULT_TIMEOUT)?;
         node.set_feed_relays(!self.no_feed_relays);
         builtin::install_manual(node.store())?;
-        let config = self.config.clone().or_else(terse_net::default_config_dir).ok_or("no config directory (use --config)")?;
         let data = self.data.clone().or_else(terse_net::default_data_dir).ok_or("no data directory (use --data)")?;
         node.set_subscriptions(Subscriptions::load(config.join("subscriptions"))?);
         node.set_identity_path(config.join("identity.key"))?;

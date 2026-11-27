@@ -383,12 +383,11 @@ fn mods(w: &[&str]) -> Result<u8, String> {
 /// The modifier keys (HID usages) a set of modifier bits is held with.
 const MODIFIER_KEYS: [(u8, u8); 4] = [(modifiers::CONTROL, 0xE0), (modifiers::SHIFT, 0xE1), (modifiers::ALT, 0xE2), (modifiers::META, 0xE3)];
 
-/// The text a key types on a US keyboard with these modifiers (none with
-/// Control, Alt or Meta, nor for keys that type no character).
+/// The text a window system reports for a key on a US keyboard with these
+/// modifiers (none for keys that type no character). As Wayland does, a
+/// chord with Control, Alt or Meta reports the key's character too: the
+/// host, not this, keeps it from the program (keymap::typed_text).
 fn key_text(usage: u8, mods: u8) -> Option<String> {
-    if mods & (modifiers::CONTROL | modifiers::ALT | modifiers::META) != 0 {
-        return None;
-    }
     let shift = mods & modifiers::SHIFT != 0;
     let c = (32u8..127).map(char::from).find(|&c| char_key(c) == Some((usage, shift)))?;
     Some(c.to_string())
@@ -1295,7 +1294,8 @@ mod tests {
     fn keys_type_what_a_keyboard_types() {
         assert_eq!(key_text(0x04, 0).as_deref(), Some("a"));
         assert_eq!(key_text(0x04, modifiers::SHIFT).as_deref(), Some("A"));
-        assert_eq!(key_text(0x04, modifiers::CONTROL), None);
+        // With Control: the character, as Wayland reports it; the host drops it.
+        assert_eq!(key_text(0x06, modifiers::CONTROL).as_deref(), Some("c"));
         assert_eq!(key_text(0x28, 0), None);
         assert_eq!(key_text(0x2E, modifiers::SHIFT).as_deref(), Some("+"));
         // An empty script, in a file of its own (there is no /dev/null on

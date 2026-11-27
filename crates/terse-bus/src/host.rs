@@ -36,6 +36,9 @@ struct BusDriver {
     images: Vec<(u32, Result<Image, StartFailure>)>,
     /// The first error of a machine's devices (a driver that failed).
     error: Option<String>,
+    /// Text a machine offered the clipboard in answer to the user's copy
+    /// key (SPEC §system `copy`), the last of the frame.
+    copied: Option<Vec<u8>>,
 }
 
 fn stopped_result(m: &Machine<BusDevices>) -> FrameResult {
@@ -49,7 +52,12 @@ impl Driver<BusDevices> for BusDriver {
         }
         let input = FrameInput { events: &events, controllers, ..Default::default() };
         match machine.try_run_frame(&input) {
-            Ok(r) => r,
+            Ok(r) => {
+                if let Some(t) = machine.take_copied() {
+                    self.copied = Some(t);
+                }
+                r
+            }
             Err(e) => {
                 self.error = Some(e);
                 stopped_result(machine)
@@ -445,8 +453,14 @@ impl BusSystem {
         {
             system.set_snapshot_table(services::read_table(&t));
         }
-        let driver = BusDriver { bus: bus.clone(), wanted: Vec::new(), images: Vec::new(), error: None };
+        let driver = BusDriver { bus: bus.clone(), wanted: Vec::new(), images: Vec::new(), error: None, copied: None };
         BusSystem { system, driver, bus, title: String::new(), session: None, swallowed: Vec::new(), monitor: None, notice: None, halted: None }
+    }
+
+    /// The text a machine offered the clipboard in the last frame, in
+    /// answer to the user's copy key (SPEC §system `copy`); taken.
+    pub fn take_copied(&mut self) -> Option<Vec<u8>> {
+        self.driver.copied.take()
     }
 
     /// Runs the system's next frame with the host's input `events` (in the

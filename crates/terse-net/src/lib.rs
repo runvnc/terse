@@ -50,6 +50,7 @@ pub mod snapshots;
 pub mod store;
 pub mod timeline;
 pub mod tls;
+pub mod trust;
 pub mod vectors;
 
 pub use blob::{BlobId, blob_id, parse_hex, to_hex};

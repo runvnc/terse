@@ -3015,6 +3015,7 @@ dependencies = [
  "ed25519-dalek",
  "getrandom 0.4.3",
  "rustls",
+ "rustls-webpki",
  "sha2",
  "tempfile",
  "terse-core",

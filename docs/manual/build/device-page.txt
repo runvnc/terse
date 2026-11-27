@@ -42,7 +42,7 @@ A document is 1 to 65,536 bytes of commands, each an opcode byte and its operand
 | `05h` | Paragraph | align, indent, space, flags (1 byte each) | Starts a paragraph |
 | `06h` | Rule | none | A paragraph that is a horizontal line |
 | `07h` | Anchor | id (2 bytes) | Later text and figures belong to `id`; 0 is none |
-| `08h` | Figure | width (2), height (2), align (1), n (2), n bytes of path commands | A figure block, see [figures on the page](terse:95aa095cf567dbd389f7c6db1c5000e84edeecf9777386170c6b38f394e7cf04) |
+| `08h` | Figure | width (2), height (2), align (1), n (2), n bytes of path commands | A figure block, see [figures on the page](terse:fb28ee78da846865555acd99adaf1029514df8eec41928c64f1e4e66c46c5454) |
 | `09h` | Table | columns (1, 1..8), flags (bit 0 header), one align byte per column | Starts a table block |
 | `0Ah` | Cell | none | Starts the table's next cell |
 | `0Bh` | End table | none | Ends the table |

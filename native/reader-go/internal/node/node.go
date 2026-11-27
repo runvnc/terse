@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"tersereader/internal/nodeapi"
 	"tersereader/internal/store"
 	"tersereader/internal/terse"
+	"tersereader/internal/ws"
 )
 
 // Node is a network node over a store directory.
@@ -51,12 +53,46 @@ func Open(dir string, opt client.Options) (*Node, error) {
 	return n, nil
 }
 
-// relays is the user's relay list in use (n.mu held).
-func (n *Node) relays() []string {
+// relayLines is the user's relay list in use as written: relays and their
+// options (n.mu held).
+func (n *Node) relayLines() []string {
 	if n.opt.Relays != nil {
 		return n.opt.Relays
 	}
 	return n.st.Relays()
+}
+
+// relays is the user's relay list in use, as URLs (n.mu held).
+func (n *Node) relays() []string {
+	return lineURLs(n.relayLines())
+}
+
+// lineURLs are the relays of relay lines, as URLs.
+func lineURLs(lines []string) []string {
+	var out []string
+	for _, l := range lines {
+		r, _, ok := ws.SplitLine(l)
+		if !ok {
+			continue
+		}
+		if u := terse.TypedRelay(r); u != "" {
+			out = append(out, u)
+		}
+	}
+	return out
+}
+
+// applyTrust trusts what the user's settings say for wss:// relays: the
+// reader directory's authorities, the options of the stored relay list and
+// of --relay, and --relay-authority (n.mu held).
+func (n *Node) applyTrust() error {
+	lines := append(append([]string(nil), n.st.Relays()...), n.opt.Relays...)
+	t, err := ws.LoadTrust(n.st.Dir(), lines, n.opt.Authorities, terse.TypedRelay)
+	if err != nil {
+		return err
+	}
+	ws.SetTrust(t)
+	return nil
 }
 
 // Connect starts the client.
@@ -68,9 +104,14 @@ func (n *Node) Connect() error {
 		return nil
 	}
 	if len(n.relays()) == 0 {
-		return errors.New("no relay: add one with `tersereader relay add ws://host:port`, or give --relay")
+		return errors.New("no relay: add one with `tersereader relay add <host>` (wss://, encrypted) or `... ws://host:port` (plain), or give --relay")
 	}
-	n.cl = client.New(n.st, n.opt)
+	if err := n.applyTrust(); err != nil {
+		return err
+	}
+	opt := n.opt
+	opt.Relays = n.relays()
+	n.cl = client.New(n.st, opt)
 	n.cl.Start()
 	cl := n.cl
 	go func() {
@@ -312,28 +353,42 @@ func (n *Node) ConfiguredRelays() []string { return n.st.Relays() }
 // SetRelays replaces the user's relay list (a URL given twice counts
 // once) and, once the node is connecting, uses it at once: relays no
 // longer listed are disconnected and new ones connected (LOCAL.md 4.3).
-func (n *Node) SetRelays(urls []string) error {
-	var list []string
+func (n *Node) SetRelays(lines []string) error {
+	var stored, list []string
 	seen := map[string]bool{}
-	for _, u := range urls {
-		if !terse.IsRelayURL(u) {
-			return fmt.Errorf("a relay is a ws:// or wss:// URL: %s", u)
+	check := &ws.Trust{}
+	for _, line := range lines {
+		r, opts, ok := ws.SplitLine(line)
+		if !ok {
+			continue
+		}
+		u := terse.TypedRelay(r)
+		if u == "" {
+			return fmt.Errorf("not a relay (a wss:// or ws:// URL, or a host): %s", r)
+		}
+		if err := check.AddLine(u, opts, n.st.Dir()); err != nil {
+			return err
 		}
 		if !seen[u] {
 			seen[u] = true
 			list = append(list, u)
+			stored = append(stored, strings.Join(append([]string{u}, opts...), " "))
 		}
 	}
 	if len(list) > 8 {
 		return errors.New("at most eight relays")
 	}
-	if err := n.st.SetRelays(list); err != nil {
+	if err := n.st.SetRelays(stored); err != nil {
 		return err
 	}
 	n.mu.Lock()
 	n.opt.Relays = nil // from now on the list just set, not --relay
 	cl, live := n.cl, n.live
+	err := n.applyTrust()
 	n.mu.Unlock()
+	if err != nil {
+		return err
+	}
 	if cl != nil {
 		cl.SetOwnRelays(list)
 	} else if live && len(list) > 0 {

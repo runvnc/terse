@@ -73,7 +73,7 @@ display name) and maybe a `note`.
 Records `document <name>`: a profile document's bytes (`hex`, or for a
 long one `hex-then-x <hex> <n>`: those bytes, then n bytes `x`), maybe a
 `note`, and the result of parsing it: `valid no`, or `valid yes` with
-`listed` (`yes` or `no`), one `relay <url>` line per relay URL a reader
+`listed` (`yes` or `no`), one `relay <url>` line per `wss://` relay URL a reader
 takes (at most four, in order), and `description` (quoted; or
 `description-bytes <n>` for a long one): the text after the first empty
 line, empty if there is none.
@@ -84,8 +84,10 @@ Records `address <name>` with `text` (quoted: an address exactly as
 written, a key and maybe `@` and hints) and `valid`. A valid one gives
 its `key` and one line `hint <host> <port> <url>` per hint, in order:
 the host as a URL writes it (an IPv6 address in brackets, in its
-shortest form), the port (7878 if the hint names none) and the relay's
-URL: `ws://host:port`, or `wss://host` for port 443. An invalid one gives the `reason`: `bad-key` (not 64 lowercase hex
+shortest form), the port (443 if
+the hint names none) and the relay's URL: `wss://host` (with `:port`
+unless 443); a hint always names an encrypted relay, and one with a
+scheme (`ws://`, `ws:`) is malformed. An invalid one gives the `reason`: `bad-key` (not 64 lowercase hex
 digits), `invalid-key` (not a valid feed key, NETWORK.md 4.1: the case
 `key-not-canonical` is a point of large order written as y = p + 3, and
 `key-mixed-order`, which is valid, the test key plus a point of order 8),

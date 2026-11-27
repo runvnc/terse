@@ -62,6 +62,7 @@ Articles and the network:
 - [Writing a reader without the machine](terse:{native-reader}): what a native reader must do to be a complete Tersenet client.
 - [The network](terse:{network}): blobs and relays, feeds and entries, feed addresses, several relays, mirroring relays.
 - [Profiles, names and search](terse:{network-names}): profiles and display names, nicknames, search and lookup.
+- [Relays: encryption and trust](terse:{relay-settings}): encrypted unless written otherwise, plain relays, private authorities and pinned keys.
 - [Signatures and valid entries](terse:{signatures}): the entry's bytes, every rule and its reason, strict Ed25519 verification, what libraries do, the test vectors and the SDK.
 
 Programs:
@@ -98,4 +99,5 @@ The devices:
 - [The 3D vector display (device 9)](terse:{device-vector3}): lines, points and circles in a box, seen from the host's eye.
 - [Caps, presentation and state (device 9)](terse:{device-vector3-caps}): clipping, how much a list may draw, how it is shown, charges and state.
 - [Surfaces](terse:{device-vector3-surfaces}): a program's own screen placed in its 3D scene.
+- [The reference host's look](terse:{reference-look}): how terse-host draws the phosphor style, the 3D eye and the shell; a description of one host, not a requirement.
 - [Experimental devices](terse:{experimental}): slots 240 to 255, a name, optional only: a device tried out before it is specified.
