@@ -832,6 +832,10 @@ static uint8_t gather(uint8_t loc, uint8_t skip_scenery)
 static uint8_t noise;
 static int16_t move_minutes = -1;   /* set by a rule's `minutes` */
 static void look(void);
+/* A description of the place left for the next frame (1), and its
+ * arrival events (2): after an undo, a restore or a restart, whose text
+ * fills a frame already. */
+static uint8_t pending_look;
 static void game_over(uint8_t how, uint8_t pic, uint16_t id);
 static void aim_at(uint8_t o);
 static void beam_check(void);
@@ -1198,12 +1202,52 @@ static void vec_rgb(uint8_t r, uint8_t g, uint8_t b)
 }
 
 /* A line from a to b in sixteenths, joined to the last if it starts there. */
-static void seg(int16_t ax, int16_t ay, int16_t bx, int16_t by)
+static void seg_solid(int16_t ax, int16_t ay, int16_t bx, int16_t by)
 {
     if (ax != pen_x || ay != pen_y)
         vec_move(ax, ay);
     vec_line(bx, by);
     pen_x = bx, pen_y = by;
+}
+
+/* Lines the beam reveals are drawn dashed: 5 units on, 3 off, the dash
+ * pattern running on from one segment to the next (dash_at). */
+#define DASH_ON (5 * 16)
+#define DASH_PERIOD (8 * 16)
+static uint8_t dashing;
+static int32_t dash_at, dash_x = -1, dash_y = -1;
+static uint32_t isqrt32(uint32_t v);
+
+static void seg(int16_t ax, int16_t ay, int16_t bx, int16_t by)
+{
+    if (!dashing) {
+        seg_solid(ax, ay, bx, by);
+        return;
+    }
+    int32_t dx = bx - ax, dy = by - ay;
+    int32_t len = (int32_t)isqrt32((uint32_t)(dx * dx + dy * dy));
+    if (len == 0) {
+        seg_solid(ax, ay, bx, by);
+        return;
+    }
+    if (ax != dash_x || ay != dash_y)
+        dash_at = 0;
+    dash_x = bx, dash_y = by;
+    for (int32_t s = 0; s < len;) {
+        int32_t ph = dash_at % DASH_PERIOD, step;
+        if (ph < DASH_ON) {
+            step = DASH_ON - ph;
+            if (s + step > len)
+                step = len - s;
+            seg_solid(ax + dx * s / len, ay + dy * s / len, ax + dx * (s + step) / len, ay + dy * (s + step) / len);
+        } else {
+            step = DASH_PERIOD - ph;
+            if (s + step > len)
+                step = len - s;
+        }
+        s += step;
+        dash_at += step;
+    }
 }
 
 /* The beam's circle for clipping, in half units. */
@@ -1383,6 +1427,7 @@ static void draw_art(uint32_t off, int32_t ox, int32_t oy, uint8_t mode, uint8_t
              * brighter and wider than the rest of the picture. */
             (void)revealed;
             vec_rgb(r / 3, g / 3, b / 3);
+            dashing = 1;
             only_seen = rd16(h + 20) + 1;
             draw_shapes(start, n, ox, oy, dx, dy, 0, 1);
             only_seen = 0;
@@ -1392,6 +1437,7 @@ static void draw_art(uint32_t off, int32_t ox, int32_t oy, uint8_t mode, uint8_t
                 draw_shapes(start, n, ox, oy, dx, dy, 1, 1);
                 vec_width(16);
             }
+            dashing = 0;
             p = draw_shapes(start, n, 0, 0, 0, 0, 0, 0);
             continue;
         }
@@ -2502,7 +2548,7 @@ static void do_undo(void)
     undo_n--;
     G = undo_ring[undo_head];
     say(M_UNDONE);
-    look();
+    pending_look = 1;
     refresh_all();
 }
 
@@ -2533,8 +2579,7 @@ static void intro(void)
     out_blank();
     say(TEXT_INTRO);
     out_blank();
-    look();
-    enter_events();
+    pending_look = 2; /* the place in the next frame */
 }
 
 /* The name after SAVE or RESTORE: letters and digits, or "game". */
@@ -2605,7 +2650,7 @@ static void save_poll(void)
         undo_push();
         G = load_buf;
         say(M_RESTORED);
-        look();
+        pending_look = 1;
         refresh_all();
     }
     save_busy = 0;
@@ -3160,6 +3205,16 @@ int main(void)
         view_end = TEXT_ROWS;
     }
     for (;;) {
+        if (pending_look && !G.ended) {
+            uint8_t enter = pending_look == 2;
+            pending_look = 0;
+            look();
+            if (enter)
+                enter_events();
+            text_busy = 1;
+            reply_done();
+            dirty_scene = 1;
+        }
         events_frame();
         save_poll();
         /* The picture of a new place follows its text by a frame, so that no

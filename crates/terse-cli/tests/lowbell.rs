@@ -264,7 +264,8 @@ fn transcripts() -> Vec<(String, String)> {
 }
 
 /// Every transcript, each from a new game: all their checks hold, no frame
-/// runs out of budget, and the scene stays far inside the ink cap.
+/// uses more than 46% of its budget, and the scene stays far inside the
+/// ink cap.
 #[test]
 fn transcripts_play_as_written() {
     let all = transcripts();
@@ -284,6 +285,10 @@ fn transcripts_play_as_written() {
             f.len()
         );
         assert_eq!(g.spilled, 0, "{name}: a frame's work ran into the next");
+        // Every frame well inside the budget, start-up, restarts, restores
+        // and endings included (their text is spread over two frames).
+        let worst = *g.used.iter().max().unwrap();
+        assert!(common::pct(worst) < 46.0, "{name}: a frame used {worst} units ({:.1}%)", common::pct(worst));
         fails.extend(f);
     }
     assert!(fails.is_empty(), "{} failed:\n{}", fails.len(), fails.join("\n"));
