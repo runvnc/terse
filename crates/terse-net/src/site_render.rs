@@ -307,7 +307,7 @@ fn pre(ctx: &Ctx, lines: &[Vec<Inline>], info: &str, out: &mut String) {
                 if a > k {
                     out.push_str(&esc_in(text, k..a));
                 }
-                let _ = write!(out, "<span class=\"{}\">{}</span>", class.css().unwrap_or(""), esc_in(text, a..b));
+                let _ = write!(out, "<span class={}>{}</span>", class.css().unwrap_or(""), esc_in(text, a..b));
                 k = b;
             }
             if to > k {
@@ -403,10 +403,10 @@ mod tests {
         let crate::article_parse::Parsed::Article(blocks) = crate::article_parse::parse(text.as_bytes()) else { panic!() };
         let resolve = |_: &Target| Some(("a.html".to_string(), "A".to_string()));
         let html = article(&Ctx { resolve: &resolve }, &blocks, &mut HashSet::new());
-        assert!(html.contains("<pre><span class=\"t\">int</span> x = <span class=\"n\">1</span>; <span class=\"c\">// </span><a href=\"a.html\" title=\"A\">terse:070707…070707</a><span class=\"c\"> see</span>\n"), "{html}");
-        assert!(html.contains("<span class=\"s\">&quot;http&#58;//q&quot;</span>; y = http<span class=\"c\">&#58;//z;</span>") || html.contains("http&#58;<span class=\"c\">//z;</span>"), "{html}");
+        assert!(html.contains("<pre><span class=t>int</span> x = <span class=n>1</span>; <span class=c>// </span><a href=\"a.html\" title=\"A\">terse:070707…070707</a><span class=c> see</span>\n"), "{html}");
+        assert!(html.contains("<span class=s>&quot;http&#58;//q&quot;</span>; y = http&#58;<span class=c>//z;</span>"), "{html}");
         assert!(!html.contains("://"), "{html}");
-        assert!(html.contains("<pre class=\"sh\"><span class=\"k\">terse</span> run a.terse</pre>"), "{html}");
+        assert!(html.contains("<pre class=\"sh\"><span class=k>terse</span> run a.terse</pre>"), "{html}");
         assert!(html.contains("<pre>int x;</pre>\n<pre>    int y;</pre>"), "{html}");
     }
 
