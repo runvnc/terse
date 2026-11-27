@@ -50,49 +50,6 @@ address port-7878
   key 03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8
   hint relay.example 7878 wss://relay.example:7878
 
-address plain
-  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@ws:relay.example:7878"
-  valid yes
-  key 03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8
-  hint relay.example 7878 ws://relay.example:7878
-
-address plain-no-port
-  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@ws:relay.example"
-  valid yes
-  key 03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8
-  hint relay.example 80 ws://relay.example:80
-
-address plain-ipv6
-  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@ws:[2001:db8::1]:9000"
-  valid yes
-  key 03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8
-  hint [2001:db8::1] 9000 ws://[2001:db8::1]:9000
-
-address encrypted-and-plain
-  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@relay.example,ws:203.0.113.7:7878"
-  valid yes
-  key 03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8
-  hint relay.example 443 wss://relay.example
-  hint 203.0.113.7 7878 ws://203.0.113.7:7878
-
-address loopback
-  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@127.0.0.1:7878"
-  valid yes
-  key 03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8
-  hint 127.0.0.1 7878 ws://127.0.0.1:7878
-
-address localhost
-  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@localhost:7878"
-  valid yes
-  key 03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8
-  hint localhost 7878 ws://localhost:7878
-
-address loopback-ipv6
-  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@[::1]:7878"
-  valid yes
-  key 03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8
-  hint [::1] 7878 ws://[::1]:7878
-
 address under-localhost
   text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@a.localhost:7878"
   valid yes
@@ -307,7 +264,7 @@ address underscore
 address scheme
   text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@ws://a.example"
   valid no
-  reason bad-name
+  reason bad-port
 
 address scheme-wss
   text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@wss://a.example"
@@ -319,13 +276,33 @@ address wss-prefix
   valid no
   reason bad-port
 
-address plain-empty
-  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@ws:"
+address ws-prefix
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@ws:relay.example:7878"
   valid no
-  reason bad-name
+  reason bad-port
 
-address plain-twice
-  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@ws:ws:a.example"
+address ws-prefix-no-port
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@ws:relay.example"
+  valid no
+  reason bad-port
+
+address ws-prefix-ipv6
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@ws:[2001:db8::1]:9000"
+  valid no
+  reason bad-port
+
+address ws-prefix-loopback
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@ws:127.0.0.1:7878"
+  valid no
+  reason bad-port
+
+address ws-prefix-second
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@relay.example,ws:203.0.113.7:7878"
+  valid no
+  reason bad-port
+
+address ws-prefix-empty
+  text "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8@ws:"
   valid no
   reason bad-port
 
