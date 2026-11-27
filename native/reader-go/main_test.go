@@ -37,7 +37,7 @@ func TestVersion(t *testing.T) {
 		t.Fatalf("parseArgs --version: %v %v", c, err)
 	}
 	line := versionLine()
-	if !regexp.MustCompile(`^tersereader 0\.1\.0 s2:[0-9a-f]{16}$`).MatchString(line) {
+	if !regexp.MustCompile(`^tersereader ` + regexp.QuoteMeta(programVersion) + ` s2:[0-9a-f]{16}$`).MatchString(line) {
 		t.Errorf("version line %q", line)
 	}
 }

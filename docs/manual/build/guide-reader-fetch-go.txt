@@ -13,7 +13,7 @@ go 1.24.0
 
 require (
     github.com/gorilla/websocket v1.5.3
-    github.com/runvnc/terse/sdk/go v0.1.0
+    github.com/runvnc/terse/sdk/go v0.9.0
     lukechampine.com/blake3 v1.5.1
 )
 
@@ -198,6 +198,6 @@ The program asks one relay and keeps nothing. A complete reader keeps every blob
 
 A reader that fetches an article by its ID and knows it is genuine.
 
-- Next: [Make a reader in Go, step 3: follow a feed](terse:fb3a73beb0f533fb822c83536802a9819d7676da8120cc221a5e4234cee3c160).
+- Next: [Make a reader in Go, step 3: follow a feed](terse:6f45ebd8af4956983eb4c852e4a97a5cf237cad4c95cc55ebbda57611d961ec7).
 - The same step in Rust: [Make a reader in Rust, step 2: fetch an article](terse:718b3f660e508069761d480c97bb79ed73bfd1f3ef1adcdc24f6baf8efe096df).
 - Every relay message, and why a relay refuses: [The network](terse:860a2aaebae93a8b6978505d6a8fe3cb2329eaeeda3a124d1e2c3786e7ff5187).

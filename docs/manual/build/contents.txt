@@ -4,22 +4,22 @@ The manual has three parts. The user guide gets you from installing Tersenet to 
 
 ## User guide
 
-- [Install Tersenet](terse:a81b662ca8b8af9da17727b2ec0760d297949206b890321f7a1baddc5c0bcd1f): one command on Linux and macOS, a zip on Windows, or from the source.
-- [Run Tersenet](terse:1cdc6a8e25489dc2d79e00a1963c5d6b43bc7abeeee5bb204184899aad5e10d7): the window, the launcher, the reader and this manual.
-- [Create your profile](terse:eed43d726739f31781aff9adc3fe8152c9b18f4abddfa1f8763ee4bf774cdde3): your key, your name and your address; no account needed.
-- [Write and publish an article](terse:d131cadd064d212bf45cf4071975884d52be55e3f5a58f918f6cfb8dd4fcf590): a plain text file, how it compares with Markdown, and your feed.
-- [Read articles and follow links](terse:182af803c60b562d683853f3ccfb23f315548dc97b4269359074c2b011ad338e): the timeline, links and search.
-- [Subscribe to someone's feed](terse:687931ab88cbba5c23605b792459f48a7ead20e46d9dc25ae07baff3e11de437): a shared relay, by address or by name, nicknames.
-- [Find and play a game](terse:13b3a64abf7f42a117cb851152934577546e3725f330ccea6629c31cbd77a201): the built-in game, programs from feeds and links, saving your place.
+- [Install Tersenet](terse:3e6ba8d72fb076c9fe4b68ad1ca012a05b92fd28f57552028838d72f67bc81c6): one command on Linux and macOS, a zip on Windows, or from the source.
+- [Run Tersenet](terse:b2d7caa20c4ccbf411ca748506650fe32f9d9c3e22d0fb0c1348c7c041e176cc): the window, the launcher, the reader and this manual.
+- [Create your profile](terse:1adc27a038d3e4c994c0e60cad845da189ac8f4f3bee0fc7bbfa15a048e71458): your key, your name and your address; no account needed.
+- [Write and publish an article](terse:27c98ecfbac945029641a2d513ec1f7b7223ad340763732188f7db428123e631): a plain text file, how it compares with Markdown, and your feed.
+- [Read articles and follow links](terse:a0f31874326dcc2cae4c44dd6a9da1eb1ee51bff1296c427723aa1e1a555dd92): the timeline, links and search.
+- [Subscribe to someone's feed](terse:312d2eb5630cf7df42d74e44eaaed5711687bc2ef9ab71e0c003fd2fd1c250b7): a shared relay, by address or by name, nicknames.
+- [Find and play a game](terse:eb7eb4616165f814670e98fd89c36980667238f74df9b3b2941a0e3f6e07c80d): the built-in game, programs from feeds and links, saving your place.
 
 ## Implementation guide
 
-- [Make a reader](terse:4e533c307d6be021da155caf5d16f90925acfffb262faaf3cc09e6d9715f54f6): what a reader does, and a small one built in three steps, in Go or in Rust.
-- [Make a reader in Go, step 1: show an article](terse:dd49de408e09a70e41e72f7cc2f65f98d51d1444da9a30806fb2c968e3743769): an article file's headings and paragraphs, with the standard library alone.
+- [Make a reader](terse:560621fb4893f1e8b32f9b5d9a1ced5bc4b6c30b1c49ad42584d80f5989b1756): what a reader does, and a small one built in three steps, in Go or in Rust.
+- [Make a reader in Go, step 1: show an article](terse:d067276fdf366336ef91a5ca029c2ff3de2016ddc0ada06435332235ed3d0333): an article file's headings and paragraphs, with the standard library alone.
 - [Make a reader in Rust, step 1: show an article](terse:ad5aad33d75d2f378f2896d788416022e08419395b2ed05defebcd439e3b0e27): the same program in Rust.
-- [Make a reader in Go, step 2: fetch an article](terse:4f04443c1d06a5d0c83b0f6baab126812ce06b9358ae6ed02ad6206ab99d01f1): get an article from a relay by its ID and check its BLAKE3 hash.
+- [Make a reader in Go, step 2: fetch an article](terse:8f53c9b4997b672ca21ef8c89afe6ca7e2e3c42500eb04169aa9576367683f1b): get an article from a relay by its ID and check its BLAKE3 hash.
 - [Make a reader in Rust, step 2: fetch an article](terse:718b3f660e508069761d480c97bb79ed73bfd1f3ef1adcdc24f6baf8efe096df): the same in Rust.
-- [Make a reader in Go, step 3: follow a feed](terse:fb3a73beb0f533fb822c83536802a9819d7676da8120cc221a5e4234cee3c160): subscribe to a feed, check its entries' signatures strictly, open an article.
+- [Make a reader in Go, step 3: follow a feed](terse:6f45ebd8af4956983eb4c852e4a97a5cf237cad4c95cc55ebbda57611d961ec7): subscribe to a feed, check its entries' signatures strictly, open an article.
 - [Make a reader in Rust, step 3: follow a feed](terse:6012bf2fe170541797fbb06c754d826e15338911e3c52949eaf393a06e9fe8af): the same in Rust.
 - [Write a program in C](terse:fa7a97176258c24150e4c4c6b46258247a1b01863c07ee57940fa726a98ddad3): hello on the text grid, built, run in a window and tested without one; Go has no compiler for Terse32, so the program pages are in C and Rust.
 - [Write a program in Rust](terse:3422813437bcdf6d4eace8221548650bbd2e855e58eb9ae84f3fa86979ab3c5f): the same program with the Rust runtime.

@@ -178,7 +178,7 @@ tc "$P/sketch/sketch.terse" --frames 1 --hash --identities --driver "2=$T/exampl
 n=$(grep -c '^driver ' "$T/ids")
 if [ $s -eq 0 ] && [ "$n" -ge 2 ] && [ "$(grep -Ec "$ID" "$T/ids")" -eq "$n" ] \
     && grep -Eq '^driver 2 terminal \(example\) 0\.1\.0 fnv:[0-9a-f]{16}$' "$T/ids" \
-    && grep -Eq '^driver 4 .* (- -|0\.1\.0 b3:[0-9a-f]{16})$' "$T/ids"
+    && grep -Eq '^driver 4 .* (- -|[0-9]+\.[0-9]+\.[0-9]+ b3:[0-9a-f]{16})$' "$T/ids"
 then ok "--identities: $n drivers (the example's fnv: build)"; else no "--identities: status $s"; cat "$T/ids"; fi
 tc "$P/holo/holo.terse" --frames 1 --hash --identities --driver "3,9=python3 -I $root/crates/terse-devices/python/vector.py" > /dev/null 2> "$T/ids"; s=$?
 [ $s -eq 0 ] && grep -Eq '^driver 3 .* 0\.1\.0 b2:[0-9a-f]{16}$' "$T/ids" && ok "--identities: vector.py's b2: build" || { no "--identities vector.py: status $s"; cat "$T/ids"; }

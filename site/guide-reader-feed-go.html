@@ -135,7 +135,7 @@
 <p>To open an entry, <code>main</code> gets its blob with step 2&#39;s <code>relay.Get</code>, which checks its hash and skips any entry the relay sends meanwhile, and shows it with <code>article.Show</code>.</p>
 <h2 id="getting-the-sdk">Getting the SDK</h2>
 <p>In a module of your own, <code>go get</code> adds it to <code>go.mod</code>:</p>
-<pre class="sh"><span class=k>go</span> get github.com/runvnc/terse/sdk/go@v0.1.0</pre>
+<pre class="sh"><span class=k>go</span> get github.com/runvnc/terse/sdk/go@v0.9.0</pre>
 <p>In the Tersenet sources, <code>go.work</code> beside <code>go.mod</code> replaces that version with the copy in <code>sdk/go</code>, so the examples build with the SDK they are tested with.</p>
 <h2 id="run-it">Run it</h2>
 <p>With the relay of step 2 running, make a key and publish the article as entry 1 of your feed:</p>

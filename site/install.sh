@@ -13,7 +13,7 @@
 # removes the three programs again (so does `sh install.sh uninstall`).
 #
 # TERSE_PREFIX       install into $TERSE_PREFIX/bin (default ~/.local)
-# TERSE_VERSION      a release such as 0.1.0 (default: the latest)
+# TERSE_VERSION      a release such as 0.9.0 (default: the latest)
 # TERSE_RELEASE_URL  download from here instead of GitHub (for testing)
 #
 # The source of this script: docs/manual/site-files/install.sh in

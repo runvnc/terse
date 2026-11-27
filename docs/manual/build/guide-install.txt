@@ -17,7 +17,7 @@ tersenet: checked its SHA-256
 tersenet: installed /home/me/.local/bin/terse-host
 tersenet: installed /home/me/.local/bin/terse
 tersenet: installed /home/me/.local/bin/terse-relay
-tersenet: terse 0.1.0 b3:0a38148f171f2b64
+tersenet: terse 0.9.0 b3:0a38148f171f2b64
 tersenet: start it with: terse-host
 tersenet: to remove it: the same command, ending sh -s uninstall
 ```
@@ -60,4 +60,4 @@ That puts the three programs in `~/.cargo/bin`. On Linux the window needs the ud
 
 ## What you have now
 
-Tersenet installed. Next, start it: [Run Tersenet](terse:1cdc6a8e25489dc2d79e00a1963c5d6b43bc7abeeee5bb204184899aad5e10d7).
+Tersenet installed. Next, start it: [Run Tersenet](terse:b2d7caa20c4ccbf411ca748506650fe32f9d9c3e22d0fb0c1348c7c041e176cc).

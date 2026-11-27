@@ -139,7 +139,7 @@ To open an entry, `main` gets its blob with step 2's `relay.Get`, which checks i
 In a module of your own, `go get` adds it to `go.mod`:
 
 ```sh
-go get github.com/runvnc/terse/sdk/go@v0.1.0
+go get github.com/runvnc/terse/sdk/go@v0.9.0
 ```
 
 In the Tersenet sources, `go.work` beside `go.mod` replaces that version with the copy in `sdk/go`, so the examples build with the SDK they are tested with.

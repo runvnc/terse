@@ -6,7 +6,7 @@ the strict Ed25519 verification the network requires (Go's
 `tersenet.go`; the standard library and `filippo.io/edwards25519`. No
 options, no state, no I/O.
 
-    go get github.com/runvnc/terse/sdk/go@v0.1.0
+    go get github.com/runvnc/terse/sdk/go@v0.9.0
 
 ```go
 import tersenet "github.com/runvnc/terse/sdk/go"
