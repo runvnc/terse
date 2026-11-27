@@ -385,8 +385,9 @@
 #define TC_MAX 1024  /* a table's cells kept (the page device's limit) */
 #define TABLE_SIZE 14
 #define CODE_DOWN 1  /* a code span is this much smaller than its text */
-#define W_HTOKEN 380 /* a token of a coloured fence classified (and its Colour command) */
-#define W_HLOOK 100  /* a word looked up in a keyword list */
+#define W_HTOKEN 240 /* a token of a coloured fence classified */
+#define W_HCOLOUR 520 /* ... and the text before it put in, and its Colour command */
+#define W_HLOOK 120  /* a word looked up in a keyword list */
 
 /* Keys (USB HID). */
 #define KEY_F 0x09
@@ -2129,7 +2130,8 @@ static uint8_t find_block(uint32_t limit, uint8_t final)
  * after a "[" not yet closed on the line when a "](" follows it. Colours
  * never cost text: when the document is short of room for the rest of
  * the article, the code goes on in the plain colour (hl_step). Metered
- * like the rest (W_HTOKEN a token, W_HLOOK a keyword lookup): the
+ * like the rest (W_HTOKEN a token, W_HLOOK a keyword lookup, W_HCOLOUR a
+ * change of colour): the
  * manual's page with the most code (Make a device in Go, 12 KB of Go) is
  * built in 10 frames instead of 4; the first screenful still comes at once. */
 enum { HL_NONE, HL_C, HL_RUST, HL_GO, HL_SH, HL_GEN };
@@ -2162,6 +2164,7 @@ static uint8_t hl_st;   /* what goes on to the next line: 1 a block comment, 2 a
 static uint8_t hl_q, hl_bol, hl_cmd, hl_hdn;
 static uint16_t hl_at, hl_hd; /* the end of the token classified last; the here-document's word */
 static uint16_t hl_le;        /* the end of the line hl_at is on (its LF) */
+static uint8_t hl_tl;         /* that line may hold a link with text */
 
 static uint8_t lower(uint8_t c)
 {
@@ -2506,24 +2509,26 @@ static uint32_t hl_token(uint32_t p, uint32_t le, uint8_t *cls)
  * is classified, and its colour set if it differs. */
 static __attribute__((noinline)) void hl_step(uint32_t p, uint32_t end)
 {
-    uint32_t le, k, left;
+    uint32_t le, k = p, left;
     uint8_t cls;
     const uint8_t *rgb;
-    if (p > hl_le) { /* a new line: where it ends */
+    if (p > hl_le) { /* a new line: where it ends, and whether a "[" with a "](" after it is on it */
         hl_le = find2(art + p, art + end, '\n', '\n') - art;
-        spend((hl_le - p) * W_FIND / 4);
+        left = find2(art + p, art + hl_le, '[', '[') - art;
+        hl_tl = left < hl_le && find_pair(left, hl_le, ']', '(') < hl_le;
+        spend((hl_le - p) * W_FIND);
     }
     le = hl_le;
     /* Blanks keep the colour: the token is what follows them. */
-    for (k = p; p < le && is_blank(art[p]); p++)
-        ;
-    spend((p - k) * W_FIND);
+    while (p < le && is_blank(art[p]))
+        p++;
     if (p == le && (p == end || art[p] != '\n')) {
         hl_at = p;
+        spend((p - k) * W_FIND);
         return;
     }
     hl_at = hl_token(p, le, &cls);
-    spend(W_HTOKEN + (hl_at - p) * W_FIND);
+    spend(W_HTOKEN + (hl_at - k) * W_FIND);
     if (cls == HC_KEEP)
         return;
     rgb = cls == HC_PLAIN ? rgb_pre : hl_rgb[cls];
@@ -2537,11 +2542,14 @@ static __attribute__((noinline)) void hl_step(uint32_t p, uint32_t end)
         return;
     /* A "[" not closed since the text was last flushed, with a "](" after
      * it on the line: a link with text may start there. */
-    for (k = p; k > b_text && k > b_ls && art[k - 1] != ']' && art[k - 1] != '['; k--)
-        ;
-    spend((p - k) * W_FIND);
-    if (k > b_text && k > b_ls && art[k - 1] == '[' && find_pair(p, le, ']', '(') < le)
-        return;
+    if (hl_tl) {
+        for (k = p; k > b_text && k > b_ls && art[k - 1] != ']' && art[k - 1] != '['; k--)
+            ;
+        spend((p - k) * W_FIND);
+        if (k > b_text && k > b_ls && art[k - 1] == '[' && find_pair(p, le, ']', '(') < le)
+            return;
+    }
+    spend(W_HCOLOUR);
     flush(p);
     doc_rgb(rgb);
     b_colour = rgb;
@@ -2800,6 +2808,8 @@ static uint8_t emit_block(void)
                 i--;
         }
     }
+    if (i < b_text)
+        i = b_text; /* a coloured fence: hl_step put the blanks before its token in already */
     flush(i);
     b_emit = i;
     return 0;

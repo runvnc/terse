@@ -1443,6 +1443,29 @@ fn coloured_lines(run: &Run) -> String {
     out
 }
 
+/// Coloured code built over many frames: every line shown exactly as
+/// written (a frame's share may end anywhere in a line, also in the blanks
+/// before a coloured token), and no frame out of budget.
+#[test]
+fn coloured_code_across_frames() {
+    let mut code = String::new();
+    for i in 0..1200 {
+        let pad = " ".repeat(i % 7 + 1);
+        code.push_str(&match i % 4 {
+            0 => format!("    a{i},{pad}b = {i}, \"s{i}\" // c {i}\n"),
+            1 => format!("func f{i}(b []byte){pad}error {{ return nil }}\n"),
+            2 => format!("    var x{i}{pad}= `raw {i}`\n"),
+            _ => format!("/* {i} */{pad}type t{i} uint32\n"),
+        });
+    }
+    let text = format!("```go\n{code}```\n\nThe end.\n");
+    let run = open_only("Lots of code", &text, 80);
+    let used: Vec<u64> = run.results.iter().map(|r| r.used).collect();
+    assert!(*used.iter().max().unwrap() < 90_000, "the estimate is honest: {used:?}");
+    let shown = run.page_text();
+    assert!(shown.contains(&format!("{code}The end.\n")), "{shown}");
+}
+
 #[test]
 fn article_code_colours() {
     let run = open_only("Code", CODE, 10);
