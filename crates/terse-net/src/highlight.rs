@@ -432,7 +432,7 @@ fn shell(s: &[u8], state: &mut State, out: &mut Out) {
             }
             if e > from {
                 let word = String::from_utf8_lossy(&s[from..e]).into_owned();
-                let end = if q.is_some() && s.get(e) == q { e + 1 } else { e };
+                let end = if q.is_some() && s.get(e).copied() == q { e + 1 } else { e };
                 out.push(Class::Meta, i, end);
                 *state = State::Here(word);
                 i = end;

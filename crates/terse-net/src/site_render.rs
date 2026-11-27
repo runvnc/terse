@@ -407,7 +407,7 @@ mod tests {
         assert!(html.contains("<span class=\"s\">&quot;http&#58;//q&quot;</span>; y = http<span class=\"c\">&#58;//z;</span>") || html.contains("http&#58;<span class=\"c\">//z;</span>"), "{html}");
         assert!(!html.contains("://"), "{html}");
         assert!(html.contains("<pre class=\"sh\"><span class=\"k\">terse</span> run a.terse</pre>"), "{html}");
-        assert!(html.contains("<pre>int x;</pre>\n<pre>int y;</pre>"), "{html}");
+        assert!(html.contains("<pre>int x;</pre>\n<pre>    int y;</pre>"), "{html}");
     }
 
     #[test]
