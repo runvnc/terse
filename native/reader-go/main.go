@@ -51,7 +51,9 @@ options:
   --width <n>          the text column for show and --dump (default: the terminal, at most 80)
   --plain              text for screen readers and pipes: no box drawing, figures as their text
   --tokens             --dump only: the parsed blocks in the test vectors' dump format
-  --color              ANSI colours and styles in show and --dump output
+  --color              ANSI colours and styles in show and --dump output (the default
+                       when the output is a terminal, unless --plain, NO_COLOR or TERM=dumb)
+  --no-color           no ANSI colours or styles in show and --dump output
   --no-link-numbers    do not write [n] after links
   --auto-download <n>  articles up to n bytes are fetched as entries arrive (default 16384; 0: none)
   --no-prefetch        do not fetch the articles that small articles link to
@@ -74,6 +76,7 @@ type config struct {
 	plain       bool
 	tokens      bool
 	color       bool
+	noColor     bool
 	linkNumbers bool
 	timeout     time.Duration
 	dump        string
@@ -160,6 +163,8 @@ func parseArgs(args []string) (*config, error) {
 			c.tokens = true
 		case "--color", "--colour":
 			c.color = true
+		case "--no-color", "--no-colour":
+			c.noColor = true
 		case "--no-link-numbers":
 			c.linkNumbers = false
 		case "--timeout":
@@ -309,6 +314,26 @@ func run(cfg *config) error {
 		return n.SetNickname(rest[0], name)
 	}
 	return fmt.Errorf("unknown command %q (tersereader --help)", cmd)
+}
+
+// ansi tells whether show and --dump write ANSI colours and styles:
+// --color, --no-color, else when the output is a terminal that takes
+// them (not TERM=dumb) and neither --plain nor NO_COLOR (no-color.org) is
+// set.
+func (cfg *config) ansi() bool {
+	switch {
+	case cfg.noColor:
+		return false
+	case cfg.color:
+		return true
+	}
+	return !cfg.plain && colorTerminal() && isTerminal(1)
+}
+
+// colorTerminal tells whether the environment allows colours: NO_COLOR
+// is not set (or empty) and TERM is not dumb.
+func colorTerminal() bool {
+	return os.Getenv("NO_COLOR") == "" && os.Getenv("TERM") != "dumb"
 }
 
 func (cfg *config) column() int {
@@ -487,7 +512,8 @@ func prepare(n nodeapi.Node, id string, b []byte) *loaded {
 }
 
 func (cfg *config) renderOptions() render.Options {
-	return render.Options{Width: cfg.column(), Plain: cfg.plain, LinkNumbers: cfg.linkNumbers, Color: cfg.color}
+	ansi := cfg.ansi()
+	return render.Options{Width: cfg.column(), Plain: cfg.plain, LinkNumbers: cfg.linkNumbers, Color: ansi, Highlight: ansi && !cfg.plain}
 }
 
 // writeArticle prints an article as text: its title, the page, and the
@@ -503,7 +529,7 @@ func writeArticle(cfg *config, l *loaded) {
 		fmt.Println(strings.Repeat("═", min(render.StringWidth(l.title), cfg.column())))
 	}
 	fmt.Println()
-	fmt.Print(page.Text(cfg.color))
+	fmt.Print(page.Text(cfg.ansi()))
 	if cfg.linkNumbers && len(page.Links) > 0 {
 		fmt.Println()
 		fmt.Println("Links:")

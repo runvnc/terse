@@ -37,6 +37,7 @@ type Span struct {
 	Link  int
 	RGB   *[3]uint8
 	BG    *[3]uint8 // a figure cell's background colour (colour output only)
+	Class Class     // a coloured fence's run (highlight.go): its class
 }
 
 // Line is one line of the page.
@@ -57,6 +58,7 @@ type Options struct {
 	Plain       bool // for screen readers and plain text: no box drawing, figures as their text
 	LinkNumbers bool // write [n] after each link
 	Color       bool // figures for a colour terminal (else monochrome dots)
+	Highlight   bool // colour the code of fences that name a language (highlight.go)
 }
 
 // Page is a laid-out article.
@@ -74,6 +76,7 @@ type cell struct {
 	st   Style
 	link int
 	w    int
+	cls  Class
 }
 
 type renderer struct {
@@ -142,8 +145,30 @@ func Render(d *article.Doc, opt Options) *Page {
 				rd.add(l)
 			}
 		case article.Pre:
+			lang := LangNone
+			if opt.Highlight {
+				lang = LangOf(b.Info)
+			}
+			var lines [][]cell
+			var texts []string
 			for _, l := range b.Lines {
-				rd.add(rd.preLine(l))
+				cs := rd.cells(l, PreStyle, true)
+				lines = append(lines, cs)
+				var t strings.Builder
+				for _, c := range cs {
+					t.WriteRune(c.r)
+				}
+				texts = append(texts, t.String())
+			}
+			var runs [][]Run
+			if lang != LangNone {
+				runs = Highlight(lang, texts)
+			}
+			for i, cs := range lines {
+				if runs != nil {
+					classify(cs, runs[i])
+				}
+				rd.add(preLine(cs))
 			}
 		case article.TableBlock:
 			rd.table(b.Table)
@@ -333,11 +358,11 @@ func spans(cs []cell) Line {
 		if c.r == ' ' && c.link == 0 && st == LinkStyle {
 			st = Normal
 		}
-		if n := len(l); n > 0 && l[n-1].Style == st && l[n-1].Link == c.link {
+		if n := len(l); n > 0 && l[n-1].Style == st && l[n-1].Link == c.link && l[n-1].Class == c.cls {
 			l[n-1].Text += string(c.r)
 			continue
 		}
-		l = append(l, Span{Text: string(c.r), Style: st, Link: c.link})
+		l = append(l, Span{Text: string(c.r), Style: st, Link: c.link, Class: c.cls})
 	}
 	return l
 }
@@ -363,14 +388,14 @@ func expandTabs(s string) string {
 
 // preLine shows a preformatted line as written (tabs as spaces to the
 // next multiple of four), never wrapped.
-func (rd *renderer) preLine(pieces []article.Inline) Line {
+func preLine(cs []cell) Line {
 	var out []cell
 	col := 0
-	for _, c := range rd.cells(pieces, PreStyle, true) {
+	for _, c := range cs {
 		if c.r == '\t' {
 			n := 4 - col%4
 			for k := 0; k < n; k++ {
-				out = append(out, cell{r: ' ', st: c.st, link: c.link, w: 1})
+				out = append(out, cell{r: ' ', st: c.st, link: c.link, w: 1, cls: c.cls})
 			}
 			col += n
 			continue
@@ -420,7 +445,7 @@ func StyleCode(s Span, selected int) string {
 	case CodeStyle:
 		code = "\x1b[36m"
 	case PreStyle:
-		code = ""
+		code = classCode[s.Class]
 	case LinkStyle:
 		code = "\x1b[34;4m"
 	case Mark, Border:
