@@ -30,7 +30,7 @@
 </ul>
 <p>An article is UTF-8 text that reads well as it is, with a few line-start markers for headings, lists, preformatted text, tables and figures, and links of the form <code>terse:</code> followed by a blob ID. A program is published the same way, as a feed entry whose title is the program&#39;s name and whose blob is its image; its identity, the publisher&#39;s feed key and the name, stays the same from one version to the next. A host downloads the current version of each program in the feeds it follows. Articles never contain programs: they link to them.</p>
 <h2 id="the-machine">The machine</h2>
-<p>A program is a file of RISC-V machine code, at most 128 KiB, identified by the hash of its bytes. It runs in a machine with at most 1 MiB of RAM and a fixed amount of work per frame, and it reaches the outside world only through a handful of host devices. The same program, given the same inputs, does exactly the same thing on every host. A host that runs only the reader needs just the reading profile (devices 1, 2, 4 and 7); one that runs programs needs just the program profile (devices 1, 2 and 3).</p>
+<p>A program is a file of RISC-V machine code, at most 256 KiB, identified by the hash of its bytes. It runs in a machine with at most 768 KiB of RAM and a fixed amount of work per frame, and it reaches the outside world only through a handful of host devices. The same program, given the same inputs, does exactly the same thing on every host. A host that runs only the reader needs just the reading profile (devices 1, 2, 4 and 7); one that runs programs needs just the program profile (devices 1, 2 and 3).</p>
 <p>The CPU is RV32IMC: the 32-bit RISC-V base integer set with multiply and divide and compressed instructions, in user mode only. There are no floating-point instructions, no interrupts and no privileged state. The memory map has two regions and nothing else: ROM holds the program&#39;s bytes and RAM is zero at reset. Any access outside them faults, so a null pointer dereference stops the program with a recorded fault.</p>
 <figure><svg viewBox="0 0 512 80" width="512" height="80" style="width:34.133em" role="img" aria-label="Figure, 512 by 80 units"><path d="M8 40 L504 40 L504 64 L8 64 Z" fill="#808080" fill-opacity="0.376"/><path d="M72 40 L168 40 L168 64 L72 64 Z" fill="#3070e0"/><path d="M232 40 L376 40 L376 64 L232 64 Z" fill="#30a050"/><path d="M8 34 L12 34 L12 70 L8 70 Z" fill="#e04040"/><path d="M64 16 L80 16 L72 32 Z" fill="#3070e0"/><path d="M368 16 L384 16 L376 32 Z" fill="#e09020"/></svg></figure>
 <div class="table"><table>
@@ -38,8 +38,8 @@
 <tbody>
 <tr><td>grey</td><td>everything else</td><td>any load, store or fetch faults</td></tr>
 <tr><td>red mark</td><td><code>0000_0000h</code></td><td>address 0, so a null pointer faults</td></tr>
-<tr><td>blue bar</td><td><code>0001_0000h</code> to <code>0001_0000h</code> + rom_len − 1</td><td>ROM (1 to 131,072 bytes): read and execute</td></tr>
-<tr><td>green bar</td><td><code>0010_0000h</code> to <code>0010_0000h</code> + 8,192 × ram_pages − 1</td><td>RAM (8 KiB to 1 MiB): read, write and execute</td></tr>
+<tr><td>blue bar</td><td><code>0001_0000h</code> to <code>0001_0000h</code> + rom_len − 1</td><td>ROM (1 to 262,144 bytes): read and execute</td></tr>
+<tr><td>green bar</td><td><code>0010_0000h</code> to <code>0010_0000h</code> + 8,192 × ram_pages − 1</td><td>RAM (8 KiB to 768 KiB): read, write and execute</td></tr>
 <tr><td>blue triangle</td><td><code>0001_0000h</code></td><td>where <code>pc</code> starts</td></tr>
 <tr><td>orange triangle</td><td>end of RAM</td><td>where <code>sp</code> starts</td></tr>
 </tbody></table></div>

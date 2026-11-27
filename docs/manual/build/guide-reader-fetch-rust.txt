@@ -172,11 +172,11 @@ Error: "the relay does not have it"
 
 ## What it leaves out
 
-The program asks one relay and keeps nothing. A complete reader keeps every blob it fetched, so that an article opens at once the next time with no network at all, asks several relays, and matches replies to requests by their numbers. In the reference implementation that is `crates/terse-net/src/node.rs`, with the relay client in `relay.rs`, the messages in `protocol.rs` and the store in `store.rs`. A reader may also leave all of the network to a node, a separate program it asks over a local socket; [Writing a reader without the machine](terse:5cdd927e19e87387bc3736f1e2b5d379313d392c37e04248dcc275e1516c8274) says how.
+The program asks one relay and keeps nothing. A complete reader keeps every blob it fetched, so that an article opens at once the next time with no network at all, asks several relays, and matches replies to requests by their numbers. In the reference implementation that is `crates/terse-net/src/node.rs`, with the relay client in `relay.rs`, the messages in `protocol.rs` and the store in `store.rs`. A reader may also leave all of the network to a node, a separate program it asks over a local socket; [Writing a reader without the machine](terse:a387db1a7254b3216e70cd23f1d1492e2e65a6b8358ae0440cf413014f11461e) says how.
 
 ## What you have now
 
 A reader that fetches an article by its ID and knows it is genuine.
 
-- Next: [Make a reader in Rust, step 3: follow a feed](terse:3b7569dc9388b00fa9fd7ffdcf603f60c1f61e6e6cd7480163e6a87f632694a3).
-- Every relay message, and why a relay refuses: [The network](terse:1dd0d8efcd9961657ab4e2a3eb3f72f651a0683a36f8495452fef4f5ce0752a5).
+- Next: [Make a reader in Rust, step 3: follow a feed](terse:3841352b31f3814ee9470bce3051e91ae5b81e9aea3a09e7e07d4a089300fde1).
+- Every relay message, and why a relay refuses: [The network](terse:4495a8ee7f7807763b38f85228938ef76ec4fde95f3fb454e7d23cb2402316cd).

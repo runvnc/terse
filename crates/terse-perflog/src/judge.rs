@@ -328,10 +328,11 @@ pub fn verdict(r: &Rule, s: &FrameSample) -> Option<Late> {
 /// rest is its work. This holds for the host's own parts as for drivers
 /// and machines: the hosts read their stages' time on a CPU (terse-host's
 /// `watch.rs`, terse-bus's `monitor.rs`). Where it is not known (the system
-/// gives no reading, `TERSE_PERF_PROBE=none`), 0: the stall excuses it, and
-/// the record gives its `cpu-ms` as `-`.
+/// gives no reading, `TERSE_PERF_PROBE=none`), all of its own time is taken
+/// as time on a CPU: a missing reading excuses nothing more than the stall
+/// itself lasted (the record still gives its `cpu-ms` as `-`).
 fn cpu_beyond_stall(p: &Part, stall_ns: u64) -> u64 {
-    p.run_ns.map_or(0, |_| p.cpu().saturating_sub(stall_ns))
+    p.run_ns.map_or(p.own(), |_| p.cpu()).saturating_sub(stall_ns)
 }
 
 /// The excuse for frames just after a size change of the window's surface
@@ -516,10 +517,15 @@ mod tests {
         assert_eq!(spin(40 * MS, 35 * MS), Verdict::Memory);
         // Below a quarter of a frame a stall excuses nothing.
         assert_eq!(spin(0, 4 * MS), Verdict::Blamed);
-        // Where the CPU time is not known, the stall excuses as before.
-        let mut f = frame(5, 42 * MS, &[Part { run_ns: None, ..dev(2, 40 * MS, 0, 0) }]);
-        f.memory_stall_ns = Some(5 * MS);
-        assert_eq!(j.verdict(&f).unwrap().verdict, Verdict::Memory);
+        // Where the CPU time is not known, its own time counts as time on
+        // a CPU: the stall excuses no more than it lasted.
+        let unread = |stall: u64| {
+            let mut f = frame(5, 42 * MS, &[Part { run_ns: None, ..dev(2, 40 * MS, 0, 0) }]);
+            f.memory_stall_ns = Some(stall);
+            j.verdict(&f).unwrap().verdict
+        };
+        assert_eq!(unread(5 * MS), Verdict::Blamed);
+        assert_eq!(unread(35 * MS), Verdict::Memory);
         // Late, but nobody over half a frame.
         let l = j.verdict(&frame(6, 20 * MS, &[dev(2, 6 * MS, 6 * MS, 0), Part::new(Component::Core, 7 * MS)])).unwrap();
         assert_eq!((l.verdict, l.top.component), (Verdict::Spread, Component::Core));
@@ -555,8 +561,10 @@ mod tests {
         // more than the stage's time: it counts as on a CPU all of it.
         let l = stage(Component::Compose, 30 * MS, Some(200 * MS), 20 * MS);
         assert_eq!((l.verdict, l.top.cpu()), (Verdict::Blamed, 30 * MS));
-        // Only where no reading was had does a stall excuse it whole.
-        assert_eq!(stage(Component::Compose, 30_400_000, None, 6 * MS).verdict, Verdict::Memory);
+        // Where no reading was had, its own time counts as on a CPU: the
+        // stall excuses no more than it lasted.
+        assert_eq!(stage(Component::Compose, 30_400_000, None, 6 * MS).verdict, Verdict::Blamed);
+        assert_eq!(stage(Component::Compose, 30_400_000, None, 25 * MS).verdict, Verdict::Memory);
     }
 
     #[test]

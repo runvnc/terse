@@ -9,8 +9,8 @@ A program file (`.terse`) is a 32-byte header, two bytes for each device the pro
 | Offset | Size | Field |
 |---|---|---|
 | 0 | 6 | `TERS`, format version 0, machine profile 1 |
-| 6 | 3 | the ROM's length, at most 131,072 bytes |
-| 9 | 1 | RAM pages of 8 KiB, 1 to 128 |
+| 6 | 3 | the ROM's length, at most 262,144 bytes |
+| 9 | 1 | RAM pages of 8 KiB, 1 to 96 |
 | 10 | 1 | the number of devices, at most 16 |
 | 32 | 2 each | each device: its slot and version (`80h`: optional) |
 
@@ -24,8 +24,8 @@ const MAGIC: &[u8] = b"TERS\0\x01";
 const ROM_LEN_AT: usize = 6;
 const RAM_PAGES_AT: usize = 9;
 const DEVICES_AT: usize = 10;
-const MAX_ROM: usize = 131072;
-const MAX_RAM_PAGES: usize = 128;
+const MAX_ROM: usize = 262144;
+const MAX_RAM_PAGES: usize = 96;
 const MAX_DEVICES: usize = 16;
 pub const DEVICE_SIZE: usize = 2;
 pub const PAGE_SIZE: usize = 8192;

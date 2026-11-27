@@ -54,4 +54,4 @@ The same script runs headless, `terse run line.terse --events line.drive --frame
 
 ## What you have now
 
-A test that sees what the user sees. `type`, `click`, `hold` and `resize` give other input; `dump page` prints the page as laid out; `expect no-slow` fails if a frame was late. Every command is in [Testing a program](terse:d141b09e7550f1d90defa57491073277494584825c1bb6ec97285559608c5536). Next, a bigger step: [Make a host, step 1: run a program to its end](terse:2dd603028748beb378e7df7ae357b533ca0ca1e295e2c757a1a7215153def77f).
+A test that sees what the user sees. `type`, `click`, `hold` and `resize` give other input; `dump page` prints the page as laid out; `expect no-slow` fails if a frame was late. Every command is in [Testing a program](terse:ba5044f450941ac380b18eb9902a5b32789e8f7533f5fc83b0e398c6db85a8e3). Next, a bigger step: [Make a host, step 1: run a program to its end](terse:97a42d3d76c49527cccb765f99b018029bc0a1afef4a0e11c41ac55ace74e2a2).

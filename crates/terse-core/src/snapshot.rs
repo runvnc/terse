@@ -41,13 +41,14 @@ const FRAME_AT: usize = 173;
 /// The serialization up to and including the RAM size.
 const BEFORE_RAM: usize = 200;
 const PAGE: usize = 8192;
-/// Bytes of the page map: one bit per RAM page, 128 pages at most.
+/// Bytes of the page map: one bit per RAM page, 128 bits (RAM has at
+/// most 96 pages, so bits 96 to 127 are always clear: STATE.md 4).
 const PAGE_MAP: usize = 16;
-/// The longest serialization: header, CPU, frame loop, 1 MiB of RAM, a
+/// The longest serialization: header, CPU, frame loop, the largest RAM, a
 /// full queue, every device at its largest, 16 experimental sections at
 /// theirs, and an argument.
 const MAX_STATE: usize = 200
-    + 1_048_576
+    + crate::image::RAM_PAGES_MAX as usize * PAGE
     + crate::image::MAX_DEVICES
     + 37
     + 4 * 64
@@ -357,7 +358,7 @@ impl Snapshot {
         let mut state = Vec::with_capacity(n);
         state.extend_from_slice(r.take(BEFORE_RAM)?);
         let ram_len = u32::from_le_bytes(state[196..200].try_into().unwrap()) as usize;
-        if ram_len == 0 || ram_len % PAGE != 0 || ram_len > 128 * PAGE || BEFORE_RAM + ram_len > n {
+        if ram_len == 0 || ram_len % PAGE != 0 || ram_len > crate::image::RAM_PAGES_MAX as usize * PAGE || BEFORE_RAM + ram_len > n {
             return Err(bad("RAM size"));
         }
         let map: [u8; PAGE_MAP] = r.array()?;

@@ -377,7 +377,7 @@ received first is kept.
   once a subscribed feed is caught up (section 4.3), and after that
   whenever one of its program entries arrives, the client gets the image
   of the current version of each of the feed's programs that it does not
-  hold, whatever the article limit, if its size is at most 131,136 bytes
+  hold, whatever the article limit, if its size is at most 262,208 bytes
   (the largest image); not older versions. The user may turn this off. A
   client that does not run programs does not download them.
 - **Prefetch:** when the client stores an article blob through automatic
@@ -463,8 +463,8 @@ declared name.
 
 | Direction | Message | Layout |
 |---|---|---|
-| client → relay | Find | `06h`, `req` (4), `scope` (1), `n` (1), query (`n` bytes) |
-| relay → client | Find reply | `86h`, `req` (4), `status` (1), `count` (1), then `count` times: `length` (2), entry (`length` bytes, complete with its signature) |
+| client → relay | Find | `06h`, `req` (4), `scope` (1), `n` (1), query (`n` bytes), `c` (1), cursor (`c` bytes) |
+| relay → client | Find reply | `86h`, `req` (4), `status` (1), `count` (1), then `count` times: `length` (2), entry (`length` bytes, complete with its signature); then `c` (1), cursor (`c` bytes) |
 
 - `scope` `1` searches feeds by display name; `2` searches article and
   document titles; `3` searches program names. The query is 1 to 48 bytes
@@ -488,9 +488,29 @@ declared name.
   profile in force whose name matches, current versions only (the relay
   holds no program entry of that feed and name with a higher `seq`), newest
   first by the order in which the relay stored them.
-- At most 16 results. A relay answers from what it holds; it needs the
+- At most 16 results a page. A relay answers from what it holds; it needs the
   profile document to know `listed`, so a profile whose document it does
   not hold, or cannot parse, counts as not listed.
+- **Pages.** A find with `c` 0 asks for the first page. A reply whose
+  results do not end the list carries a cursor (`c` 1 to 64), else `c` 0
+  (also in a refused reply). The next page is a find of the same scope
+  and query with that cursor; it returns the results that follow the
+  last one of the page before, in the same order, so a page holds no
+  result of an earlier one. Results the relay stores after the first
+  page do not move the pages after it: an entry stored since then is not
+  in them. (A feed whose profile changes between pages may be missed or
+  shown twice; clients drop the repeat.)
+- The cursor is the relay's own: the client sends it back unchanged, only
+  to the relay that gave it, with the same scope and query. A relay
+  should put in the cursor what it needs to continue (for example, the
+  feed and `seq` of the page's last result) rather than keep state for
+  it. A cursor the relay cannot continue from (malformed, for another
+  query, or no longer usable) is refused (status `3`, `count` 0), and the
+  client starts again from the first page. A page is a find like any
+  other, for the relay's allowance below.
+- Before this revision a find ended at the query and its reply at the
+  last entry. A relay takes a find that ends at the query as `c` 0; a
+  client takes a reply that ends at the last entry as `c` 0.
 - A relay may refuse a find (status `3`, or a "try again" status of
   section 3.1; `count` 0) from a connection or an address that searches
   too often.
@@ -503,6 +523,13 @@ declared name.
   program is then dropped if another result has the same feed and name and
   a higher `seq`. They keep the first 16. A
   search that no relay answered and at least one refused is refused.
+- **More results.** A client keeps the cursor each relay returned. Asked
+  for more, it sends the next find to each relay whose last reply carried
+  a cursor, merges those pages by the rules above, drops results it has
+  already shown (same feed and `seq`; scope 1, same feed), and shows up
+  to 16 more after the ones already shown. There are more while any relay
+  has a cursor. A relay that refuses a cursor is asked again from its
+  first page, and the results already shown are dropped from it.
 
 ### 4.8 Lookup
 
