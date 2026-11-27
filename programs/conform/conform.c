@@ -119,6 +119,19 @@ static inline uint32_t call4(uint32_t n, uint32_t x, uint32_t y, uint32_t z, uin
     return a0;
 }
 
+/* A call with five arguments (a0-a4). */
+static inline uint32_t call6(uint32_t n, uint32_t x, uint32_t y, uint32_t z, uint32_t w, uint32_t v)
+{
+    register uint32_t a0 __asm__("a0") = x;
+    register uint32_t a1 __asm__("a1") = y;
+    register uint32_t a2 __asm__("a2") = z;
+    register uint32_t a3 __asm__("a3") = w;
+    register uint32_t a4 __asm__("a4") = v;
+    register uint32_t a7 __asm__("a7") = n;
+    __asm__ volatile("ecall" : "+r"(a0), "+r"(a1) : "r"(a2), "r"(a3), "r"(a4), "r"(a7) : "memory");
+    return a0;
+}
+
 /* A call with a second result (a1). */
 static inline uint32_t call2(uint32_t n, uint32_t x, uint32_t y, uint32_t *second)
 {
@@ -2009,7 +2022,12 @@ static void t_page(void)
     ck(call(P_CLEAR, 0, 0, 0) == 0);
     ck(call(P_CLEAR, 0, 0, 0) == 0);
     ck(call(P_LOCATE, ANCHOR_ID, 0, 0) == 1); /* no document */
-    ck(call(0x706, 0, 0, 0) == ERR_UNKNOWN);
+    /* layer (§page.layers): an id above 63 is refused; a layer set back as
+     * after reset (shown, at 0, full size) leaves no trace in the state. */
+    ck(call6(0x706, 64, 1, 0, 0, 256) == 1);
+    ck(call6(0x706, 63, 3, (uint32_t)-16, 16, 128) == 0);
+    ck(call6(0x706, 63, 1, 0, 0, 256) == 0);
+    ck(call(0x707, 0, 0, 0) == ERR_UNKNOWN);
     ck(call(0x7FF, 0, 0, 0) == ERR_UNKNOWN);
     /* The state the frame ends with: the document, the wide rectangle, a
      * negative scroll value (shown as 0). */
