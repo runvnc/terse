@@ -1,0 +1,173 @@
+size 640 320
+split 90 178
+background #8a6444
+; The Hall of Vanes: the round ground floor of the Spire, lamplit. The
+; back wall curves away; the hearth on the left, the weathervanes on the
+; wall, the speaking-tube and the stair behind its wind-gate on the right;
+; evening light from a west window lies across the boards. Then, in
+; layers: the bellows on their hook (and the ribbon that mends them), the
+; wind-gate shut and open, Ysolde, and the armchair in front of her.
+stroke none
+
+; --- The curved back wall: stone, darker toward the top and the edges.
+fill #3a2e2c M0 0 H640 V91 H0 Z
+fill #54443c M0 30 C160 18 480 18 640 30 V178 H0 Z
+fill #6a574a M60 60 C200 48 440 48 580 60 V178 H60 Z
+fill #7c6858 M140 80 C260 72 380 72 500 80 V178 H140 Z
+; Courses of stone on the wall, following its curve.
+fill none stroke #4a3b34 0.8
+M0 56 C160 44 480 44 640 56 M0 84 C160 72 480 72 640 84 M0 112 C160 100 480 100 640 112
+M0 140 C160 128 480 128 640 140 M0 168 C160 156 480 156 640 168
+M40 30 V54 M120 24 V48 M220 21 V45 M330 20 V44 M440 21 V45 M540 25 V49 M610 29 V53
+M80 52 V77 M180 47 V72 M280 45 V70 M390 45 V70 M500 48 V73 M590 53 V78
+M30 82 V106 M140 75 V99 M240 73 V97 M350 72 V96 M460 74 V98 M570 79 V103
+stroke none
+; Lamp-glow on the wall, warm in the middle.
+fill #ffc46a18 M120 40 C260 30 380 30 520 40 V178 H120 Z
+fill #ffc46a14 M200 60 C280 54 360 54 440 60 V170 H200 Z
+; The beams of the floor above, and the hanging lamp.
+fill #3a2a22 M0 0 H640 V9 H0 Z M0 14 H640 V20 H0 Z
+fill #4c3828 M0 8 H640 V11 H0 Z
+fill none stroke #2a1e18 1 M320 20 V52
+stroke none
+fill #2a1e18 M310 52 H330 L326 64 H314 Z
+fill #ffd27a M314 56 H326 L324 63 H316 Z
+fill #ffd27a22
+@circle 320 62 36
+fill #ffd27a18
+@circle 320 62 70
+
+; --- The west window: evening sky in the stone, light across the floor.
+fill #5a4a40 M548 40 V96 H600 V40 C600 22 548 22 548 40 Z
+fill #e8b896 M554 42 V92 H594 V42 C594 30 554 30 554 42 Z
+fill #f6d6a8 M554 70 H594 V92 H554 Z
+fill #9a9cc6 M554 76 L566 66 L578 72 L594 62 V80 H554 Z
+fill none stroke #3a2e2c 1.6 M574 30 V92 M554 62 H594
+stroke none
+fill #ffdca024 M548 96 L600 96 L420 270 L250 270 Z
+fill #ffdca018 M554 96 L594 96 L470 250 L330 250 Z
+
+; --- The rack of retired weathervanes, each on its bracket, labelled.
+fill none stroke #2e2622 1.4 M232 112 H408
+stroke #3a302a 1 M250 112 V94 M300 112 V92 M350 112 V92 M396 112 V94
+stroke none
+; The fish (south wind).
+fill #c99a40 M236 90 C244 84 256 84 262 90 L268 85 L267 95 L262 90 C256 96 244 96 236 90 Z
+fill #2a2020 M240 89.4 C240 88.6 241.4 88.6 241.4 89.4 C241.4 90.2 240 90.2 240 89.4 Z
+; The ship (southwest).
+fill #b88c3c M286 92 H314 L310 98 H290 Z
+fill #d8b060 M299 92 V74 L312 88 Z M298 92 V78 L288 90 Z
+; The hare (on loan to the roof): an empty bracket and its outline.
+fill none stroke #6a5a48 0.8 M336 92 C338 84 352 82 358 86 L364 80 L362 88 C364 90 362 94 358 94 L338 94 Z
+stroke none
+; The moon (night breezes, sulks).
+fill #d9c47a M384 80 C376 82 374 96 384 100 C380 94 380 86 384 80 Z
+; The labels.
+fill #e8dcc0 M240 116 H262 V121 H240 Z M290 116 H312 V121 H290 Z M338 116 H362 V121 H338 Z M384 116 H406 V121 H384 Z
+
+; --- The speaking-tube: a brass pipe up the wall into the dark, its horn.
+fill #a27c3a M438 0 H443 V140 H438 Z
+fill #c99a4a M438 0 H439.5 V140 H438 Z
+fill #c99a4a M432 140 H449 L452 152 C452 160 448 166 440.5 166 C433 166 429 160 429 152 Z
+fill #3a2a1c M433.5 152 C433.5 147 447.5 147 447.5 152 C447.5 157 433.5 157 433.5 152 Z
+fill #e8dcc0 M448 132 H466 V139 H448 Z
+
+; --- The stair, curling up the right-hand wall into the dusk.
+fill #4a3c34 M470 250 L470 180 C520 160 580 120 640 70 V250 Z
+fill #8c7c6a M470 250 H624 V242 H470 Z M478 242 H630 V234 H478 Z M490 234 H636 V226 H490 Z M504 226 H640 V218 H504 Z
+M520 218 H640 V210 H520 Z M536 210 H640 V202 H536 Z M554 202 H640 V194 H554 Z M572 194 H640 V186 H572 Z
+M590 186 H640 V178 H590 Z
+fill #8c7c6a M606 178 H640 V170 H606 Z M620 170 H640 V162 H620 Z
+fill #a8977f M470 242 H624 V240 H470 Z M478 234 H630 V232 H478 Z M490 226 H636 V224 H490 Z M504 218 H640 V216 H504 Z
+M520 210 H640 V208 H520 Z M536 202 H640 V200 H536 Z M554 194 H640 V192 H554 Z M572 186 H640 V184 H572 Z
+fill #2a201c M470 180 C520 160 580 120 640 70 V60 C580 110 520 150 470 172 Z
+; The newel post.
+fill #5a3e2a M468 252 V170 H478 V252 Z
+fill #7a5638 M468 252 V170 H471 V252 Z
+fill #6a4a32 M466 170 H480 V164 H466 Z
+
+; --- The floor: boards in perspective, the round rug, the light from the window.
+fill #6e4e34 M0 178 H640 V187 H0 Z
+fill none stroke #5e432c 0.8
+M260 186 L180 320 M320 186 L320 320 M380 186 L460 320 M200 186 L40 320 M440 186 L600 320
+M140 186 L0 250 M500 186 L640 260
+M0 214 H640 M0 252 H640
+stroke none
+fill #ffdca020 M440 178 L560 178 L470 300 L300 300 Z
+; The rug: rings of faded red and gold.
+fill #7a3a30 M200 280 C200 262 440 262 440 280 C440 298 200 298 200 280 Z
+fill #a85a40 M214 280 C214 267 426 267 426 280 C426 293 214 293 214 280 Z
+fill #c8924e M238 280 C238 271 402 271 402 280 C402 289 238 289 238 280 Z
+fill #8a4636 M262 280 C262 274 378 274 378 280 C378 286 262 286 262 280 Z
+fill #c8924e M300 280 C300 277 340 277 340 280 C340 283 300 283 300 280 Z
+
+; --- The hearth: a great stone mouth, cold; brass hares on the mantel.
+fill #8e7e6a M30 250 V128 H176 V250 Z
+fill #a6967f M30 128 H176 V136 H30 Z
+fill #b4a48c M24 120 H182 V128 H24 Z
+fill #2a201c M50 250 V170 C50 150 156 150 156 170 V250 Z
+fill #3a2e28 M60 250 V176 C60 162 146 162 146 176 V250 Z
+fill none stroke #786a58 0.8 M30 160 H50 M156 160 H176 M30 192 H50 M156 192 H176 M30 224 H50 M156 224 H176 M40 128 V160 M166 128 V160
+stroke none
+; The grate and its swept ash.
+fill none stroke #1e1a18 1.6 M70 236 H136 M74 236 V226 M90 236 V224 M104 236 V224 M118 236 V224 M132 236 V226
+stroke none
+fill #6a6460 M72 244 C80 238 126 238 134 244 Z
+; The mantel's hares.
+fill #c99a40
+M40 120 C40 116 46 115 48 117 L50 113 L50.5 118 C51 119 51 120 50 120 Z
+M70 120 C70 116 76 115 78 117 L80 113 L80.5 118 C81 119 81 120 80 120 Z
+M100 120 C100 116 106 115 108 117 L110 113 L110.5 118 C111 119 111 120 110 120 Z
+M130 120 C130 116 136 115 138 117 L140 113 L140.5 118 C141 119 141 120 140 120 Z
+M158 120 C158 116 164 115 166 117 L168 113 L168.5 118 C169 119 169 120 168 120 Z
+; The bellows' hook.
+fill none stroke #2a2420 1.2 M192 172 V180 C192 184 196 184 196 181
+stroke none
+
+; --- Shadows on the boards: the hearth's, the stair's.
+fill #2a1e1440 M30 250 H176 L200 262 H40 Z M470 250 H640 V262 H460 Z
+
+; --- The armchair, Wenna's.
+@copy chair
+fill #2a1e1450 M70 306 C100 312 150 312 170 306 C150 300 100 300 70 306 Z
+fill #5a3048 M64 300 V246 C64 226 78 218 92 218 H124 C138 218 150 226 150 246 V300 Z
+fill #7a4460 M70 300 V250 C70 232 80 226 92 226 H118 C130 226 138 232 138 250 V300 Z
+fill #8e5472 M78 270 H142 V296 H78 Z
+fill #a8688a M78 270 H142 V275 H78 Z
+fill #5a3048 M56 300 V256 C56 248 66 248 66 256 V300 Z M140 300 V258 C140 250 152 250 152 258 V300 Z
+fill #e8d8b0 M88 222 C100 218 116 220 124 226 L126 248 C118 244 104 246 92 250 Z
+fill #3a2418 M64 300 H68 V308 H64 Z M144 300 H148 V308 H144 Z
+@end
+
+; --- The bellows on their hook, and the ribbon that mends them.
+layer bellows_hook
+fill #7a5638 M184 182 H202 L200 186 H186 Z
+fill #a07850 M182 186 H204 C206 200 202 214 194 220 C186 214 180 200 182 186 Z
+fill #6a4a30 M186 190 C190 200 190 210 194 218 C186 212 184 200 186 190 Z
+fill #c99a40 M191 220 H197 L195 236 H193 Z
+fill none stroke #3a2a1c 0.8 M188 200 L190 204 M200 198 L198 205
+stroke none
+layer ribbon_on
+fill #c8323a M183 200 C190 202 198 202 205 200 L205 204 C198 206 190 206 183 204 Z M196 204 L200 212 L197 213 L194 205 Z
+
+; --- The wind-gate: four canvas sails on an iron post; shut (broadside),
+; or turned edge-on by a draught.
+fill #2a2420 M512 252 V196 H516 V252 Z
+fill #4a4248 M508 196 H520 V192 H508 Z
+layer gate_shut
+fill #e6dcc4 M496 200 H513 V222 H496 Z M515 200 H532 V222 H515 Z M496 226 H513 V248 H496 Z M515 226 H532 V248 H515 Z
+fill #c8bca2 M496 200 H513 V204 H496 Z M515 200 H532 V204 H515 Z M496 226 H513 V230 H496 Z M515 226 H532 V230 H515 Z
+fill none stroke #8a7e68 0.6 M504 200 V222 M523 200 V222 M504 226 V248 M523 226 V248
+stroke none
+layer gate_open
+fill #e6dcc4 M510 200 H518 V222 H510 Z M510 226 H518 V248 H510 Z
+fill #c8bca2 M510 200 H513 V222 H510 Z M510 226 H513 V248 H510 Z
+fill #ffd98a30 M470 252 L478 170 H520 L528 252 Z
+
+; --- Ysolde.
+@actor
+
+; --- The armchair, in front of her when she is behind it.
+stroke none
+layer chair_front
+@paste chair

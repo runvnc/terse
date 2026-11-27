@@ -1,0 +1,83 @@
+# The Stillwind Spire, the part built so far: three scenes and the way in.
+#
+# Played by `scripts/cargo test -p terse-cli --test stillwind`. Lines:
+#   > command        types it and Enter, then waits until she has walked
+#                    where it takes her and the scene is shown
+#   < text           the reply holds the text (spaces squashed)
+#   ! text           the reply does not hold it
+#   status text      the status line holds it
+#   screen text      the screen holds it
+#   @ script line    input as `terse run` scripts give it (`@ down left`,
+#                    `@ up left`, `@ click 300 250`), then 3 frames
+#   settle           waits until she stops and no command waits
+#   scene ROOM       the page shows that room's scene, its layers set
+#   shown ROOM_LAYER / hidden ROOM_LAYER
+#                    a layer of the scene (story_data.h LAYER_*)
+#   near X Y [tol]   her feet are within tol (4) units of (X, Y)
+#   wait N           N frames
+# The walkthrough is the solution; each puzzle has a transcript too.
+
+scene meadow
+status The Meadow Path
+status 7:12 pm, as ever
+shown meadow_goat_key
+> examine goat
+< red ribbon
+> take key
+< steps neatly sideways
+> blow dandelions
+< no wind to take them
+near 70 300
+> north
+< The Spire's Foot
+scene foot
+shown foot_apple_tree
+> read note
+< Key's with Clementine
+< NOBODY IS TO COME IN
+> take apple
+< Something longer would reach it
+near 168 272
+> knock apple with staff
+< drops into the grass
+shown foot_apple_ground
+hidden foot_apple_tree
+> take apple
+< Taken
+> south
+< The Meadow Path
+scene meadow
+> give apple to goat
+< are yours
+near 330 256
+shown meadow_goat_plain
+hidden meadow_goat_key
+> north
+scene foot
+> unlock door with key
+< You unlock
+> open door
+< swings inward
+shown foot_door_open
+> in
+< The Hall of Vanes
+scene hall
+> talk to tube
+< You're not Gran
+> ask voice about gran
+< staying evening
+> pump bellows
+< wheeze
+> tie ribbon to bellows
+< FWOOF
+shown hall_ribbon_on
+> take bellows
+< Taken
+hidden hall_bellows_hook
+> pump bellows at gate
+< edge-on
+shown hall_gate_open
+hidden hall_gate_shut
+> up
+< You have won
+< score 10 out of 10
