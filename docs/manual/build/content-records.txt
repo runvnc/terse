@@ -73,7 +73,7 @@ No consent is asked for any of the four. A host that offers only the machine's r
 
 ## Charges
 
-Each `submit` costs 4 units. An accepted save also costs 1 unit per 4 bytes of its data (rounded up), at submit. The bytes a load or a records list writes to `addr` cost 1 unit per 4 bytes, rounded up, taken from the budget of the frame they arrive in. See [charges](terse:0cd6940cd27ae344118a79142e415ac92d9df31c5938bdee4e8ef2249cdd8620); completions are announced by a content-done event, see [events](terse:dc3d95e68d63157ec488f5d5e99c6875d65ff723df6dce52b1af6b3190229a62).
+Each `submit` costs 4 units. An accepted save also costs 1 unit per 4 bytes of its data (rounded up), at submit. The bytes a load or a records list writes to `addr` cost 1 unit per 4 bytes, rounded up, taken from the budget of the frame they arrive in. See [charges](terse:700aa265f5d0ae8141b841e6eeecb0b6146ac6935da3121441ee039db69ecf7c); completions are announced by a content-done event, see [events](terse:654230b0ec65952b422aaa86ce7da9e80af625be02f4ad365c408ed291a15c1a).
 
 ## Replay
 

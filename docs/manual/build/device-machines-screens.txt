@@ -80,4 +80,4 @@ The pointer at (x, y) is over a panel if the ray from the eye in use through the
 
 A pointer event that sets a button bit clear in the previous pointer event (wherever that went) over a flat picture, or over a panel while the view does not move, also gives the shell a machine pressed event, at the pointer event's place in the shell's input, whatever the machine's state.
 
-The home key is one input the host reserves (F12 in `terse-host`, the `home` script line in `terse run`). It never reaches a machine as a key; it sets the focus to 0 and queues a home event for the shell. A single machine run alone has no home key. See [events](terse:dc3d95e68d63157ec488f5d5e99c6875d65ff723df6dce52b1af6b3190229a62).
+The home key is one input the host reserves (F12 in `terse-host`, the `home` script line in `terse run`). It never reaches a machine as a key; it sets the focus to 0 and queues a home event for the shell. A single machine run alone has no home key. See [events](terse:654230b0ec65952b422aaa86ce7da9e80af625be02f4ad365c408ed291a15c1a).

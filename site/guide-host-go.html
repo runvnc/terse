@@ -18,8 +18,8 @@
 <thead><tr><th>Offset</th><th>Size</th><th>Field</th></tr></thead>
 <tbody>
 <tr><td>0</td><td>6</td><td><code>TERS</code>, format version 0, machine profile 1</td></tr>
-<tr><td>6</td><td>3</td><td>the ROM&#39;s length, at most 131,072 bytes</td></tr>
-<tr><td>9</td><td>1</td><td>RAM pages of 8 KiB, 1 to 128</td></tr>
+<tr><td>6</td><td>3</td><td>the ROM&#39;s length, at most 262,144 bytes</td></tr>
+<tr><td>9</td><td>1</td><td>RAM pages of 8 KiB, 1 to 96</td></tr>
 <tr><td>10</td><td>1</td><td>the number of devices, at most 16</td></tr>
 <tr><td>32</td><td>2 each</td><td>each device: its slot and version (<code>80h</code>: optional)</td></tr>
 </tbody></table></div>
@@ -37,8 +37,8 @@ const (
     romLenAt    = 6
     ramPagesAt  = 9
     devicesAt   = 10
-    maxROM      = 131072
-    maxRAMPages = 128
+    maxROM      = 262144
+    maxRAMPages = 96
     maxDevices  = 16
     deviceSize  = 2
     PageSize    = 8192

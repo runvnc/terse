@@ -9,12 +9,12 @@ A program file (`.terse`) is a 32-byte header, two bytes for each device the pro
 | Offset | Size | Field |
 |---|---|---|
 | 0 | 6 | `TERS`, format version 0, machine profile 1 |
-| 6 | 3 | the ROM's length, at most 131,072 bytes |
-| 9 | 1 | RAM pages of 8 KiB, 1 to 128 |
+| 6 | 3 | the ROM's length, at most 262,144 bytes |
+| 9 | 1 | RAM pages of 8 KiB, 1 to 96 |
 | 10 | 1 | the number of devices, at most 16 |
 | 32 | 2 each | each device: its slot and version (`80h`: optional) |
 
-Bytes 11 to 31 hold a title, which a host does not need. The rest is in [The Terse32 machine](terse:eb5e8f78d92c0dde2ae30f3c08aa4326196dddf37d5986350c9d13121701897d), "The image format".
+Bytes 11 to 31 hold a title, which a host does not need. The rest is in [The Terse32 machine](terse:d3101301394f2408bdd43ab92cd647028c42addb78a525e0c9490852aa7e6a03), "The image format".
 
 ```go from examples/host/go/machine/image.go
 package machine
@@ -30,8 +30,8 @@ const (
     romLenAt    = 6
     ramPagesAt  = 9
     devicesAt   = 10
-    maxROM      = 131072
-    maxRAMPages = 128
+    maxROM      = 262144
+    maxRAMPages = 96
     maxDevices  = 16
     deviceSize  = 2
     PageSize    = 8192
@@ -357,8 +357,8 @@ prints `186`. The reference gives the same: `terse run exit.terse --frames 1`, t
 
 ## What you have now
 
-A Terse32 processor that runs a program to its end: `cpu.go` (283 lines), `decode.go` (122), `image.go` (51) and `step1/main.go` (36). Next, make it keep time: [Make a host in Go, step 2: frames and the budget](terse:f92c55521e410cfe70292f2fdf956ad1c4f9e76bb5cbae3de2a83398ed7c5762).
+A Terse32 processor that runs a program to its end: `cpu.go` (283 lines), `decode.go` (122), `image.go` (51) and `step1/main.go` (36). Next, make it keep time: [Make a host in Go, step 2: frames and the budget](terse:2107abe4a023a4c75d4aeca0ecdc543e5e50c9b47b732dc2d31e3aee741e1a87).
 
-- The same step in Rust: [Make a host in Rust, step 1: run a program to its end](terse:11d2fced88033a02d2e9d351c25e95e1b125f90a7e848e5ff6af85e16e86e336).
+- The same step in Rust: [Make a host in Rust, step 1: run a program to its end](terse:ace154328cdd17799d0019d714270bdccf31022e70a9b546d4852658e3108182).
 - Full implementations: `native/core-c/cpu.c` (C) and `crates/terse-core/src/cpu.rs` (the reference).
-- The rules: [The Terse32 machine](terse:eb5e8f78d92c0dde2ae30f3c08aa4326196dddf37d5986350c9d13121701897d), sections "CPU", "Memory map", "Reset state", "Stopping and faults", "The image format" and "Calls".
+- The rules: [The Terse32 machine](terse:d3101301394f2408bdd43ab92cd647028c42addb78a525e0c9490852aa7e6a03), sections "CPU", "Memory map", "Reset state", "Stopping and faults", "The image format" and "Calls".

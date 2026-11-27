@@ -32,7 +32,7 @@ terse build --write-lib &lt;dir&gt;</pre>
 <li><code>-o</code>: the image. Default: the first source&#39;s stem with <code>.terse</code>, in the current directory (<code>terse build src/game.c</code> writes <code>game.terse</code>).</li>
 <li><code>--title</code>: the image&#39;s title, at most 16 bytes of UTF-8. Default: the first source&#39;s stem, cut to 16 bytes.</li>
 <li><code>--device</code>, <code>--optional</code>: the devices the header lists (below). Without <code>--device</code> the image requires the program profile: <code>2:0</code>, the terminal, and <code>3:0</code>, the 2D vector display (device 1, System, is always there and is not listed). Giving <code>--device</code> replaces that list; <code>--optional</code> adds to it, and <code>--optional 3:0</code> makes the vector display optional instead of required.</li>
-<li><code>--ram-pages</code>: RAM in 8 KiB pages, 1 to 128. Default: the program&#39;s <code>.data</code> and <code>.bss</code> plus 8 KiB for the stack, rounded up to whole pages (2 pages for a small C program, 1 for a small Rust one). A count too small for <code>.data</code> and <code>.bss</code> alone is refused. The stack grows down from the end of RAM towards <code>.bss</code> and nothing stops it running into it: give more if you put big arrays on the stack or recurse deeply.</li>
+<li><code>--ram-pages</code>: RAM in 8 KiB pages, 1 to 96. Default: the program&#39;s <code>.data</code> and <code>.bss</code> plus 8 KiB for the stack, rounded up to whole pages (2 pages for a small C program, 1 for a small Rust one). A count too small for <code>.data</code> and <code>.bss</code> alone is refused. The stack grows down from the end of RAM towards <code>.bss</code> and nothing stops it running into it: give more if you put big arrays on the stack or recurse deeply.</li>
 <li><code>--cflag</code>: one more flag for clang, for example <code>--cflag -DDEBUG</code>; repeat it for several.</li>
 <li><code>--clang</code>, <code>--lld</code>, <code>--rustc</code>: the tools to run. Default: the variables <code>CLANG</code>, <code>LLD</code> and <code>RUSTC</code> if set (the <code>build.sh</code> scripts of <code>programs/</code> read the same names), else <code>clang</code>, <code>ld.lld</code> and <code>rustc</code> from <code>PATH</code>.</li>
 <li><code>--show</code>: print each command as it is run, then the <code>terse pack</code> command that gives the same image. The files built into <code>terse</code> are written to a temporary directory for the build, named in the first line.</li>
@@ -62,7 +62,7 @@ terse pack --rom rom.bin --title hello --ram-pages 2 \
 <tr><td><code>--target=riscv32-unknown-elf</code></td><td>32-bit RISC-V, no operating system: no system headers or libraries</td></tr>
 <tr><td><code>-march=rv32imc</code></td><td>exactly the CPU (SPEC §cpu): integers, multiply and divide, compressed instructions; no atomics, no floating-point registers</td></tr>
 <tr><td><code>-mabi=ilp32</code></td><td>the calling convention without floating-point registers</td></tr>
-<tr><td><code>-Os</code></td><td>small code: ROM is at most 128 KiB and every instruction costs budget</td></tr>
+<tr><td><code>-Os</code></td><td>small code: ROM is at most 256 KiB and every instruction costs budget</td></tr>
 <tr><td><code>-ffreestanding</code></td><td>no hosted C library: only freestanding headers such as <code>stdint.h</code></td></tr>
 <tr><td><code>-nostdlib</code></td><td>link no C library or start files</td></tr>
 <tr><td><code>-fno-builtin</code></td><td><code>memcpy</code> and the like are not known functions; terse.c provides <code>memcpy</code>, <code>memmove</code>, <code>memset</code> and <code>memcmp</code></td></tr>
@@ -73,18 +73,18 @@ terse pack --rom rom.bin --title hello --ram-pages 2 \
 </tbody></table></div>
 <p>crt0.S comes first and terse.c last. <code>crt0.S</code> holds <code>_start</code>, in the section <code>.text.start</code>, which the linker script puts at the first byte of ROM, where the machine starts (SPEC §reset). It copies <code>.data</code> from ROM to RAM, calls <code>main</code> and exits with its return value; RAM is zero at reset, so <code>.bss</code> needs nothing. A program only in assembly starts itself: it defines <code>_start</code> in <code>.text.start</code> (see <code>programs/hello/hello.S</code> or <code>terse new x.S</code>). terse.c is always linked; <code>--gc-sections</code> drops it from a program that calls nothing in it. There is no C library beyond terse.c and no compiler runtime: avoid 64-bit division and floating point in C, or bring the routines.</p>
 <h2 id="the-linker-script-terse-ld">The linker script, terse.ld</h2>
-<pre>ROM (rx) : ORIGIN = 0x00010000, LENGTH = 128K
-RAM (rw) : ORIGIN = 0x00100000, LENGTH = 1M
+<pre>ROM (rx) : ORIGIN = 0x00010000, LENGTH = 256K
+RAM (rw) : ORIGIN = 0x00100000, LENGTH = 768K
 .text   : KEEP(*(.text.start)), then *(.text .text.*)  &gt; ROM
 .rodata : constants                                     &gt; ROM
 .data   : __data_start .. __data_end  &gt; RAM, at __data_load
 .bss    : (NOLOAD) up to __bss_end                      &gt; RAM
 /DISCARD/ : .comment, .note*, .riscv.attributes, .eh_frame*</pre>
-<p><code>.data</code> is loaded in ROM at <code>__data_load</code>, after <code>.rodata</code>, and copied to RAM by the start code. The image&#39;s RAM is set by its header, not by the script (which allows the largest, 1 MiB); <code>terse build</code> reads where <code>.bss</code> ends from the ELF file to choose the default RAM and to refuse a count too small.</p>
+<p><code>.data</code> is loaded in ROM at <code>__data_load</code>, after <code>.rodata</code>, and copied to RAM by the start code. The image&#39;s RAM is set by its header, not by the script (which allows the largest, 768 KiB); <code>terse build</code> reads where <code>.bss</code> ends from the ELF file to choose the default RAM and to refuse a count too small.</p>
 <h2 id="the-rom-from-the-elf-file">The ROM from the ELF file</h2>
-<p>The ROM is the bytes of each loadable segment (program header <code>PT_LOAD</code> with a file size) placed at its load address (<code>p_paddr</code>) from <code>0001_0000h</code>, with the gaps between segments zero: what <code>llvm-objcopy -O binary</code> writes for these files. <code>terse build</code> refuses an ELF file whose entry point is not <code>0001_0000h</code> (no <code>_start</code> in <code>.text.start</code>) or which loads anything outside the 128 KiB of ROM.</p>
+<p>The ROM is the bytes of each loadable segment (program header <code>PT_LOAD</code> with a file size) placed at its load address (<code>p_paddr</code>) from <code>0001_0000h</code>, with the gaps between segments zero: what <code>llvm-objcopy -O binary</code> writes for these files. <code>terse build</code> refuses an ELF file whose entry point is not <code>0001_0000h</code> (no <code>_start</code> in <code>.text.start</code>) or which loads anything outside the 256 KiB of ROM.</p>
 <h2 id="the-devices-an-image-lists">The devices an image lists</h2>
-<p><code>terse pack --rom &lt;raw.bin&gt; --title &lt;t&gt; --ram-pages &lt;n&gt; [--device &lt;slot:version&gt;]... [--optional &lt;slot:version&gt;]... -o &lt;out.terse&gt;</code> writes the header before a raw ROM and checks the result as a host would; <code>terse build</code> takes the same <code>--device</code> and <code>--optional</code>. The title is at most 16 bytes; RAM is 1 to 128 pages of 8 KiB; at most 16 devices. It prints the file&#39;s size and its image ID.</p>
+<p><code>terse pack --rom &lt;raw.bin&gt; --title &lt;t&gt; --ram-pages &lt;n&gt; [--device &lt;slot:version&gt;]... [--optional &lt;slot:version&gt;]... -o &lt;out.terse&gt;</code> writes the header before a raw ROM and checks the result as a host would; <code>terse build</code> takes the same <code>--device</code> and <code>--optional</code>. The title is at most 16 bytes; RAM is 1 to 96 pages of 8 KiB; at most 16 devices. It prints the file&#39;s size and its image ID.</p>
 <div class="table"><table>
 <thead><tr><th>Slot</th><th>Device</th><th><code>--device</code></th></tr></thead>
 <tbody>

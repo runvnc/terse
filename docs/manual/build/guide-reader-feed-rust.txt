@@ -139,10 +139,10 @@ It prints the list again, an empty line, and the article as step 1 shows it.
 
 ## What it leaves out
 
-A complete reader keeps its subscriptions and every entry it receives, lists the newest first, follows several feeds on several relays and stays connected for new entries, downloads small articles before you open them, and shows each feed's name with its key. It also notes when a blob's length is not the size its entry gives. The reference implementation checks entries with the same SDK (`crates/terse-net/src/entry.rs`), and `node.rs` does the rest. [Writing a reader without the machine](terse:5cdd927e19e87387bc3736f1e2b5d379313d392c37e04248dcc275e1516c8274) lists all a complete reader must do.
+A complete reader keeps its subscriptions and every entry it receives, lists the newest first, follows several feeds on several relays and stays connected for new entries, downloads small articles before you open them, and shows each feed's name with its key. It also notes when a blob's length is not the size its entry gives. The reference implementation checks entries with the same SDK (`crates/terse-net/src/entry.rs`), and `node.rs` does the rest. [Writing a reader without the machine](terse:a387db1a7254b3216e70cd23f1d1492e2e65a6b8358ae0440cf413014f11461e) lists all a complete reader must do.
 
 ## What you have now
 
 A Tersenet reader in Rust: it follows a feed, checks everything it receives against its signature and hash, and shows the articles.
 
-Next, if you want to go further: Tersenet can also carry small programs, run by the Terse32 virtual machine. Nothing so far needs it. [Write a program](terse:226f5a50d9b9a9d1b6e971209b1e7b053ed48c1b3d85153bb57c012e55c3e4c3).
+Next, if you want to go further: Tersenet can also carry small programs, run by the Terse32 virtual machine. Nothing so far needs it. [Write a program](terse:74aeac8dc304fcb8f0ff9341f797e9b4742a13c4a093a810c69821b6c3a23e8a).
