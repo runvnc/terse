@@ -1,0 +1,293 @@
+; Made by actor.py: do not edit. The traveller's poses, a layer each.
+; Feet at (30, 344) units, full size, facing right (side poses).
+; layer 1: side, stride 0
+layer 1
+fill none stroke #00000046 6.5 M21 344 L39 344
+fill none stroke #3a2a20 3.75 M30 322 L30 344 M30 322 L30 344
+stroke none fill #2e7a78
+M30 297 L17.5 330 L42 330 Z
+stroke none fill #215c5a
+M30 297 L17.5 330 L25.5 330 Z
+stroke none fill #e0b84a
+M24 314.75 H36 V316.75 H24 Z
+fill none stroke #8a5a2c 2.25 M40.5 290.5 L41.5 343.5
+stroke none fill #ffe58a3c
+@circle 40.5 289.5 6.5
+stroke none fill #fff2b8
+@circle 40.5 289.5 2.5
+fill none stroke #215c5a 3.75 M31.5 304 L39.5 313
+stroke none fill #eac6a0
+@circle 31 293 5.5
+@circle 40.5 313 2
+stroke none fill #e6e2da
+M28.5 294.5 L36 294.5 L33 305 Z
+stroke none fill #2a2030
+@circle 34.25 291.5 0.75
+fill none stroke #3b2f6e 3 M19.5 289 L41 289
+stroke none fill #3b2f6e
+M23.5 289 L37.5 289 L26 270.5 Z
+fill none stroke #e0b84a 1.5 M24.25 287 L36 287
+; layer 2: side, stride 12
+layer 2
+fill none stroke #00000046 6.5 M21 344 L39 344
+fill none stroke #3a2a20 3.75 M30 321 L27 344 M30 321 L33 342.5
+stroke none fill #2e7a78
+M30 296 L17.5 329 L42 329 Z
+stroke none fill #215c5a
+M30 296 L17.5 329 L25.5 329 Z
+stroke none fill #e0b84a
+M24 313.75 H36 V315.75 H24 Z
+fill none stroke #8a5a2c 2.25 M39 289.5 L40 342.5
+stroke none fill #ffe58a3c
+@circle 39 288.5 6.5
+stroke none fill #fff2b8
+@circle 39 288.5 2.5
+fill none stroke #215c5a 3.75 M31.5 303 L38 312
+stroke none fill #eac6a0
+@circle 31 292 5.5
+@circle 39 312 2
+stroke none fill #e6e2da
+M28.5 293.5 L36 293.5 L33 304 Z
+stroke none fill #2a2030
+@circle 34.25 290.5 0.75
+fill none stroke #3b2f6e 3 M19.5 288 L41 288
+stroke none fill #3b2f6e
+M23.5 288 L37.5 288 L26 269.5 Z
+fill none stroke #e0b84a 1.5 M24.25 286 L36 286
+; layer 3: side, stride 20
+layer 3
+fill none stroke #00000046 6.5 M21 344 L39 344
+fill none stroke #3a2a20 3.75 M30 322 L25 344 M30 322 L35 342.5
+stroke none fill #2e7a78
+M30 297 L17.5 330 L42 330 Z
+stroke none fill #215c5a
+M30 297 L17.5 330 L25.5 330 Z
+stroke none fill #e0b84a
+M24 314.75 H36 V316.75 H24 Z
+fill none stroke #8a5a2c 2.25 M38 290.5 L39 343.5
+stroke none fill #ffe58a3c
+@circle 38 289.5 6.5
+stroke none fill #fff2b8
+@circle 38 289.5 2.5
+fill none stroke #215c5a 3.75 M31.5 304 L37 313
+stroke none fill #eac6a0
+@circle 31 293 5.5
+@circle 38 313 2
+stroke none fill #e6e2da
+M28.5 294.5 L36 294.5 L33 305 Z
+stroke none fill #2a2030
+@circle 34.25 291.5 0.75
+fill none stroke #3b2f6e 3 M19.5 289 L41 289
+stroke none fill #3b2f6e
+M23.5 289 L37.5 289 L26 270.5 Z
+fill none stroke #e0b84a 1.5 M24.25 287 L36 287
+; layer 4: side, stride -12
+layer 4
+fill none stroke #00000046 6.5 M21 344 L39 344
+fill none stroke #3a2a20 3.75 M30 321 L33 342.5 M30 321 L27 344
+stroke none fill #2e7a78
+M30 296 L17.5 329 L42 329 Z
+stroke none fill #215c5a
+M30 296 L17.5 329 L25.5 329 Z
+stroke none fill #e0b84a
+M24 313.75 H36 V315.75 H24 Z
+fill none stroke #8a5a2c 2.25 M42 289.5 L43 342.5
+stroke none fill #ffe58a3c
+@circle 42 288.5 6.5
+stroke none fill #fff2b8
+@circle 42 288.5 2.5
+fill none stroke #215c5a 3.75 M31.5 303 L41 312
+stroke none fill #eac6a0
+@circle 31 292 5.5
+@circle 42 312 2
+stroke none fill #e6e2da
+M28.5 293.5 L36 293.5 L33 304 Z
+stroke none fill #2a2030
+@circle 34.25 290.5 0.75
+fill none stroke #3b2f6e 3 M19.5 288 L41 288
+stroke none fill #3b2f6e
+M23.5 288 L37.5 288 L26 269.5 Z
+fill none stroke #e0b84a 1.5 M24.25 286 L36 286
+; layer 5: side, stride -20
+layer 5
+fill none stroke #00000046 6.5 M21 344 L39 344
+fill none stroke #3a2a20 3.75 M30 322 L35 342.5 M30 322 L25 344
+stroke none fill #2e7a78
+M30 297 L17.5 330 L42 330 Z
+stroke none fill #215c5a
+M30 297 L17.5 330 L25.5 330 Z
+stroke none fill #e0b84a
+M24 314.75 H36 V316.75 H24 Z
+fill none stroke #8a5a2c 2.25 M43 290.5 L44 343.5
+stroke none fill #ffe58a3c
+@circle 43 289.5 6.5
+stroke none fill #fff2b8
+@circle 43 289.5 2.5
+fill none stroke #215c5a 3.75 M31.5 304 L42 313
+stroke none fill #eac6a0
+@circle 31 293 5.5
+@circle 43 313 2
+stroke none fill #e6e2da
+M28.5 294.5 L36 294.5 L33 305 Z
+stroke none fill #2a2030
+@circle 34.25 291.5 0.75
+fill none stroke #3b2f6e 3 M19.5 289 L41 289
+stroke none fill #3b2f6e
+M23.5 289 L37.5 289 L26 270.5 Z
+fill none stroke #e0b84a 1.5 M24.25 287 L36 287
+; layer 6: front, stride 0
+layer 6
+fill none stroke #00000046 6.5 M21 344 L39 344
+fill none stroke #3a2a20 3.75 M27.5 322 L27 344 M32.5 322 L33 344
+stroke none fill #2e7a78
+M30 297 L17.5 330 L42 330 Z
+stroke none fill #215c5a
+M30 297 L35.5 330 L42 330 Z
+stroke none fill #e0b84a
+M24 314.75 H36 V316.75 H24 Z
+fill none stroke #8a5a2c 2.25 M44 290.5 L45 343.5
+stroke none fill #ffe58a3c
+@circle 44 289.5 6.5
+stroke none fill #fff2b8
+@circle 44 289.5 2.5
+fill none stroke #215c5a 3.75 M36.5 304 L43 313
+stroke none fill #eac6a0
+@circle 30 293 5.5
+@circle 44 313 2
+stroke none fill #e6e2da
+M25.5 294.5 L34.5 294.5 L30 306.5 Z
+stroke none fill #2a2030
+@circle 28 291.5 0.75
+@circle 32 291.5 0.75
+fill none stroke #3b2f6e 3 M19.5 289 L41 289
+stroke none fill #3b2f6e
+M23.25 289 L36.75 289 L31.5 269.5 Z
+fill none stroke #e0b84a 1.5 M24.25 287 L36 287
+; layer 7: front, stride 12
+layer 7
+fill none stroke #00000046 6.5 M21 344 L39 344
+fill none stroke #3a2a20 3.75 M27.5 321 L27 341.5 M32.5 321 L33 344
+stroke none fill #2e7a78
+M30 296 L17.5 329 L42 329 Z
+stroke none fill #215c5a
+M30 296 L35.5 329 L42 329 Z
+stroke none fill #e0b84a
+M24 313.75 H36 V315.75 H24 Z
+fill none stroke #8a5a2c 2.25 M44 289.5 L45 342.5
+stroke none fill #ffe58a3c
+@circle 44 288.5 6.5
+stroke none fill #fff2b8
+@circle 44 288.5 2.5
+fill none stroke #215c5a 3.75 M36.5 303 L43 312
+stroke none fill #eac6a0
+@circle 30 292 5.5
+@circle 44 312 2
+stroke none fill #e6e2da
+M25.5 293.5 L34.5 293.5 L30 305.5 Z
+stroke none fill #2a2030
+@circle 28 290.5 0.75
+@circle 32 290.5 0.75
+fill none stroke #3b2f6e 3 M19.5 288 L41 288
+stroke none fill #3b2f6e
+M23.25 288 L36.75 288 L31.5 268.5 Z
+fill none stroke #e0b84a 1.5 M24.25 286 L36 286
+; layer 8: front, stride -12
+layer 8
+fill none stroke #00000046 6.5 M21 344 L39 344
+fill none stroke #3a2a20 3.75 M27.5 321 L27 344 M32.5 321 L33 341.5
+stroke none fill #2e7a78
+M30 296 L17.5 329 L42 329 Z
+stroke none fill #215c5a
+M30 296 L35.5 329 L42 329 Z
+stroke none fill #e0b84a
+M24 313.75 H36 V315.75 H24 Z
+fill none stroke #8a5a2c 2.25 M44 289.5 L45 342.5
+stroke none fill #ffe58a3c
+@circle 44 288.5 6.5
+stroke none fill #fff2b8
+@circle 44 288.5 2.5
+fill none stroke #215c5a 3.75 M36.5 303 L43 312
+stroke none fill #eac6a0
+@circle 30 292 5.5
+@circle 44 312 2
+stroke none fill #e6e2da
+M25.5 293.5 L34.5 293.5 L30 305.5 Z
+stroke none fill #2a2030
+@circle 28 290.5 0.75
+@circle 32 290.5 0.75
+fill none stroke #3b2f6e 3 M19.5 288 L41 288
+stroke none fill #3b2f6e
+M23.25 288 L36.75 288 L31.5 268.5 Z
+fill none stroke #e0b84a 1.5 M24.25 286 L36 286
+; layer 9: back, stride 0
+layer 9
+fill none stroke #00000046 6.5 M21 344 L39 344
+fill none stroke #3a2a20 3.75 M27.5 322 L27 344 M32.5 322 L33 344
+stroke none fill #215c5a
+M30 297 L17.5 330 L42 330 Z
+stroke none fill #215c5a
+M30 297 L35.5 330 L42 330 Z
+stroke none fill #e0b84a
+M24 314.75 H36 V316.75 H24 Z
+fill none stroke #8a5a2c 2.25 M44 290.5 L45 343.5
+stroke none fill #ffe58a3c
+@circle 44 289.5 6.5
+stroke none fill #fff2b8
+@circle 44 289.5 2.5
+fill none stroke #215c5a 3.75 M36.5 304 L43 313
+stroke none fill #eac6a0
+@circle 44 313 2
+stroke none fill #b9b4aa
+@circle 30 293.5 5.5
+fill none stroke #3b2f6e 3 M19.5 289 L41 289
+stroke none fill #3b2f6e
+M23.25 289 L36.75 289 L31.5 269.5 Z
+fill none stroke #e0b84a 1.5 M24.25 287 L36 287
+; layer 10: back, stride 12
+layer 10
+fill none stroke #00000046 6.5 M21 344 L39 344
+fill none stroke #3a2a20 3.75 M27.5 321 L27 341.5 M32.5 321 L33 344
+stroke none fill #215c5a
+M30 296 L17.5 329 L42 329 Z
+stroke none fill #215c5a
+M30 296 L35.5 329 L42 329 Z
+stroke none fill #e0b84a
+M24 313.75 H36 V315.75 H24 Z
+fill none stroke #8a5a2c 2.25 M44 289.5 L45 342.5
+stroke none fill #ffe58a3c
+@circle 44 288.5 6.5
+stroke none fill #fff2b8
+@circle 44 288.5 2.5
+fill none stroke #215c5a 3.75 M36.5 303 L43 312
+stroke none fill #eac6a0
+@circle 44 312 2
+stroke none fill #b9b4aa
+@circle 30 292.5 5.5
+fill none stroke #3b2f6e 3 M19.5 288 L41 288
+stroke none fill #3b2f6e
+M23.25 288 L36.75 288 L31.5 268.5 Z
+fill none stroke #e0b84a 1.5 M24.25 286 L36 286
+; layer 11: back, stride -12
+layer 11
+fill none stroke #00000046 6.5 M21 344 L39 344
+fill none stroke #3a2a20 3.75 M27.5 321 L27 344 M32.5 321 L33 341.5
+stroke none fill #215c5a
+M30 296 L17.5 329 L42 329 Z
+stroke none fill #215c5a
+M30 296 L35.5 329 L42 329 Z
+stroke none fill #e0b84a
+M24 313.75 H36 V315.75 H24 Z
+fill none stroke #8a5a2c 2.25 M44 289.5 L45 342.5
+stroke none fill #ffe58a3c
+@circle 44 288.5 6.5
+stroke none fill #fff2b8
+@circle 44 288.5 2.5
+fill none stroke #215c5a 3.75 M36.5 303 L43 312
+stroke none fill #eac6a0
+@circle 44 312 2
+stroke none fill #b9b4aa
+@circle 30 292.5 5.5
+fill none stroke #3b2f6e 3 M19.5 288 L41 288
+stroke none fill #3b2f6e
+M23.25 288 L36.75 288 L31.5 268.5 Z
+fill none stroke #e0b84a 1.5 M24.25 286 L36 286

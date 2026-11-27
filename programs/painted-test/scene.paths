@@ -1,9 +1,19 @@
 size 640 352
+split 176
 ; The tower in front of the mountains, painted in the article path syntax
-; (ARTICLE.md section 6) plus scene.py's @circle, @ellipse and ; comments.
-; Units are screen units: the figure fills the top 352 of the screen's 480.
-; Painted back to front. The character and the occluders are not here:
-; they are the vector display's (painted-test.c).
+; (ARTICLE.md section 6) plus scene.py's @circle, @ellipse, @include,
+; @copy, @paste and ; comments. Units are screen units: the scene fills
+; the top 352 of the screen's 480, in two figures (split at 176: each has
+; caps of its own; a path across the cut is in both).
+; Painted back to front: the scenery, then in layers (spec/page.md
+; §page.layers) the open door, the traveller's poses (actor.paths) and
+; copies of what stands in front of him, which painted-test.c shows while
+; he is behind it. The layers:
+;   1-11  the traveller's poses (actor.py)
+;   12    the open door: the dark inside and the lamplight
+;   13    the boulder again, in front
+;   14    the foot of the tower again, in front
+;   15    the open door again, in front of him too
 stroke none
 
 ; Sky, in bands, deep blue to the warm haze at the horizon.
@@ -89,6 +99,7 @@ fill #f0c94a
 ; stone, the eave, the conical roof, a pennant, windows, the door, a step.
 fill #00000030
 @ellipse 452 266 42 7
+@copy tower
 fill #c9bda9 M412 110 H468 V262 Q440 270 412 262 Z
 fill #ddd3c1 M416 110 H430 V265.4 L416 263.1 Z
 fill #a39784 M454 110 H468 V262 L460 263.9 L454 264.9 Z
@@ -97,6 +108,7 @@ fill none stroke #ab9f8a 1
 M412 140 H468 M412 175 H468 M412 210 H468 M412 245 H468
 M436 110 V140 M422 140 V175 M450 140 V175 M436 175 V210 M424 210 V245 M456 210 V245
 stroke none
+@end
 fill #8e8270 M404 102 H476 V114 Q440 120 404 114 Z
 fill #b0a48f M404 102 H476 V106 H404 Z
 fill #5b4382 M398 104 Q440 112 482 104 L440 26 Z
@@ -106,6 +118,7 @@ stroke #4a3a2a 1.5 M440 27 V10
 stroke none fill #d8574a M440 10 L458 14 L440 19 Z
 fill #4a3626 M433 163 V151 C433 143 447 143 447 151 V163 Z
 fill #ffcf5e M435.5 161 V151.5 C435.5 146 444.5 146 444.5 151.5 V161 Z
+@copy foot
 fill #4a3626 M453 204 V194 C453 188 461 188 461 194 V204 Z
 fill #f5bd4f M455 202 V194.5 C455 191 459 191 459 194.5 V202 Z
 fill #7e7362 M425 265 V234 C425 225.7 431.7 219 440 219 C448.3 219 455 225.7 455 234 V265 Z
@@ -114,3 +127,46 @@ fill none stroke #5c361d 1 M434 223.6 V265 M440 222 V265 M446 223.6 V265
 stroke none fill #e2c060
 @circle 447.5 246 1.6
 fill #a59a88 M423 264 H457 L460 270 H420 Z
+@end
+
+; The boulder: low-poly facets about a point inside it, lit from the left
+; as the tower is; its shadow first, on the grass.
+fill none stroke #00000038 12 M104 337 L186 338
+stroke none
+@copy boulder
+fill #8a8f99 M138 316 L92 334 L98 312 Z
+fill #a3a8b2 M138 316 L98 312 L114 294 Z
+fill #b8bcc4 M138 316 L114 294 L136 284 Z
+fill #a7acb5 M138 316 L136 284 L160 288 Z
+fill #8f949e M138 316 L160 288 L178 302 Z
+fill #737882 M138 316 L178 302 L188 320 Z
+fill #5f646e M138 316 L188 320 L186 336 Z
+fill #6a6f79 M138 316 L186 336 L140 340 Z
+fill #7c818b M138 316 L140 340 L92 334 Z
+fill none stroke #55606a78 1 M120 300 L132 306
+stroke none
+@end
+
+; The open door: the dark inside and the lamplight spilling out.
+layer 12
+@copy door
+fill #2a1c14 M428 234 H452 V265 H428 Z
+@circle 440 234 12
+fill #ffcf7396 M431 244 H449 V265 H431 Z
+@circle 440 244 9
+fill #ffd88a30 M430 267 L450 267 L462 292 Z M430 267 L462 292 L418 292 Z
+@end
+
+; The traveller.
+@include actor.paths
+
+; In front of him: the boulder, the foot of the tower, the open door.
+stroke none
+layer 13
+@paste boulder
+stroke none
+layer 14
+@paste tower
+@paste foot
+layer 15
+@paste door
