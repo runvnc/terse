@@ -23,6 +23,7 @@
 #define CALL_OPEN 0x107
 #define CALL_ARGUMENT 0x108
 #define CALL_DEVICE 0x109
+#define CALL_COPY 0x10A
 #define CALL_TERM_WRITE 0x200
 #define CALL_TERM_COMMAND 0x201
 #define CALL_TERM_SET_CURSOR 0x202
@@ -248,6 +249,12 @@ static inline uint32_t terse_argument(uint8_t *id) { return terse_call(CALL_ARGU
  * Calls to a device the machine does not have return TERSE_ERR_UNKNOWN. */
 static inline uint32_t terse_device(uint32_t slot) { return terse_call(CALL_DEVICE, slot, 0, 0); }
 static inline int terse_has_device(uint32_t slot) { return terse_device(slot) != TERSE_ERR_UNKNOWN; }
+/* The user's copy (SPEC §system `copy`): offers the system clipboard n
+ * bytes of UTF-8 text (at most 65,536). The host takes it only in the frame
+ * in which the program read the key-down of a copy key (Ctrl+C, Ctrl+X or
+ * Ctrl+Insert) from its events, and drops it otherwise or without a
+ * clipboard; 0 either way, TERSE_ERR_BUFFER for a bad buffer. */
+static inline uint32_t terse_copy(const void *text, uint32_t n) { return terse_call(CALL_COPY, (uint32_t)text, n, 0); }
 /* Full text (SPEC §terminal.text): device 10, a capability with no calls.
  * Every host draws the basic repertoire in the terminal (ASCII, the
  * Latin-1 Supplement, dashes, quotation marks, • … −, box drawing and

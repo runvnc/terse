@@ -422,8 +422,9 @@ host's prompt, `allow` and `deny` answer every one without asking. Keys go to th
 host's prompt first, then F12 (the home key, with a shell), then to the machine with
 the focus. Ctrl+V and
 Shift+Insert paste: the clipboard's text goes to the focused program as text events (SPEC §events),
-newlines kept and other control characters dropped, fed in only as fast as the event
-queue has room, so none is lost. Ctrl+Alt+minus, Ctrl+Alt+plus (`=`) and Ctrl+Alt+M are
+tabs and newlines kept and other control characters dropped, fed in only as fast as the event
+queue has room, so none is lost; the paste key's own key down comes before the text and its
+key up after it, so a program can tell a paste from typing. Ctrl+Alt+minus, Ctrl+Alt+plus (`=`) and Ctrl+Alt+M are
 the host's volume keys (down, up, mute; "Sound" below), and so are the keyboard's own
 volume keys if the desktop passes them on: no program receives them. The screen
 (SPEC §screen) is shown at 4:3, so screen units are square: a cell is exactly 1:2 pixels

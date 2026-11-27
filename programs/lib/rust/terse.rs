@@ -131,6 +131,7 @@ pub const CALL_RANDOM: u32 = 0x104;
 pub const CALL_CONTROLLER: u32 = 0x105;
 pub const CALL_EXIT: u32 = 0x106;
 pub const CALL_DEVICE: u32 = 0x109;
+pub const CALL_COPY: u32 = 0x10A;
 pub const CALL_TERM_WRITE: u32 = 0x200;
 pub const CALL_TERM_COMMAND: u32 = 0x201;
 pub const CALL_TERM_SET_CURSOR: u32 = 0x202;
@@ -204,6 +205,16 @@ pub fn device(slot: u32) -> Option<u32> {
     match unsafe { call(CALL_DEVICE, slot, 0, 0) } {
         ERR_UNKNOWN => None,
         v => Some(v),
+    }
+}
+
+/// The user's copy (SPEC §system `copy`): offers the system clipboard the
+/// text (at most 65,536 bytes). The host takes it only in the frame in
+/// which the program read the key-down of a copy key (Ctrl+C, Ctrl+X or
+/// Ctrl+Insert), and drops it otherwise or without a clipboard.
+pub fn copy(text: &str) {
+    unsafe {
+        call(CALL_COPY, text.as_ptr() as u32, text.len() as u32, 0);
     }
 }
 
