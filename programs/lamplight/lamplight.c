@@ -132,14 +132,14 @@ enum { PH_THE = 1, PH_THE_C, PH_A, PH_A_C, PH_THE2, PH_THE2_C, PH_A2, PH_WORD, P
 enum { C_END, C_FLAG, C_IN, C_CARRYING, C_HERE, C_OBJIN, C_OPEN, C_LOCKED, C_ON, C_WORN, C_VISITED, C_DARK, C_HEARS,
        C_RANDOM, C_BEAM, C_CMP };
 enum { E_END, E_SAY, E_SET, E_CLEAR, E_MOVE, E_GO, E_STATE, E_EXIT, E_SOUND, E_ADD, E_LET, E_SCHEDULE, E_CANCEL,
-       E_END_GAME, E_LOUD, E_CONTINUE, E_LOOK, E_ACHIEVE, E_AIM, E_TOGGLE };
+       E_END_GAME, E_LOUD, E_CONTINUE, E_LOOK, E_ACHIEVE, E_AIM, E_TOGGLE, E_MINUTES };
 /* Events. */
-enum { T_AT = 1, T_EVERY, T_WHEN, T_WHENEVER, T_TIMER, T_NOISE, T_ENTER };
+enum { T_AT = 1, T_EVERY, T_WHEN, T_WHENEVER, T_TIMER, T_NOISE, T_ENTER, T_ATTIME, T_EVERYTIME };
 /* Art. */
 #define LT_HIDDEN 1
 #define LT_FAINT 4
 enum { AN_NONE, AN_FLICKER, AN_DRIFT, AN_BLINK };
-#define LAYER_HEAD 20
+#define LAYER_HEAD 22
 
 /* Terminal colours (palette entries this program sets). */
 #define C_TEXT 1
@@ -166,7 +166,7 @@ static uint32_t rd24(const uint8_t *p) { return p[0] | (uint32_t)p[1] << 8 | (ui
 #define FLAG_BYTES ((N_FLAGS + 7) / 8)
 struct game {
     uint32_t magic, story;
-    uint16_t moves;
+    uint16_t moves, minutes;  /* moves made; minutes since the story's clock started */
     uint8_t room, ended, picture, it, xover_n, pad;
     int16_t counters[N_COUNTERS];
     uint16_t timers[N_TIMERS];
@@ -177,6 +177,7 @@ struct game {
     uint8_t visited[(N_ROOMS + 7) / 8];
     uint8_t fired[(N_EVENTS + 7) / 8];
     uint8_t hint_level[N_HINTS];
+    uint8_t seen[(N_HIDDEN + 7) / 8]; /* each hidden line the beam has fallen on */
     uint8_t ach[(N_ACHIEVEMENTS + 7) / 8];
     uint8_t xover[8][3];
 };
@@ -382,16 +383,13 @@ static void name_indef(uint8_t o, uint8_t cap)
 
 static void list_print(void);
 
-static uint32_t now_minutes(void) { return (CLOCK_START + (uint32_t)G.moves * CLOCK_STEP) % 1440; }
+static uint32_t now_minutes(void) { return (CLOCK_START + (uint32_t)G.minutes) % 1440; }
 
+/* Minutes to the next hour; 0 on the hour. */
 static int bell_moves(void)
 {
-    if (!CLOCK_STEP)
-        return 0;
     uint32_t m = now_minutes() % 60;
-    if (m == 0)
-        return 0;
-    return (int)((60 - m + CLOCK_STEP - 1) / CLOCK_STEP);
+    return m ? (int)(60 - m) : 0;
 }
 
 static void out_time(void)
@@ -451,6 +449,7 @@ static void placeholder(uint8_t code)
         else {
             out_str("in ");
             out_num(b);
+            out_str(" min");
         }
         break;
     }
@@ -631,6 +630,7 @@ static int16_t counter(uint8_t i)
     case 0: return G.moves;
     case 2: return now_minutes();
     case 3: return bell_moves();
+    case 4: return now_minutes() % 60;
     default: return G.counters[i];
     }
 }
@@ -826,6 +826,7 @@ static uint8_t gather(uint8_t loc, uint8_t skip_scenery)
 /* --- Effects -------------------------------------------------------------------------------- */
 
 static uint8_t noise;
+static int16_t move_minutes = -1;   /* set by a rule's `minutes` */
 static void look(void);
 static void game_over(uint8_t how, uint8_t pic, uint16_t id);
 static void aim_at(uint8_t o);
@@ -940,6 +941,7 @@ static int effects(uint16_t off)
             break;
         }
         case E_AIM: aim_at(*p++); break;
+        case E_MINUTES: move_minutes = (int16_t)rd16(p); p += 2; break;
         default: return cont;
         }
     }
@@ -954,11 +956,21 @@ static void fire(uint8_t i)
 }
 
 /* After each move: the clock's events, timers, conditions, people. */
-static void events_move(void)
+static void events_move(uint16_t prev)
 {
     for (uint8_t i = 0; i < N_EVENTS_REAL && !G.ended; i++) {
         const struct event *e = &events[i];
         switch (e->kind) {
+        case T_ATTIME:
+            if (prev < e->a && e->a <= G.minutes && !bit(G.fired, i)) {
+                bit_set(G.fired, i, 1);
+                fire(i);
+            }
+            break;
+        case T_EVERYTIME:
+            if (G.minutes >= e->b && e->b + (G.minutes - e->b) / e->a * e->a > prev)
+                fire(i);
+            break;
         case T_AT:
             if (G.moves == e->a && !bit(G.fired, i)) {
                 bit_set(G.fired, i, 1);
@@ -1239,6 +1251,10 @@ static int clip_seg(int32_t x0, int32_t y0, int32_t x1, int32_t y1, int32_t *o)
     return 1;
 }
 
+/* While nonzero: draw only the hidden lines already seen, the first of
+ * them numbered only_seen - 1. */
+static uint16_t only_seen;
+
 /* Draws the shapes of one layer: `ox, oy` added (half units), `dx, dy`
  * the drift (sixteenths), clipped to the beam if `clip`. Returns the
  * pointer after the layer. */
@@ -1246,7 +1262,7 @@ static const uint8_t *draw_shapes(const uint8_t *p, uint16_t n, int32_t ox, int3
 {
     for (uint16_t s = 0; s < n; s++) {
         uint8_t np = *p++;
-        if (!draw) {
+        if (!draw || (only_seen && !bit(G.seen, only_seen - 1 + s))) {
             p += 3 * np;
             continue;
         }
@@ -1345,13 +1361,18 @@ static void draw_art(uint32_t off, int32_t ox, int32_t oy, uint8_t mode, uint8_t
         uint8_t revealed = hidden && h[9] != 0xFF && flag(h[9]);
         const uint8_t *start = p;
         if (hidden) {
-            if (revealed && mode == 0) {
-                vec_rgb(r / 4, g / 4, b / 4);
-                draw_shapes(start, n, ox, oy, dx, dy, 0, 1);
-            }
+            /* Lines seen once stay, faint; in the beam they are drawn
+             * brighter and wider than the rest of the picture. */
+            (void)revealed;
+            vec_rgb(r / 3, g / 3, b / 3);
+            only_seen = rd16(h + 20) + 1;
+            draw_shapes(start, n, ox, oy, dx, dy, 0, 1);
+            only_seen = 0;
             if (beam) {
                 vec_rgb(r, g, b);
+                vec_width(32);
                 draw_shapes(start, n, ox, oy, dx, dy, 1, 1);
+                vec_width(16);
             }
             p = draw_shapes(start, n, 0, 0, 0, 0, 0, 0);
             continue;
@@ -1454,15 +1475,56 @@ static void scene_frame(void)
 
 /* Hidden layers the beam now falls on, newly seen: their flags are set and
  * their text said. */
+/* Marks the hidden lines of an art block that the beam falls on as seen. */
+static uint8_t mark_seen(uint32_t off, int32_t ox, int32_t oy)
+{
+    if (!off)
+        return 0;
+    const uint8_t *p = art_data + off;
+    uint8_t nl = *p++, any = 0;
+    clip_x = G.beam_x, clip_y = G.beam_y, clip_r = BEAM_R * 2;
+    for (uint8_t i = 0; i < nl; i++) {
+        const uint8_t *h = p;
+        uint16_t n = rd16(h + 18), first = rd16(h + 20);
+        p += LAYER_HEAD;
+        uint8_t live = (h[0] & LT_HIDDEN) && cond(rd16(h + 16));
+        for (uint16_t s = 0; s < n; s++) {
+            uint8_t np = *p++;
+            if (live && !bit(G.seen, first + s)) {
+                int32_t x0, y0, x1, y1, c[4];
+                point_at(p, &x0, &y0);
+                for (uint8_t k = 0; k < np; k++) {
+                    point_at(p + 3 * (k + 1 < np ? k + 1 : k), &x1, &y1);
+                    if (clip_seg(x0 + ox, y0 + oy, x1 + ox, y1 + oy, c)) {
+                        bit_set(G.seen, first + s, 1);
+                        any = 1;
+                        break;
+                    }
+                    x0 = x1, y0 = y1;
+                }
+            }
+            p += 3 * np;
+        }
+    }
+    return any;
+}
+
 static void beam_check(void)
 {
     if (beam_obj() == 0xFF || G.ended)
         return;
+    uint8_t found = mark_seen(rooms[G.room].art, 0, 0);
+    for (uint8_t o = 0; o < N_OBJS; o++) {
+        int16_t x, y;
+        if (objs[o].art && obj_pos(o, &x, &y))
+            found |= mark_seen(objs[o].art, x, y);
+    }
+    clip_x = shown_bx, clip_y = shown_by;
     uint32_t off = rooms[G.room].art;
     if (!off)
         return;
     const uint8_t *p = art_data + off;
-    uint8_t nl = *p++, found = 0;
+    uint8_t nl = *p++;
     for (uint8_t i = 0; i < nl; i++) {
         const uint8_t *h = p;
         uint16_t n = rd16(h + 18);
@@ -1477,9 +1539,11 @@ static void beam_check(void)
         bit_set(G.flags, h[9], 1);
         uint16_t t = (uint16_t)rd24(h + 10);
         say(t ? t : M_REVEAL);
-        found = 1;
+        found = 2;
     }
-    if (found) {
+    if (found == 1)
+        dirty_scene = 1;
+    if (found >= 2) {
         events_now();
         dirty_scene = 1;
         dirty_status = 1;
@@ -1747,6 +1811,10 @@ static uint8_t resolve(uint8_t t0, uint8_t t1, uint8_t slot)
         }
         if (k & WK_ALL)
             return R_ALL;
+        if ((k & WK_SEP) && !(k & (WK_NOUN | WK_ADJ))) {
+            say(M_ONE_AT_A_TIME);
+            return R_FAIL;
+        }
         if (!(k & WK_ART))
             only_art = 0;
     }
@@ -2260,11 +2328,13 @@ static int rules_run(uint8_t kind)
 }
 
 static uint8_t moved_now;
+static uint16_t spend;              /* the minutes the commands of this line take */
 
 /* The whole command, once its objects are known. */
 static void perform(void)
 {
     uint8_t f = action_flags[c_action];
+    move_minutes = -1;
     if (c_o1 < N_OBJS)
         G.it = c_o1;
     if ((f & AF_SIGHT) && !lit()) {
@@ -2274,8 +2344,12 @@ static void perform(void)
             rules_run(1);
     }
     noise_events();
-    if (!(f & AF_META))
+    /* Looking and examining take no time; the rest what the story says. */
+    uint16_t m = move_minutes >= 0 ? (uint16_t)move_minutes : action_minutes[c_action];
+    if (!(f & AF_META) && m) {
         moved_now = 1;
+        spend += m;
+    }
 }
 
 /* take all / drop all */
@@ -2287,7 +2361,7 @@ static void perform_all(void)
             uint8_t l = G.loc[o];
             if (!(objs[o].kinds & K_PORTABLE) || carried(o) || !here(o))
                 continue;
-            if (l != L_ROOM(G.room) && !(IS_OBJ(l) && (objs[l - L_OBJ(0)].kinds & K_SUPPORTER)))
+            if (l != L_ROOM(G.room) && !IS_OBJ(l)) /* in the room, or on or in something there */
                 continue;
         } else if (G.loc[o] != L_HELD)
             continue;
@@ -2309,6 +2383,7 @@ static void perform_all(void)
         }
     }
     moved_now = 1;
+    spend += action_minutes[c_action];
 }
 
 static void need_object(uint8_t slot)
@@ -2781,11 +2856,14 @@ static void line(void)
             uint8_t q_before = question;
             command(s, t);
             if (moved_now && !G.ended) {
+                uint16_t prev = G.minutes;
+                G.minutes += spend;
                 G.moves++;
                 dirty_status = 1;
-                events_move();
-                moved_now = 0;
+                events_move(prev);
             }
+            moved_now = 0;
+            spend = 0;
             if (question != Q_NONE && q_before == Q_NONE && t < nt)
                 break;
         }

@@ -20,16 +20,20 @@ use terse_core::script::Script;
 use terse_core::{Completion, Event, FrameInput, FrameResult, Grants, Image, Machine, RAM_BASE};
 use terse_net::{BlobStore, ContentService, Node, Records};
 
+/// The program's name: its directory, its C file and its image are named
+/// after it (programs/lamplight/build.sh).
+const NAME: &str = "lamplight";
+
 fn dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../programs/lamplight")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../programs").join(NAME)
 }
 
 /// The image, read when a test starts.
-static IMAGE_BYTES: std::sync::LazyLock<Vec<u8>> = std::sync::LazyLock::new(|| std::fs::read(dir().join("lamplight.terse")).unwrap());
+static IMAGE_BYTES: std::sync::LazyLock<Vec<u8>> = std::sync::LazyLock::new(|| std::fs::read(dir().join(format!("{NAME}.terse"))).unwrap());
 fn image() -> Image {
     Image::parse(&IMAGE_BYTES).unwrap()
 }
-const RAM_PAGES: u8 = 9;
+const RAM_PAGES: u8 = 6;
 
 /// A game being played: the machine, a content service for its saved
 /// games, and what each frame used.
@@ -305,7 +309,7 @@ fn walkthrough_through_terse_run() {
     let events = tmp.path().join("walk.events");
     std::fs::write(&events, &script).unwrap();
     let out = common::terse_command()
-        .args(["run", dir().join("lamplight.terse").to_str().unwrap(), "--events", events.to_str().unwrap()])
+        .args(["run", dir().join(format!("{NAME}.terse")).to_str().unwrap(), "--events", events.to_str().unwrap()])
         .args(["--frames", &(f + 10).to_string(), "--dump", "--relay", "none"])
         .arg("--store")
         .arg(tmp.path().join("store"))
@@ -395,7 +399,7 @@ fn image_is_up_to_date() {
             "programs/lamplight/story_data.h is out of date: run programs/lamplight/build.sh"
         );
     }
-    common::check_up_to_date(&IMAGE_BYTES, &["lamplight/lamplight.c"], true, "lamplight", RAM_PAGES, &[(2, 0), (3, 0), (4, 0x80), (6, 0x80)]);
+    common::check_up_to_date(&IMAGE_BYTES, &[&format!("{NAME}/{NAME}.c")], true, NAME, RAM_PAGES, &[(2, 0), (3, 0), (4, 0x80), (6, 0x80)]);
 }
 
 /// story.py --check finds the mistakes a writer makes, each with its file

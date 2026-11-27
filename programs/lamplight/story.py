@@ -289,10 +289,10 @@ NOTE_NAMES = {'c': 0, 'd': 2, 'e': 4, 'f': 5, 'g': 7, 'a': 9, 'b': 11}
 C = dict(END=0, FLAG=1, IN=2, CARRYING=3, HERE=4, OBJIN=5, OPEN=6, LOCKED=7, ON=8, WORN=9, VISITED=10,
          DARK=11, HEARS=12, RANDOM=13, BEAM=14, CMP=15)
 E = dict(END=0, SAY=1, SET=2, CLEAR=3, MOVE=4, GO=5, STATE=6, EXIT=7, SOUND=8, ADD=9, LET=10, SCHEDULE=11,
-         CANCEL=12, END_GAME=13, LOUD=14, CONTINUE=15, LOOK=16, ACHIEVE=17, AIM=18, TOGGLE=19)
+         CANCEL=12, END_GAME=13, LOUD=14, CONTINUE=15, LOOK=16, ACHIEVE=17, AIM=18, TOGGLE=19, MINUTES=20)
 STATES = ['open', 'closed', 'locked', 'unlocked', 'on', 'off']
 CMP_OPS = ['==', '!=', '<', '<=', '>', '>=']
-BUILTIN_COUNTERS = ['moves', 'score', 'time', 'bell']
+BUILTIN_COUNTERS = ['moves', 'score', 'time', 'bell', 'minute']
 
 # Object kind bits (engine.h K_*).
 K = dict(portable=1, container=2, supporter=4, openable=8, lockable=16, wearable=32, light=64, switchable=128,
@@ -301,7 +301,7 @@ K = dict(portable=1, container=2, supporter=4, openable=8, lockable=16, wearable
 S_OPEN, S_LOCKED, S_ON, S_MOVED = 1, 2, 4, 8
 
 # Event triggers (engine.h T_*).
-T = dict(at=1, every=2, when=3, whenever=4, timer=5, noise=6, enter=7)
+T = dict(at=1, every=2, when=3, whenever=4, timer=5, noise=6, enter=7, attime=8, everytime=9)
 
 # Layer types and animations (engine.h).
 L_NORMAL, L_HIDDEN = 0, 1
@@ -396,7 +396,8 @@ def read_lines(paths):
     for p in paths:
         with open(p, encoding='utf-8') as f:
             for i, raw in enumerate(f, 1):
-                lines.append(Line(os.path.relpath(p), i, raw))
+                name = os.path.relpath(p)
+                lines.append(Line(p if name.startswith("..") else name, i, raw))
     return lines
 
 
@@ -614,6 +615,9 @@ class Story:
         self.max_score = 0
         self.help = ''
         self.step = None
+        self.minutes = {}
+        self.hidden_count = 0
+        self.default_minutes = 1
         self.rooms, self.objs, self.events, self.hints, self.sounds, self.pictures = {}, {}, {}, [], {}, {}
         self.rules = []
         self.verbs = []          # (action, words, default text, flags, where)
@@ -673,11 +677,15 @@ def p_game(lines, n, rest, colon):
             ST.max_score = int_or(r, w, 0, 30000)
         elif key == 'clock':
             parts = r.split()
-            if len(parts) < 2:
-                D.error(w, 'clock needs a start time and the minutes a move: clock 21:00 5')
+            if not parts:
+                D.error(w, 'clock <start time> [24h]: clock 21:00')
                 continue
             st = parse_time(parts[0], w)
-            ST.clock = (st, int_or(parts[1], w, 1, 240), len(parts) > 2 and parts[2] == '24h')
+            ST.clock = (st, 1, '24h' in parts[1:])
+            if len(parts) > 1 and parts[1].isdigit():
+                ST.default_minutes = int_or(parts[1], w, 0, 600)
+        elif key == 'minutes':
+            ST.default_minutes = int_or(r, w, 0, 600)
         elif key == 'status':
             ST.status = block_text(lines, c, r) if colon else unquote(r)
         elif key == 'intro':
@@ -687,7 +695,7 @@ def p_game(lines, n, rest, colon):
         elif key == 'step':
             ST.step = (r.strip(), w)
         else:
-            D.error(w, f'unknown game setting "{key}"' + closest(key, ['title', 'author', 'start', 'carry', 'beam', 'score', 'clock', 'status', 'intro', 'help', 'step']))
+            D.error(w, f'unknown game setting "{key}"' + closest(key, ['title', 'author', 'start', 'carry', 'beam', 'score', 'clock', 'status', 'intro', 'help', 'step', 'minutes']))
         del toks
 
 
@@ -1166,8 +1174,10 @@ def p_verb(lines, n, rest, colon):
             default = block_text(lines, c, r)
         elif key == 'alone':
             flags = OPTNOUN
+        elif key == 'minutes':
+            ST.minutes[action] = (int_or(r, c.where(), 0, 600), c.where())
         else:
-            D.error(c.where(), 'verb settings: default: text, alone')
+            D.error(c.where(), 'verb settings: default: text, alone, minutes N')
     ST.verbs.append((action, words, default, flags, n.where()))
     if action not in ACTION_ID and action not in ST.custom_actions:
         ST.custom_actions.append(action)
@@ -1203,6 +1213,14 @@ def p_rule(kind):
     return f
 
 
+def p_minutes(lines, n, rest, colon):
+    t = rest.split()
+    if len(t) != 2:
+        D.error(n.where(), 'minutes <action or verb> <minutes it takes>')
+        return
+    ST.minutes[t[0]] = (int_or(t[1], n.where(), 0, 600), n.where())
+
+
 def p_event(lines, n, rest, colon):
     w = n.where()
     t = rest.split(None, 2)
@@ -1227,8 +1245,14 @@ def p_event(lines, n, rest, colon):
         key, rr, colon2 = key_and_rest(c.text)
         if key == 'if':
             ev.cond.append((tokens(rr, c.where()), c.where()))
+        elif key == 'warning':
+            ev.warning = (block_text(lines, c, rr), c.where())
         else:
             ev.effects.append(c)
+    m = re.match(r'^(.*?)\s+warn\s+([\d\s]+)$', more)
+    if m:
+        ev.raw = m.group(1)
+        ev.warn = [int(x) for x in m.group(2).split()]
     ST.events[ident] = ev
     ST.event_order.append(ev)
 
@@ -1307,7 +1331,7 @@ TOP = {
     'game': p_game, 'colour': p_colour, 'color': p_colour, 'flag': p_flag, 'counter': p_counter,
     'message': p_message, 'room': p_room, 'object': p_object, 'npc': p_npc, 'verb': p_verb,
     'on': p_rule('on'), 'after': p_rule('after'), 'event': p_event, 'hint': p_hint, 'sound': p_sound,
-    'picture': p_picture, 'achievement': p_achievement,
+    'picture': p_picture, 'achievement': p_achievement, 'minutes': p_minutes,
 }
 
 
@@ -1717,6 +1741,11 @@ def compile_effects(nodes, lines):
                 D.error(w, 'achieve <achievement>' + (closest(t[0], ST.achievements) if t else ''))
                 continue
             out += bytes([E['ACHIEVE'], ST.achievements[t[0]][0]])
+        elif key == 'minutes':
+            if len(t) != 1:
+                D.error(w, 'minutes <n>: what this move takes')
+                continue
+            out += bytes([E['MINUTES']]) + struct.pack('<H', int_or(t[0], w, 0, 600))
         elif key == 'aim':
             if len(t) != 1:
                 D.error(w, 'aim <object>')
@@ -1902,7 +1931,9 @@ def emit(out_path, check_only=False, stats=False):
             if an == A_DRIFT:
                 a3 = max(8, min(2000, a3)) // 8
             art_b.extend(bytes([ltype]) + bytes(L.colour) + bytes([an, a1 & 255, a2 & 255, a3 & 255, a4 & 255, reveal])
-                         + text_ref(rtext) + pack_point(ax, ay) + struct.pack('<HH', cond, len(L.shapes)))
+                         + text_ref(rtext) + pack_point(ax, ay) + struct.pack('<HHH', cond, len(L.shapes), ST.hidden_count if L.hidden else 0))
+            if L.hidden:
+                ST.hidden_count += len(L.shapes)
             for pts, w in L.shapes:
                 for (x, y) in pts:
                     dx = abs(L.anim[1]) if an == A_DRIFT else 0
@@ -2121,6 +2152,7 @@ def emit(out_path, check_only=False, stats=False):
 
     # Events.
     events_c = []
+    warn_events = []
     timers = 0
     for ev in ST.event_order:
         w = ev.where
@@ -2128,17 +2160,24 @@ def emit(out_path, check_only=False, stats=False):
         cond = 0
         kind = ev.trigger
         raw = getattr(ev, 'raw', '')
-        if kind == 'at':
-            a = move_of(raw, w)
+        if kind == 'at' and ':' in raw:
+            kind = 'attime'
+            a = minute_of(raw, w)
+        elif kind == 'at':
+            a = int_or(raw.strip(), w, 0, 60000)
         elif kind == 'every':
-            m = re.match(r'^(\d+)(?:\s+from\s+(\S+))?$', raw.strip())
+            m = re.match(r'^(\d+)(\s+minutes?)?(?:\s+from\s+(\S+))?$', raw.strip())
             if not m:
-                D.error(w, 'every <moves> [from <move or time>]')
+                D.error(w, 'every <moves> [from <move>], or every <n> minutes [from <time>]')
             else:
                 a = int(m.group(1))
-                b = move_of(m.group(2), w) if m.group(2) else a
                 if a < 1:
                     D.error(w, 'every 0')
+                if m.group(2):
+                    kind = 'everytime'
+                    b = minute_of(m.group(3), w) if m.group(3) else a
+                else:
+                    b = int_or(m.group(3), w, 0, 60000) if m.group(3) else a
         elif kind in ('when', 'whenever'):
             cond = CODE.add(compile_cond(tokens(raw, w), w))
         elif kind == 'timer':
@@ -2161,8 +2200,19 @@ def emit(out_path, check_only=False, stats=False):
         else:
             eff = compile_effects(ev.effects, ev.lines)
         events_c.append(dict(kind=T.get(kind, 0), a=a, b=b, cond=cond, eff=eff))
+        if getattr(ev, 'warn', None):
+            if kind != 'attime':
+                D.error(w, 'warn needs an event at a time: event x at 0:15 warn 30 10')
+            wt = getattr(ev, 'warning', None)
+            if not wt:
+                D.error(w, 'warn needs a `warning:` text ({left} is the minutes left)')
+            else:
+                for left in ev.warn:
+                    txt = wt[0].replace('{left}', str(left))
+                    weff = CODE.add(bytes([E['SAY']]) + text_ref(TEXTS.add(txt, wt[1])) + bytes([E['END']]))
+                    warn_events.append(dict(kind=T['attime'], a=max(0, a - left), b=0, cond=0, eff=weff))
         ev.timer_index = a if kind == 'timer' else 0xFF
-    # Timer events: map event index -> timer slot (the SCHEDULE op carries the event index).
+    events_c += warn_events
 
     # Hints.
     hints_c = []
@@ -2232,7 +2282,7 @@ def emit(out_path, check_only=False, stats=False):
     if D.errors:
         return None
 
-    counters_init = [0, 0] + [v for k, (i, v) in sorted(ST.counters.items(), key=lambda kv: kv[1][0])]
+    counters_init = [0] * len(BUILTIN_COUNTERS) + [v for k, (i, v) in sorted(ST.counters.items(), key=lambda kv: kv[1][0])]
     clock = ST.clock or (0, 0, False)
     sizes = dict(text=len(text_b) + len(table) * 2 + 4 * len(text_off), text_raw=TEXTS.raw_bytes, art=len(art_b), code=len(CODE.b),
                  words=sum(len(x) + 1 for x in words_sorted) + 6 * len(words_sorted))
@@ -2278,6 +2328,21 @@ def emit(out_path, check_only=False, stats=False):
         P(f'#define A_{a[0].upper()} {i}')
     P('')
     P(f'static const uint8_t action_flags[N_ACTIONS] = {{{", ".join(str(a[1]) for a in actions)}}};')
+    free = {'look', 'examine', 'inventory', 'read', 'search', 'again', 'undo', 'save', 'restore', 'restart', 'quit', 'help', 'hint', 'score', 'yes', 'no'}
+    mins = []
+    for a in actions:
+        m = 0 if a[0] in free else ST.default_minutes
+        mins.append(m)
+    for name, (m, where) in ST.minutes.items():
+        ai = action_index.get(name)
+        if ai is None and name in W.w and W.w[name]['verb'] != 0xFF:
+            ai = W.w[name]['verb']
+        if ai is None:
+            D.error(where, f'unknown action or verb "{name}"' + closest(name, list(action_index)))
+            continue
+        mins[ai] = m
+    P(f'static const uint16_t action_minutes[N_ACTIONS] = {{{", ".join(map(str, mins))}}};')
+    P(f'#define N_HIDDEN {max(1, ST.hidden_count)}')
     defaults = []
     for i, a in enumerate(actions):
         if i < len(ACTIONS):
@@ -2350,20 +2415,13 @@ def emit(out_path, check_only=False, stats=False):
     return src
 
 
-def move_of(raw, w):
-    """A move number, or a time of day (with the game's clock) as the move
-    at which the clock shows it."""
+def minute_of(raw, w):
+    """A time of day as the minutes from the clock's start."""
     raw = raw.strip()
-    if ':' not in raw:
-        return int_or(raw, w, 0, 60000)
     if not ST.clock:
-        D.error(w, f'{raw} is a time: it needs a clock (game: clock 21:00 5)')
+        D.error(w, f'{raw} is a time: it needs a clock (game: clock 21:00)')
         return 0
-    st, step, h24 = ST.clock
-    d = (parse_time(raw, w) - st) % (24 * 60)
-    if d % step:
-        D.error(w, f'{raw} is not on a move: the clock moves {step} minutes a move')
-    return d // step
+    return (parse_time(raw, w) - ST.clock[0]) % (24 * 60)
 
 
 def c_bytes(b):

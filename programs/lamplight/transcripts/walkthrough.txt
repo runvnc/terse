@@ -14,12 +14,12 @@
 screen Lamplight (placeholder story)
 status The Jetty
 status 9:30 pm
-status bell in 6
+status bell in 30 min
 status score 0/10
 > north
 < The Square
 < The warden is here
-status 9:35 pm
+status 9:36 pm
 > ask warden about lamp
 < The hatch is locked
 > ask her about the key
@@ -28,11 +28,13 @@ status 9:35 pm
 < "Evening," says the warden.
 > examine bell
 < A bronze bell
+status 9:51 pm
 > wait
 < Time passes.
+! strike the hour
+> wait
 < Far off, a clock begins to strike the hour.
-status 10:00 pm
-status bell now
+status 10:01 pm
 > ring bell
 < the hour, on the hour.
 < [You rang the bell on the hour]
@@ -43,8 +45,9 @@ status score 2/10
 < You can see a wooden box and a note here.
 > light lantern
 < You light the storm lantern.
-< The warden arrives.
+! The warden arrives.
 > open box
+< The warden arrives.
 < You open the wooden box, revealing a brass key and a copper coin.
 status score 3/10
 > take key
@@ -67,6 +70,7 @@ novectors c ebebdc
 < Chalk marks leap out of the dark
 < [You found the chalk marks]
 vectors c ebebdc
+vectors w 32
 > lift board
 < lies an iron key
 > x key

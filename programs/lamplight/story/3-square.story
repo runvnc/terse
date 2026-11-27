@@ -134,7 +134,7 @@ npc warden "warden"
 on ring bell if not in square
   say: The bell is in the square.
 
-on ring bell if bell == 0
+on ring bell if minute < 10
   say: You haul on the rope. The bell swings, and its voice rolls out over the town and the water: the hour, on the hour.
   set rang
   achieve on_hour

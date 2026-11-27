@@ -7,7 +7,8 @@ game
   author the engine's test story
   start jetty
   carry 5
-  clock 21:30 5
+  clock 21:30
+  minutes 5
   beam 44
   step step
   score 10
@@ -45,9 +46,15 @@ sound water swish C3 40
 sound horn horn D2 50, rest 6, D2 70
 sound thud thud C2 12
 
+# --- Time: looking, examining and reading take none; the rest 5 minutes
+# (`minutes` above), walking between places 6, ringing the bell 2.
+
+minutes go 6
+
 # --- Verbs this story adds ----------------------------------------------------
 
 verb ring = ring, toll, "bang on"
+  minutes 2
   default: There is nothing here to ring.
 verb lift = lift, raise, pry, prise
 
@@ -87,11 +94,11 @@ hint lamp
 
 # --- The clock ------------------------------------------------------------------
 
-event hour every 12 from 22:00
+event hour every 60 minutes from 22:00
   say: Far off, a clock begins to strike the hour. The town will be listening for its bell.
   clear rang
 
-event silent_hour every 12 from 22:05
+event silent_hour every 60 minutes from 22:10
   if not rang
   say: The hour has passed in silence. Somewhere up the bank a shutter bangs open.
   add missed 1
@@ -100,7 +107,8 @@ event warning at 23:45
   say: Out on the lake the ferry sounds its horn: it is turning for the shore.
   sound horn
 
-event deadline at 0:15
+event deadline at 0:15 warn 20 5
+  warning: The ferry's horn sounds again, nearer. It will reach the shore in about {left} minutes.
   lose ferry_gone:
     The ferry's light swings past the dark shore, hesitates, and turns
     away across the lake. Nobody relit the lamp in time.

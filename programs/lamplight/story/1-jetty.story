@@ -63,6 +63,15 @@ room jetty "The Jetty"
     layer mooring_post colour plank
       line 440 250 440 196
       line 432 196 448 196
+    layer carving colour chalk reveal carving_seen "Cut into the post, low down where the rope has worn it smooth: a lamp, and the words NOT TOO LATE." at 440 236
+      line 428 242 452 242
+      line 431 236 434 230 437 236
+      line 443 236 443 230 449 230 449 236
+      line 432 248 448 248
+    layer wreck hidden colour water
+      line 150 190 180 178 205 184
+      line 160 196 170 186
+      line 186 196 192 184
     layer boardwalk colour plank
       line 446 236 545 204
       line 450 252 575 205
@@ -207,6 +216,9 @@ after open box if not box_scored
   score 1
   set box_scored
   sound creak
+
+on examine post if carving_seen
+  say: A thick post, rope-worn. Cut into it, low down: a lamp, and NOT TOO LATE.
 
 on climb post
   say: You shin a little way up the post and see nothing but more dark. You slide back down.
