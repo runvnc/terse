@@ -341,12 +341,14 @@ fn followed_found_verdicts_and_the_published_aggregate() {
         .collect();
     labels.sort();
     let downs = labels.iter().position(|l| l.1 == "terse-dev-page 0.1.0 b3:d4d4d4d4d4d4d4d4").unwrap() as u32;
-    // F at frame 150; the page driver's group at 620; back and P.
+    // F at frame 150; the page driver's group at LATER, once the search
+    // is done; back and P.
+    const LATER: u32 = 3000;
     let mut script = String::from("150 press f\n");
     for i in 0..downs {
-        script.push_str(&format!("{} press down\n", 620 + i));
+        script.push_str(&format!("{} press down\n", LATER + i));
     }
-    let enter = 620 + downs + 1;
+    let enter = LATER + downs + 1;
     script.push_str(&format!("{enter} press enter\n{} press escape\n{} press p\n", enter + 20, enter + 30));
     let mut run = Run::new(&w, Some(&url), &script);
     // The timeline: every followed report taken, in how many frames.
@@ -365,21 +367,43 @@ fn followed_found_verdicts_and_the_published_aggregate() {
     assert!(run.row(2).contains(&format!("{} malformed.", w.malformed_reports)), "{}", run.row(2));
     assert!(run.row(2).starts_with("Followed: 11 reporters."), "the faker counts once: {}", run.row(2));
     golden("followed", &run.screen());
-    // The search: three finds, 75 frames apart, then the gets.
-    run.frames(470);
-    assert!(run.row(28).starts_with("Search done"), "{}", run.screen());
+    // The search: three searches, each page by page (find, then find
+    // more while there are more), one request every 75 frames, then the
+    // gets. The frames are paced in real time as at 60 a second, so that
+    // the relay's 4 finds a second for a connection hold.
+    let mut pages = 0;
+    while !run.row(28).starts_with("Search done") {
+        assert!(run.m.frame() < LATER - 100, "{}", run.screen());
+        run.frames(75);
+        pages += 1;
+        std::thread::sleep(std::time::Duration::from_millis(300));
+    }
+    run.frames(10);
     golden("found", &run.screen());
-    // The same searches as the reference sees them.
+    // The same searches as the reference sees them, every page.
     let client_dir = tempfile::tempdir().unwrap();
     let mut client = Node::new(BlobStore::open(client_dir.path(), None).unwrap(), None);
     client.add_relay(&url, terse_net::relay::RelayClient::websocket(&url, terse_net::relay::DEFAULT_TIMEOUT));
     let mut found = BTreeSet::new();
+    let mut asked = 0;
     for q in ["performance report", "performance report: terse-bus", "performance report: terse-host"] {
-        let Done::Found(entries) = client.find(SCOPE_ENTRIES, q.as_bytes()) else { panic!("{q}") };
-        for e in entries {
-            found.insert((to_hex(&e.entry.feed), e.entry.seq as u64));
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let mut done = client.search(1, SCOPE_ENTRIES, q.as_bytes());
+        loop {
+            asked += 1;
+            let Done::Found(entries) = done else { panic!("{q}") };
+            for e in entries {
+                found.insert((to_hex(&e.entry.feed), e.entry.seq as u64));
+            }
+            if client.search_more(1) != Some(true) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            done = client.more(1);
         }
     }
+    eprintln!("reports: {asked} pages of results; the search took about {pages} x 75 frames");
+    assert!(asked > 3, "more than a page: {asked}");
     let strangers: BTreeSet<&String> =
         found.iter().map(|(k, _)| k).filter(|k| !w.followed.iter().any(|f| to_hex(&f.feed_key()) == **k)).collect();
     assert!(strangers.len() > 10, "the relay's search found strangers: {}", strangers.len());

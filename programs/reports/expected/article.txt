@@ -1,6 +1,6 @@
 # Performance reports: an aggregate, 1970-01-01
 
-Made with the reports program from the performance reports (RECORD.md 5) it found: 81 reports, 11 reporters from the feeds I follow and 16 others found on the relays. Anyone can make feed keys, so only the first column is a sample of people I chose; neither is a global ruling.
+Made with the reports program from the performance reports (RECORD.md 5) it found: 115 reports, 11 reporters from the feeds I follow and 50 others found on the relays. Anyone can make feed keys, so only the first column is a sample of people I chose; neither is a global ruling.
 
 The rule: one report per feed key and identity (the newest); computers with fewer than 4 cores or 4 GiB are listed but not judged; a verdict needs 5 judged reporters; NON-CONFORMANT IN SAMPLE when at least 1 in 3 fail (halted by R15, or a terse perf requirement or ceiling failed); starved and memory verdicts never count.
 
@@ -10,12 +10,12 @@ The rule: one report per feed key and identity (the newest); computers with fewe
 | host terse-bus 0.1.0 b3:b2b2b2b2b2b2b2b2 | TOO FEW REPORTS (2) | TOO FEW REPORTS (2) |
 | host terse-host 0.1.0 - | TOO FEW REPORTS (1) | TOO FEW REPORTS (1) |
 | host terse-host 0.1.0 b3:1111111111111111 | TOO FEW REPORTS (1) | TOO FEW REPORTS (1) |
-| host terse-host 0.1.0 b3:a1a1a1a1a1a1a1a1 | CONFORMANT IN SAMPLE (9 reporters) | CONFORMANT IN SAMPLE (25 reporters) |
+| host terse-host 0.1.0 b3:a1a1a1a1a1a1a1a1 | CONFORMANT IN SAMPLE (9 reporters) | CONFORMANT IN SAMPLE (59 reporters) |
 | device terse-dev-content (Rust) 0.1.0 b3:97f8a7cc7bf5e08c | TOO FEW REPORTS (1) | TOO FEW REPORTS (1) |
 | device terse-dev-page (Rust) 0.1.0 b3:f8f5a88bb33ad6eb | TOO FEW REPORTS (1) | TOO FEW REPORTS (1) |
-| device terse-dev-page 0.1.0 b3:d4d4d4d4d4d4d4d4 | NON-CONFORMANT IN SAMPLE (5 of 9 fail: halted 5) | CONFORMANT IN SAMPLE (25 reporters) |
+| device terse-dev-page 0.1.0 b3:d4d4d4d4d4d4d4d4 | NON-CONFORMANT IN SAMPLE (5 of 9 fail: halted 5) | CONFORMANT IN SAMPLE (59 reporters) |
 | device terse-dev-terminal (Rust) 0.1.0 b3:3c1f0a9e77d2b410 | TOO FEW REPORTS (1) | TOO FEW REPORTS (1) |
 | device terse-dev-vector (Rust) 0.1.0 b3:9a0b44c1e5f60d27 | TOO FEW REPORTS (1) | TOO FEW REPORTS (1) |
-| device terse-dev-vector 0.1.0 b3:c3c3c3c3c3c3c3c3 | CONFORMANT IN SAMPLE (9 reporters) | NON-CONFORMANT IN SAMPLE (17 of 25 fail: halted 17) |
+| device terse-dev-vector 0.1.0 b3:c3c3c3c3c3c3c3c3 | CONFORMANT IN SAMPLE (9 reporters) | NON-CONFORMANT IN SAMPLE (51 of 59 fail: halted 51) |
 | perf terse 0.1.0 b3:0f1e2d3c4b5a6978 | TOO FEW REPORTS (1) | TOO FEW REPORTS (1) |
 | perf terse 0.1.0 b3:e5e5e5e5e5e5e5e5 | CONFORMANT IN SAMPLE (5 reporters) | CONFORMANT IN SAMPLE (5 reporters) |

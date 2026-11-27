@@ -1,9 +1,9 @@
  device terse-dev-page 0.1.0 b3:d4d4d4d4d4d4d4d4
 Trust "feeds you follow": anyone can make keys, so "all found" may hold fakes.
                                   you follow        all found
-  reporters                       10                26
+  reporters                       10                60
   below the floor (not judged)    1                 1
-  judged                          9                 25
+  judged                          9                 59
   failing                         5                 5
     halted (R15)                  5                 5
     a requirement failed          0                 0
@@ -12,7 +12,7 @@ Trust "feeds you follow": anyone can make keys, so "all found" may hold fakes.
   warned about (R15)              5                 5
   median                          blamed 0/10k      blamed 0/10k
   you follow: NON-CONFORMANT IN SAMPLE (5 of 9 fail: halted 5)
-  all found:  CONFORMANT IN SAMPLE (25 reporters)
+  all found:  CONFORMANT IN SAMPLE (59 reporters)
 
 Reporters (* followed, first). Floor: 4 cores and 4 GiB; small: below it.
   * Reporter 8            1398f6…7d93ca  medium
@@ -25,6 +25,6 @@ Reporters (* followed, first). Floor: 4 cores and 4 GiB; small: below it.
   * Reporter 7            ea4a6c…46d22c  large   halted  blamed  warned
   * Reporter 3            ed4928…8737d1  medium
   * Reporter 9            fd1724…e9f618  large   halted  blamed  warned
-    (not followed)        0e34c0…a644aa  large
+    (not followed)        014e4d…bb04f1  large
 Search done: the relays' results are counted under "all found".
  Up Down scroll the reporters  Esc back  * a feed you follow
