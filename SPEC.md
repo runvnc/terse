@@ -138,7 +138,7 @@ profile adds `spec/content.md`, `spec/page.md` and full text
 ## §introduction Introduction
 
 Terse is a small virtual computer: a 32-bit RISC-V CPU (RV32IMC), a program
-of at most 128 KiB, at most 1 MiB of RAM, a fixed budget of work per frame,
+of at most 256 KiB, at most 768 KiB of RAM (1 MiB together), a fixed budget of work per frame,
 and a set of host-side devices reached through system calls. One program runs
 in one machine. Programs are identified by the hash of their image and have
 no dependencies; a program published in a feed also has an identity, its
@@ -176,8 +176,8 @@ All multi-byte values are little-endian. `h` suffix means hexadecimal.
 | CPU | RV32IMC, little-endian, user mode only (§cpu) |
 | Budget | 125,000 units per frame (§frames) |
 | Frame rate | 60 frames per second, nominal |
-| ROM | 1 to 131,072 bytes at `0001_0000h`, read and execute |
-| RAM | 1 to 128 pages of 8 KiB (8 KiB to 1 MiB) at `0010_0000h`, read, write and execute; zero at reset |
+| ROM | 1 to 262,144 bytes at `0001_0000h`, read and execute |
+| RAM | 1 to 96 pages of 8 KiB (8 KiB to 768 KiB) at `0010_0000h`, read, write and execute; zero at reset |
 | Devices | reached with `ecall` (§calls) |
 
 ### §cpu CPU
@@ -229,6 +229,15 @@ So address 0 (a null pointer) faults, a store to ROM faults, and so does
 fetching an instruction any part of which lies outside ROM and RAM (for
 example a 32-bit instruction whose second half would be past the end of
 ROM).
+
+The largest ROM ends at `0005_0000h` and the largest RAM at `001C_0000h`
+(96 pages), so ROM and RAM together are at most 1 MiB (256 KiB and 768
+KiB); the space between them and above RAM is unmapped. Both regions keep
+their start addresses whatever their sizes, and the stack starts at the
+end of RAM (§reset), so a program's addresses depend only on its own
+`ram_pages`. (Profile 1 once allowed 128 KiB of ROM and 128 pages of RAM;
+ROM's limit doubled and RAM's top came down by 256 KiB, which no image of
+96 pages or fewer could reach, so such an image runs exactly as before.)
 
 Code may run from RAM as well as ROM. An instruction fetched from RAM is
 decoded when it is executed, so code a program writes to RAM takes effect at
@@ -338,8 +347,8 @@ by the ROM contents.
 | 0 | 4 | Magic: `54h 45h 52h 53h` (`TERS`) |
 | 4 | 1 | Format version: `0` |
 | 5 | 1 | Machine profile: `1` |
-| 6 | 3 | `rom_len`: ROM length in bytes, 1 to 131,072 |
-| 9 | 1 | `ram_pages`: number of 8 KiB RAM pages, 1 to 128 |
+| 6 | 3 | `rom_len`: ROM length in bytes, 1 to 262,144 |
+| 9 | 1 | `ram_pages`: number of 8 KiB RAM pages, 1 to 96 |
 | 10 | 1 | `n_dev`: number of device entries, 0 to 16 |
 | 11 | 5 | Reserved, must be zero |
 | 16 | 16 | Title, UTF-8, padded with `00h` |
@@ -1397,7 +1406,7 @@ The sizes of what a program hands a device:
 - 256 random bytes per call (§system);
 - the event queue, 64 events (§events).
 
-The sizes that define machine profile 1 (ROM of 128 KiB, RAM of 1 to 128
+The sizes that define machine profile 1 (ROM of 256 KiB, RAM of 1 to 96
 pages of 8 KiB, 16 devices in an image, the 640 × 480 screen, the
 terminal's 80 × 30 cells, 4 controllers) and the layouts of records, blocks
 and events are not placeholders: they are the profile and its device

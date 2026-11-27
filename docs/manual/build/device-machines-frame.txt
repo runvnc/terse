@@ -29,4 +29,4 @@ Each machine is deterministic given its own inputs. The shell's include its devi
 
 ## Charges
 
-Each call costs 4 (plus the `ecall` instruction), and copies cost 1 per 4 bytes, rounded up: `start` 8 (when the ID is read), `start_program` (33 + n) / 4 up, `info` 12, `builtin` 8, `identity` 21, `request` 21, `argument` 8 (when the ID is read), `snapshot_info` 31 and `experimental` 8, each when written. `face` and `unface` copy nothing; drawing the scene is the host's work. See [charges](terse:0cd6940cd27ae344118a79142e415ac92d9df31c5938bdee4e8ef2249cdd8620).
+Each call costs 4 (plus the `ecall` instruction), and copies cost 1 per 4 bytes, rounded up: `start` 8 (when the ID is read), `start_program` (33 + n) / 4 up, `info` 12, `builtin` 8, `identity` 21, `request` 21, `argument` 8 (when the ID is read), `snapshot_info` 31 and `experimental` 8, each when written. `face` and `unface` copy nothing; drawing the scene is the host's work. See [charges](terse:700aa265f5d0ae8141b841e6eeecb0b6146ac6935da3121441ee039db69ecf7c).

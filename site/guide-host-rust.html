@@ -18,8 +18,8 @@
 <thead><tr><th>Offset</th><th>Size</th><th>Field</th></tr></thead>
 <tbody>
 <tr><td>0</td><td>6</td><td><code>TERS</code>, format version 0, machine profile 1</td></tr>
-<tr><td>6</td><td>3</td><td>the ROM&#39;s length, at most 131,072 bytes</td></tr>
-<tr><td>9</td><td>1</td><td>RAM pages of 8 KiB, 1 to 128</td></tr>
+<tr><td>6</td><td>3</td><td>the ROM&#39;s length, at most 262,144 bytes</td></tr>
+<tr><td>9</td><td>1</td><td>RAM pages of 8 KiB, 1 to 96</td></tr>
 <tr><td>10</td><td>1</td><td>the number of devices, at most 16</td></tr>
 <tr><td>32</td><td>2 each</td><td>each device: its slot and version (<code>80h</code>: optional)</td></tr>
 </tbody></table></div>
@@ -31,8 +31,8 @@ const MAGIC: &amp;[u8] = b&quot;TERS\0\x01&quot;;
 const ROM_LEN_AT: usize = 6;
 const RAM_PAGES_AT: usize = 9;
 const DEVICES_AT: usize = 10;
-const MAX_ROM: usize = 131072;
-const MAX_RAM_PAGES: usize = 128;
+const MAX_ROM: usize = 262144;
+const MAX_RAM_PAGES: usize = 96;
 const MAX_DEVICES: usize = 16;
 pub const DEVICE_SIZE: usize = 2;
 pub const PAGE_SIZE: usize = 8192;

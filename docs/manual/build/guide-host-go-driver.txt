@@ -363,12 +363,12 @@ prints `hello`'s screen after 30 frames, 30 lines, which begins
 
 and is the reference's exactly: from the top folder, `terse run programs/hello/hello.terse --frames 30 --dump` prints the same 30 lines.
 
-The driver can be any program that speaks the bus. [Make a device in Go](terse:eb9106fa5f2b473464ca11b24640b839ae14fee84908fcd1b4b589d321b989a7) writes a terminal of 257 lines that is enough for `hello`; give its path instead of the reference's.
+The driver can be any program that speaks the bus. [Make a device in Go](terse:29472c9c1f42a138608e74498bb5f57475ce03512181c98cf77ba171bb2cd236) writes a terminal of 257 lines that is enough for `hello`; give its path instead of the reference's.
 
 ## What you have now
 
-A core that shows `hello` through a driver: `bus.go`, 289 lines, and `step3/main.go`, 71. What it leaves out: input events and writes from drivers (the terminal has none), more than one driver, READ (a driver asking for guest memory; the content driver does), sending deferred calls in batches (only faster), and timeouts. Next: [Make a host in Go, step 4: prove it exact](terse:563f0200f1c8166aacb904385a0beb0d7c6ece38ebb785608d46b587fc8c9095).
+A core that shows `hello` through a driver: `bus.go`, 289 lines, and `step3/main.go`, 71. What it leaves out: input events and writes from drivers (the terminal has none), more than one driver, READ (a driver asking for guest memory; the content driver does), sending deferred calls in batches (only faster), and timeouts. Next: [Make a host in Go, step 4: prove it exact](terse:3044f4a59a22d60be1e458c92df3c8973a98d91d7001789059d8942d1aca3846).
 
-- The same step in Rust: [Make a host in Rust, step 3: a driver shows hello](terse:c828dda1532135d70b773166fdf0d958af545e0ad7da55226db37d2894ef03c0).
+- The same step in Rust: [Make a host in Rust, step 3: a driver shows hello](terse:2a23364e0dbd54bb89403f16906fd872e6d5558ec33d2bb224fed8ce8306baa6).
 - Full implementations: `native/core-c/bus.c` (every reference driver, batching, 663 lines of C) and `crates/terse-bus`.
-- The rules: DEVICES.md sections 1 (the messages), 2 and 3 (starting a driver, the socket), 5 (the call table) and 12 (a minimal core); [The terminal (device 2)](terse:4ddd01f533803b2b9bb5d03337003433f1eb4291714c4026067cb5b1eca5d28b).
+- The rules: DEVICES.md sections 1 (the messages), 2 and 3 (starting a driver, the socket), 5 (the call table) and 12 (a minimal core); [The terminal (device 2)](terse:81e8145480d8b24589a04810270479fb1b6168efb7e11314d4ca5b5144506d06).

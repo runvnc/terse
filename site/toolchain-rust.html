@@ -114,7 +114,7 @@ llvm-objcopy -O binary \
     target/riscv32imc-unknown-none-elf/release/game game.bin
 terse pack --rom game.bin --title game --ram-pages 4 \
     --device 2:0 --device 3:0 -o game.terse</pre>
-<p>The linker script&#39;s path is relative to the package&#39;s root, where cargo runs the linker. This gives the same ROM as <code>terse build</code> for the same source (checked with hello.rs). A debug build (<code>opt-level = 0</code>) works but is far larger and slower: 11,701 bytes of ROM for hello instead of 1,716, and a larger program may not fit in 128 KiB of ROM or in a frame&#39;s budget.</p>
+<p>The linker script&#39;s path is relative to the package&#39;s root, where cargo runs the linker. This gives the same ROM as <code>terse build</code> for the same source (checked with hello.rs). A debug build (<code>opt-level = 0</code>) works but is far larger and slower: 11,701 bytes of ROM for hello instead of 1,716, and a larger program may not fit in 256 KiB of ROM or in a frame&#39;s budget.</p>
 <p>Next: <a href="toolchain-other.html">Building by hand, and other languages</a>.</p>
 </article>
 </main>

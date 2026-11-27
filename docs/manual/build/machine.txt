@@ -11,7 +11,7 @@ The machine is the optional third layer of Tersenet: the network and the
 article format are the core, and a reader can implement them without
 it. Which devices a host provides (the reading and the program profile)
 and how a program does without some is in
-[the system device](terse:5107ebd08fd51daad5ceea79195859e84f217c95e79ed4f8ad76dd18d8543a15).
+[the system device](terse:308cccaea20fc9c26bd3dd508ba4935af0e6065c5d4c855356708b640e376420).
 
 ## CPU
 
@@ -55,6 +55,11 @@ instruction any part of which lies outside ROM and RAM (for example a
 may run from RAM; an instruction fetched from RAM is decoded when it is
 executed, so code written to RAM takes effect at once, but each such
 instruction costs 4 units instead of 1.
+
+ROM is at most 262,144 bytes, so it ends by `0005_0000h`; RAM is at most
+96 pages, so it ends by `001C_0000h`: ROM and RAM together are at most 1
+MiB. Both start at the same address whatever their size, and a program's
+addresses depend only on its own `ram_pages`.
 
 ## Reset state
 
@@ -124,8 +129,8 @@ the device entries, then the ROM. All numbers are little-endian.
 | 0 | 4 | Magic: `54h 45h 52h 53h` (`TERS`) |
 | 4 | 1 | Format version: 0 |
 | 5 | 1 | Machine profile: 1 |
-| 6 | 3 | `rom_len`: 1 to 131,072 |
-| 9 | 1 | `ram_pages`: 8 KiB pages of RAM, 1 to 128 |
+| 6 | 3 | `rom_len`: 1 to 262,144 |
+| 9 | 1 | `ram_pages`: 8 KiB pages of RAM, 1 to 96 |
 | 10 | 1 | `n_dev`: device entries, 0 to 16 |
 | 11 | 5 | Reserved, zero |
 | 16 | 16 | Title, UTF-8, padded with `00h` |
@@ -188,7 +193,7 @@ write; `pc` continues after the `ecall`.
 - A call checks its buffer before its other arguments: a bad buffer gives
   `FFFF_FFFEh` whatever they are (page `submit` aside).
 - Buffers need no alignment. Every call is charged, also when it fails:
-  see [charges](terse:0cd6940cd27ae344118a79142e415ac92d9df31c5938bdee4e8ef2249cdd8620).
+  see [charges](terse:700aa265f5d0ae8141b841e6eeecb0b6146ac6935da3121441ee039db69ecf7c).
 
 In C, `terse.h` has a constant for every call (`CALL_WAIT_FRAME`, ...)
 and the inline functions `terse_call`, `terse_call4`, `terse_call5` and
@@ -196,7 +201,7 @@ and the inline functions `terse_call`, `terse_call4`, `terse_call5` and
 
 ## Call table
 
-Every call of every device, with its number, arguments, result and class, is in [the call table](terse:5bc4cabea992adc144f1dd3ba656edf0f6b23e5c2c9a713335b5a08e07a4ea72).
+Every call of every device, with its number, arguments, result and class, is in [the call table](terse:1a6769fd91c5f6f31fa109f54c923d2e2b505fce20b152a433e1e5ad95c8d1b1).
 
 ## Screen units
 

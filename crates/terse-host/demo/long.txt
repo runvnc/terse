@@ -9,7 +9,7 @@ a short tour of how Tersenet works, from the bottom up.
 Terse32 is a virtual computer. Its processor runs the RISC-V instruction set,
 the 32-bit base with multiplication and the compressed encodings, which is
 small enough to implement in an afternoon and well supported by ordinary
-compilers. A program is a single image of at most 128 KiB of code and
+compilers. A program is a single image of at most 256 KiB of code and
 constants, and it gets up to a mebibyte of memory. There is no operating
 system inside the machine and no interrupts: a program does its work for a
 frame, then waits for the next one.

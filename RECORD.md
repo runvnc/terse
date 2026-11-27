@@ -160,7 +160,7 @@ and the `readings` lines say which were there:
 | The frame loop's `wait` (`core`) | no starvation | |
 | Any `wait` | | `starved` is given only if the starvation that was read suffices; a frame that a busy computer made late may be `blamed` instead |
 | `stall` | no stall | `memory` is never given |
-| A component's `cpu` | not known | `cpu-ms` and `blocked-ms` are `-` (the record does not state a reading it does not have); a memory stall of a quarter of a frame excuses it whatever its own time (as if it were blocked) |
+| A component's `cpu` | not known | `cpu-ms` and `blocked-ms` are `-` (the record does not state a reading it does not have); under a memory stall all of its own time is taken as time on a CPU, so the stall excuses no more of it than the stall lasted (a missing reading excuses nothing) |
 
 So a host on Linux with schedstats and PSI gives every verdict; on macOS
 (no memory stall) and on Windows (below) never `memory`. In a host with
@@ -492,7 +492,8 @@ publishes them in a followed feed for the program.
   report documents and list it in the launcher; it moves the launcher's
   entries after the built-ins, which the shell's scripted tests and
   reference pictures navigate by.
-- **Search.** At most 16 results a search, listed feeds only, no profile
+- **Search.** At most 16 results a page (more by paging, which the
+  reference does not build yet), listed feeds only, no profile
   lookup by key: an aggregate of strangers is a small, self-selected
   sample.
 - **Defences against faked reports** (not built). Feed keys are free, so
