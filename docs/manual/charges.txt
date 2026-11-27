@@ -179,6 +179,7 @@ All but the request block's 52 bytes are provisional.
 | Paths a figure draws | 256 | provisional |
 | Figure area | 8 times the figure's area, at most 1,228,800 | provisional |
 | Figure path length | 65,536 | provisional |
+| Layers | 64; 64 Layer commands and a layered area of 614,400 square units a document; scales 1 to 256 256ths | provisional |
 | Anchor ids | 1 to 65,535 (0 is no anchor) | |
 | `locate` | 8 a frame; a host keeps at least the 8 latest waiting | provisional |
 | Table columns | 1 to 8 | provisional |

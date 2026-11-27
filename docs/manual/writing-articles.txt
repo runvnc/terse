@@ -174,6 +174,7 @@ The panel, a green triangle with a light outline, and a yellow curve. In brief:
 - Commands `M L H V C S Q T Z`, lowercase relative, numbers as in SVG; the first is `M` or `m`; no arcs.
 - `fill <colour>` and `stroke <colour> [<width>]` set how what follows is drawn; at first no fill and stroke `fg` 1 unit wide. A `stroke` without a width is 1 unit wide again, whatever came before.
 - Colours `#rgb`, `#rrggbb`, `#rrggbbaa`, `none`, `fg` (the text colour).
+- `layer <n>` (0 to 63) puts what follows in layer n. In an article it changes nothing that is drawn (every layer is drawn, in order); it lets a program reuse the same figure and move its layers on the page. Readers older than the word show such a figure as its text.
 - Coordinates in units from the top left, y down, every point within 2047 either way as written, before rounding to sixteenths: `L2047.01 0` is out of range.
 - A command letter may follow a number directly (`L5 5L6 6`), but `fill` and `stroke` must start the path or follow a blank or comma: `L5 5fill #f00` is malformed.
 - A figure has no text: explain it in the prose or a table after it.

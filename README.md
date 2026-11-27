@@ -2031,6 +2031,12 @@ figure's corner. Each run of subpaths between Fill/Stroke changes is filled
 area of 8 × the figure's, a total path length) keep a hostile document cheap to
 draw (SPEC §page.document). With the vector display in the phosphor style or fill mode 1,
 figures are outlines, and in the phosphor style they glow like the text.
+A Layer command puts the paths after it in one of 64 layers, which the `layer`
+call shows, hides, moves, scales down and mirrors without a new layout (SPEC
+§page.layers): an actor's walk cycle in a painted scene, the scenery in front of it
+in a later layer. `terse-host` rasterises each group of a layered figure once, into
+its own texture, and draws the shown ones placed by their layers;
+`programs/painted-test` is a whole scene built this way.
 
 **In `terse-host`.** [cosmic-text](https://crates.io/crates/cosmic-text) lays the
 document out (HarfRust shaping, the Unicode bidirectional algorithm and line

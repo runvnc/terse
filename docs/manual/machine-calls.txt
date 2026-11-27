@@ -63,6 +63,7 @@ The content device, slot 4 (see [blobs](terse:{content-blobs}), [feeds](terse:{c
 | `703h` | `scroll` | `a0` = y | 0 | deferred |
 | `704h` | `background` | `a0` = colour | 0 | deferred |
 | `705h` | `locate` | `a0` = anchor id | 0 done, 1 rejected | answered |
+| `706h` | `layer` | `a0` = layer, `a1` = flags, `a2` = x, `a3` = y, `a4` = scale | 0 done, 1 rejected | deferred |
 
 [Machines](terse:{device-machines}), slot 8, the shell only (buffer sizes in bytes):
 
