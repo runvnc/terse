@@ -64,17 +64,17 @@
 <div class="table"><table>
 <thead><tr><th>Limit</th><th>Value</th><th>Note</th></tr></thead>
 <tbody>
-<tr><td>ROM</td><td>1 to 131,072 bytes, at <code>0001_0000h</code></td><td></td></tr>
-<tr><td>RAM</td><td>1 to 128 pages of 8,192 bytes, at <code>0010_0000h</code></td><td>8 KiB to 1 MiB</td></tr>
+<tr><td>ROM</td><td>1 to 262,144 bytes, at <code>0001_0000h</code></td><td></td></tr>
+<tr><td>RAM</td><td>1 to 96 pages of 8,192 bytes, at <code>0010_0000h</code></td><td>8 KiB to 768 KiB</td></tr>
 <tr><td>Exit code</td><td>0 to 255</td><td></td></tr>
 <tr><td>Image header</td><td>32 bytes, then 2 per device requirement</td><td></td></tr>
 <tr><td>Format version, profile</td><td>0, 1</td><td></td></tr>
-<tr><td><code>rom_len</code> field</td><td>3 bytes, 1 to 131,072</td><td></td></tr>
-<tr><td><code>ram_pages</code> field</td><td>1 to 128</td><td></td></tr>
+<tr><td><code>rom_len</code> field</td><td>3 bytes, 1 to 262,144</td><td></td></tr>
+<tr><td><code>ram_pages</code> field</td><td>1 to 96</td><td></td></tr>
 <tr><td>Device requirements</td><td>0 to 16, each slot at most once</td><td></td></tr>
 <tr><td>Reserved header bytes</td><td>5, all zero</td><td></td></tr>
 <tr><td>Title</td><td>16 bytes of UTF-8, padded with <code>00h</code>; not checked by hosts</td><td></td></tr>
-<tr><td>Largest image</td><td>131,136 bytes</td><td></td></tr>
+<tr><td>Largest image</td><td>262,208 bytes</td><td></td></tr>
 </tbody></table></div>
 <h2 id="frames">Frames</h2>
 <div class="table"><table>
@@ -206,7 +206,7 @@
 <tbody>
 <tr><td>Feed entry</td><td>at most 293 bytes; title 0 to 120 bytes</td></tr>
 <tr><td>Automatic download</td><td>blobs up to 16,384 bytes (the user may change it)</td></tr>
-<tr><td>Program images downloaded</td><td>up to 131,136 bytes</td></tr>
+<tr><td>Program images downloaded</td><td>up to 262,208 bytes</td></tr>
 <tr><td>Prefetch</td><td>the first 8 article links of an article</td></tr>
 <tr><td>Configured relays</td><td>at most 8</td></tr>
 <tr><td>Relays from a feed&#39;s profile</td><td>at most 2 a feed</td></tr>

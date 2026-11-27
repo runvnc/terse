@@ -55,6 +55,6 @@ prints the C program's rolls, `You rolled 1.`, `2.` and `5.`, since the same see
 
 ## What you have now
 
-The program in Rust; and the end of the implementation guide. It is `examples/program/rust/roll.rs` in the Tersenet sources. What remains is the reference, which starts with [How Tersenet works](terse:946a64d33a3d343251e089a6f9c6e5db89377f84db6e2194806899cd15027d35).
+The program in Rust; and the end of the implementation guide. It is `examples/program/rust/roll.rs` in the Tersenet sources. What remains is the reference, which starts with [How Tersenet works](terse:743b05dbcc26254c5a0250205e0603c55a152b26b83b9017f704e83675fba29b).
 
-The rules of experimental devices are in [Experimental devices](terse:15dd998494b2c29d724dddbfb17c9141a13ec530783a0503eae41da31deb1ee7), and every call of the runtime in [Rust programs](terse:2a5f0d3ad6047f9eb589149fd575f4082b1a0d8da01e403f70861aea23766bac).
+The rules of experimental devices are in [Experimental devices](terse:15dd998494b2c29d724dddbfb17c9141a13ec530783a0503eae41da31deb1ee7), and every call of the runtime in [Rust programs](terse:530df594a8bbe3f5cdf8ef0c801da4be2368f6fa7bd2529165c687fa0bfe5130).
