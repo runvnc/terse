@@ -246,6 +246,40 @@ round:
 - 16 KiB a get and 8 pending requests are enough: a 30 KB scene is two
   requests.
 
+## What is built, and what it costs
+
+The meadow, the Spire's foot and the Hall of Vanes, with puzzles 1 and 2
+and the way up (a provisional ending). Measured by
+`crates/terse-cli/tests/stillwind.rs` (budget 125,000 units a frame) and
+`crates/terse-host/tests/stillwind_window.rs` (`expect no-slow` with the
+software renderer at 1280 x 960, through a scene change):
+
+| | Units a frame | Budget |
+|---|---|---|
+| Walking (arrows; only `layer` calls, for what changed) | about 1,880 | 1.5 % |
+| Standing still | nothing is called | ~0 % |
+| Typing a letter (the input line) | about 1,190 | 0.95 % |
+| A command and its reply (the parser and world, Low Bell's) | about 28,700 | 23 % |
+| A new room's text (the busiest kind of frame) | about 45,300 | 36 % |
+| The scene change itself (a submit from RAM, the frame after the text) | about 8,200 | 6.6 % |
+| A fetch completing (16 KiB delivered, 1 unit per 4 bytes) | up to 4,400 | 3.5 % |
+| The busiest frame of any transcript (the ending's long text) | 52,909 | 42.3 % |
+
+| Scene | Document | Paths per figure (top, middle, bottom) | Length cap, bottom figure | Layers |
+|---|---|---|---|---|
+| Meadow | 18,874 bytes | 31, 48, 213 / 256 | 55,901 / 65,536 | 15 / 64, area 141,514 / 614,400 |
+| Spire's foot | 28,921 bytes | 35, 51, 211 / 256 | 60,845 / 65,536 | 17 / 64, area 220,009 / 614,400 |
+| Hall | 15,234 bytes | 44, 56, 188 / 256 | 59,398 / 65,536 | 16 / 64, area 162,345 / 614,400 |
+
+The cap that binds is the **length cap of the lowest figure**, the one
+that must hold Ysolde (her 11 poses take 129 paths and 19,276 of its
+65,536 before any ground is painted); its path cap comes next. Upper
+figures have room to spare, which is where the detail goes. The image is
+52,036 bytes of ROM (the scenes are not in it); RAM is 28 pages, of which
+four scene slots of 32 KiB are 128 KiB. Nothing the scenes add is paid
+per frame: a richer scene costs only its submit (1 unit per 4 bytes, once
+per scene change, about 7,200 for the 29 KB foot) and its fetch.
+
 ## Tone and look
 
 Flat-colour vector painting under a long gold evening: deep blue sky
