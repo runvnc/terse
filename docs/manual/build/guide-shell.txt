@@ -1,6 +1,6 @@
 # Make a shell
 
-When `terse-host` opens, the first thing you see, the launcher with its tiles, is not part of the host. It is a Terse32 program like any other, the shell, with one device the others lack: Machines, device 8, which starts other machines and says where their screens go. You can write your own, in C here or in Rust on [the next page](terse:9a154a47de7802407f95dd996de97db408efa10205490f187f12da7bbff9dfdb).
+When `terse-host` opens, the first thing you see, the launcher with its tiles, is not part of the host. It is a Terse32 program like any other, the shell, with one device the others lack: Machines, device 8, which starts other machines and says where their screens go. You can write your own, in C here or in Rust on [the next page](terse:3d5d037021ab9cc1170157cee2b115c9b3fbafda89969bbc78fbcbcc20c9ccbd).
 
 ## The smallest shell
 
@@ -31,14 +31,14 @@ Each machine is a whole separate Terse32 machine, with its own memory, devices a
 
 A shell lists device 8; this one needs nothing else:
 
-```
+```sh
 terse build myshell.c --device 8:0
 terse run --shell myshell.terse --frames 30 --dump
 ```
 
 The run prints the shell's own screen, then each machine's:
 
-```
+```text
 terse: image has no terminal device
 -- machine 1 running 0 0 640 480 hello --
  Tersenet · hello
@@ -47,7 +47,7 @@ terse: image has no terminal device
 
 and the rest of hello's screen. The first line says only that the shell itself has no text grid to print. In a window:
 
-```
+```sh
 terse-host --shell myshell.terse
 ```
 
@@ -57,6 +57,6 @@ From here a shell is a matter of taste: a list of programs to choose from (`mach
 
 ## What you have now
 
-A system of machines under your own shell. It is `examples/program/c/myshell.c` in the Tersenet sources. Next, [the same in Rust](terse:9a154a47de7802407f95dd996de97db408efa10205490f187f12da7bbff9dfdb), or a device nobody has specified yet: [Invent a device](terse:6f66444ae9884c50a5051d1ccd67d57ac3eaddbbb92665c5509aa0edf1755537).
+A system of machines under your own shell. It is `examples/program/c/myshell.c` in the Tersenet sources. Next, [the same in Rust](terse:3d5d037021ab9cc1170157cee2b115c9b3fbafda89969bbc78fbcbcc20c9ccbd), or a device nobody has specified yet: [Invent a device](terse:cb605a85226182e6919e1169d1023db73325af42c3c305fa218db035597ad23b).
 
-Every call of device 8 is in [The Machines device](terse:b756d4178e2a831e38fc7a19ca7d43f169dffe1751bd18d6db3dda7803213d9f), and panels, the 3D view and input routing in [Screens, panels and input](terse:6c60c8fa7d1a7f8c2052d26843e70b5381dd5565e1b5d6c14033d6c1f6e552fa).
+Every call of device 8 is in [The Machines device](terse:9f39c664b3f87c0b125b2be286072ffde5512d71cc34059f99b2e0b0684dcc7a), and panels, the 3D view and input routing in [Screens, panels and input](terse:6c60c8fa7d1a7f8c2052d26843e70b5381dd5565e1b5d6c14033d6c1f6e552fa).

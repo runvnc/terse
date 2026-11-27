@@ -14,34 +14,34 @@
 <p>The program of the last page, &quot;Write a program in C&quot;, in Rust. It uses <code>terse</code>, the Rust runtime for Terse32, which <code>terse build</code> provides.</p>
 <h2 id="the-program">The program</h2>
 <p><code>hello.rs</code>:</p>
-<pre>#![no_std]
-#![no_main]
+<pre><span class=m>#![no_std]</span>
+<span class=m>#![no_main]</span>
 
-use terse::*;
+<span class=k>use</span> terse::*;
 
-entry!(main);
+<span class=m>entry!</span>(main);
 
-fn main() {
-    term_color(15, 4);
-    term_puts(&quot; Hello from hello! &quot;);
-    term_color(7, 0);
-    term_puts(&quot;\n\nPress Esc to exit.\n&quot;);
+<span class=k>fn</span> main() {
+    term_color(<span class=n>15</span>, <span class=n>4</span>);
+    term_puts(<span class=s>&quot; Hello from hello! &quot;</span>);
+    term_color(<span class=n>7</span>, <span class=n>0</span>);
+    term_puts(<span class=s>&quot;\n\nPress Esc to exit.\n&quot;</span>);
 
-    loop {
+    <span class=k>loop</span> {
         wait_frame();
-        while let Some(e) = next_event() {
-            if e.kind == EV_KEY_DOWN &amp;&amp; e.key() == KEY_ESCAPE {
-                exit(0);
+        <span class=k>while</span> <span class=k>let</span> <span class=t>Some</span>(e) = next_event() {
+            <span class=k>if</span> e.kind == EV_KEY_DOWN &amp;&amp; e.key() == KEY_ESCAPE {
+                exit(<span class=n>0</span>);
             }
         }
     }
 }</pre>
 <p>A Terse32 machine has no operating system under it, so a program is <code>#![no_std]</code> (the <code>core</code> library only, no <code>std</code>) and <code>#![no_main]</code>; <code>entry!(main)</code> names the function the machine starts. <code>use terse::*</code> brings in the runtime: the C library&#39;s calls, without their <code>terse_</code> prefix. <code>next_event</code> gives <code>Some(event)</code> until the queue is empty, and <code>e.key()</code> is a key event&#39;s key. <code>exit(0)</code> ends the program, as returning from <code>main</code> does.</p>
 <h2 id="build-it-and-run-it">Build it and run it</h2>
-<pre>terse new hello.rs
-terse build hello.rs
-terse run hello.terse --frames 60 --dump
-terse-host hello.terse</pre>
+<pre class="sh"><span class=k>terse</span> new hello.rs
+<span class=k>terse</span> build hello.rs
+<span class=k>terse</span> run hello.terse --frames 60 --dump
+<span class=k>terse-host</span> hello.terse</pre>
 <p><code>terse new hello.rs</code> writes this program with comments. <code>terse build</code> needs rustc from rustup with the target for this machine; if the target is missing it says what to run, <code>rustup target add riscv32imc-unknown-none-elf</code>. rustc links with its own linker, so clang is not needed.</p>
 <p>The screen is the C program&#39;s, word for word, and the <code>esc.txt</code> of the last page stops it after frame 6 too. The image is 268 bytes; the C one is 386.</p>
 <h2 id="what-you-have-now">What you have now</h2>

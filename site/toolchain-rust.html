@@ -14,23 +14,23 @@
 <p><code>terse build hello.rs</code> builds a Rust program with rustc and the runtime <code>terse.rs</code> (programs/lib/rust), built into <code>terse</code>. This article says what it runs, what the runtime gives, what things cost, and how to build a larger program with cargo. <code>programs/hello-rs/hello.rs</code> is the hello program in Rust.</p>
 <h2 id="a-program">A program</h2>
 <p>A Rust program is a <code>#![no_std]</code>, <code>#![no_main]</code> crate root that names its main function with <code>terse::entry!</code>:</p>
-<pre>#![no_std]
-#![no_main]
-use terse::*;
-entry!(main);
+<pre><span class=m>#![no_std]</span>
+<span class=m>#![no_main]</span>
+<span class=k>use</span> terse::*;
+<span class=m>entry!</span>(main);
 
-fn main() {
-    term_puts(&quot;Hello from Rust\n&quot;);
-    loop {
+<span class=k>fn</span> main() {
+    term_puts(<span class=s>&quot;Hello from Rust\n&quot;</span>);
+    <span class=k>loop</span> {
         wait_frame();
     }
 }</pre>
 <h2 id="what-it-runs">What it runs</h2>
-<pre>rustc --edition 2024 --target riscv32imc-unknown-none-elf \
+<pre class="sh"><span class=k>rustc</span> --edition 2024 --target riscv32imc-unknown-none-elf \
     -C opt-level=s -Cpanic=abort --remap-path-prefix=&lt;lib&gt;/= \
     --crate-type rlib --crate-name terse \
     -o &lt;tmp&gt;/libterse.rlib &lt;lib&gt;/terse.rs
-rustc --edition 2024 --target riscv32imc-unknown-none-elf \
+<span class=k>rustc</span> --edition 2024 --target riscv32imc-unknown-none-elf \
     -C opt-level=s -Cpanic=abort --remap-path-prefix=&lt;lib&gt;/= \
     -C lto -C strip=debuginfo --crate-type bin \
     --crate-name hello -C link-arg=-T&lt;lib&gt;/terse.ld \
@@ -86,33 +86,33 @@ game/terse-rt/terse.rs
 game/terse.ld
 game/src/main.rs           #![no_std] #![no_main] ...</pre>
 <p><code>Cargo.toml</code>:</p>
-<pre>[package]
-name = &quot;game&quot;
-version = &quot;0.1.0&quot;
-edition = &quot;2024&quot;
+<pre><span class=k>[package]</span>
+name = <span class=s>&quot;game&quot;</span>
+version = <span class=s>&quot;0.1.0&quot;</span>
+edition = <span class=s>&quot;2024&quot;</span>
 
-[dependencies]
-terse = { path = &quot;terse-rt&quot; }
+<span class=k>[dependencies]</span>
+terse = { path = <span class=s>&quot;terse-rt&quot;</span> }
 
-[profile.release]
-opt-level = &quot;s&quot;
+<span class=k>[profile.release]</span>
+opt-level = <span class=s>&quot;s&quot;</span>
 lto = true
-panic = &quot;abort&quot;
+panic = <span class=s>&quot;abort&quot;</span>
 debug = false
 
-[profile.dev]
-panic = &quot;abort&quot;</pre>
+<span class=k>[profile.dev]</span>
+panic = <span class=s>&quot;abort&quot;</span></pre>
 <p><code>.cargo/config.toml</code>:</p>
-<pre>[build]
-target = &quot;riscv32imc-unknown-none-elf&quot;
+<pre><span class=k>[build]</span>
+target = <span class=s>&quot;riscv32imc-unknown-none-elf&quot;</span>
 
-[target.riscv32imc-unknown-none-elf]
-rustflags = [&quot;-C&quot;, &quot;link-arg=-Tterse.ld&quot;]</pre>
+<span class=k>[target.riscv32imc-unknown-none-elf]</span>
+rustflags = [<span class=s>&quot;-C&quot;</span>, <span class=s>&quot;link-arg=-Tterse.ld&quot;</span>]</pre>
 <p>Then:</p>
-<pre>cargo build --release
-llvm-objcopy -O binary \
+<pre class="sh"><span class=k>cargo</span> build --release
+<span class=k>llvm-objcopy</span> -O binary \
     target/riscv32imc-unknown-none-elf/release/game game.bin
-terse pack --rom game.bin --title game --ram-pages 4 \
+<span class=k>terse</span> pack --rom game.bin --title game --ram-pages 4 \
     --device 2:0 --device 3:0 -o game.terse</pre>
 <p>The linker script&#39;s path is relative to the package&#39;s root, where cargo runs the linker. This gives the same ROM as <code>terse build</code> for the same source (checked with hello.rs). A debug build (<code>opt-level = 0</code>) works but is far larger and slower: 11,701 bytes of ROM for hello instead of 1,716, and a larger program may not fit in 256 KiB of ROM or in a frame&#39;s budget.</p>
 <p>Next: <a href="toolchain-other.html">Building by hand, and other languages</a>.</p>

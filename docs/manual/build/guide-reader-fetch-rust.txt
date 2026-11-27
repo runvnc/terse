@@ -6,7 +6,7 @@ Articles travel through relays: servers that keep blobs (any bytes, up to 1 MiB)
 
 `Cargo.toml` names the package and the libraries steps 2 and 3 use:
 
-```
+```toml
 [package]
 name = "reader"
 version = "0.1.0"
@@ -31,7 +31,7 @@ The empty `[workspace]` keeps the package apart from the Tersenet sources around
 
 `src/relay.rs` gets a blob from a relay:
 
-```
+```rust
 use std::error::Error;
 use std::io::{Read, Write};
 use tungstenite::{Message, WebSocket};
@@ -87,7 +87,7 @@ pub fn hex32(hex: &str) -> Result<Id, Box<dyn Error>> {
 
 `src/bin/fetch.rs` is the program:
 
-```
+```rust
 // Step 2: fetch an article from a relay by its ID.
 use reader::{article, relay};
 
@@ -137,46 +137,46 @@ The hash check is the important line. Relays are not trusted, the hash is: if th
 
 You need a relay. `terse-relay` comes with every Tersenet download. In another terminal, start one of your own on port 7979, apart from the one a running Tersenet host keeps on 7878:
 
-```
+```sh
 terse-relay --listen 127.0.0.1:7979 --store try-relay
 ```
 
 It prints `listening on ws://127.0.0.1:7979` and keeps what it is given in the folder `try-relay`. Put the article on it, from `examples/reader/rust`:
 
-```
+```sh
 terse put ../hello.txt --relay ws://127.0.0.1:7979
 ```
 
-```
+```text
 terse: taken by 1 of 1 relays: ws://127.0.0.1:7979
 e01027372f56996fa53fde7ae45aed656e196ccb4e7d79d3b66a51d9590be3a8
 ```
 
 The last line is the article's ID. `terse hash` prints the same ID without asking a relay, which saves typing it:
 
-```
+```sh
 cargo run -q --bin fetch ws://127.0.0.1:7979 \
   $(terse hash ../hello.txt)
 ```
 
 It prints the article exactly as step 1 did. Ask for a blob the relay does not hold, such as `Cargo.toml`, and it says so:
 
-```
+```sh
 cargo run -q --bin fetch ws://127.0.0.1:7979 \
   $(terse hash Cargo.toml)
 ```
 
-```
+```text
 Error: "the relay does not have it"
 ```
 
 ## What it leaves out
 
-The program asks one relay and keeps nothing. A complete reader keeps every blob it fetched, so that an article opens at once the next time with no network at all, asks several relays, and matches replies to requests by their numbers. In the reference implementation that is `crates/terse-net/src/node.rs`, with the relay client in `relay.rs`, the messages in `protocol.rs` and the store in `store.rs`. A reader may also leave all of the network to a node, a separate program it asks over a local socket; [Writing a reader without the machine](terse:d95e1053423ee865c1f3ec1a20495c08bc59faf7501fc4ffdd0cdcacb2919596) says how.
+The program asks one relay and keeps nothing. A complete reader keeps every blob it fetched, so that an article opens at once the next time with no network at all, asks several relays, and matches replies to requests by their numbers. In the reference implementation that is `crates/terse-net/src/node.rs`, with the relay client in `relay.rs`, the messages in `protocol.rs` and the store in `store.rs`. A reader may also leave all of the network to a node, a separate program it asks over a local socket; [Writing a reader without the machine](terse:71329baef248a899517dfd97e62dc84295fcbd56283b397769198b7e32a4c250) says how.
 
 ## What you have now
 
 A reader that fetches an article by its ID and knows it is genuine.
 
-- Next: [Make a reader in Rust, step 3: follow a feed](terse:810464053a961d391948d47fb0fb42c9e3d99e10f6294eb717e7228d43fb61b0).
-- Every relay message, and why a relay refuses: [The network](terse:401c42853201f64f28c72d9acd2ae7dbf51a744e41003a2fa2280458107d139b).
+- Next: [Make a reader in Rust, step 3: follow a feed](terse:c155e6f7db2e4e2c83e1bc742dc033557fefa7dcdec13091b45709e6e6f7fcd2).
+- Every relay message, and why a relay refuses: [The network](terse:860a2aaebae93a8b6978505d6a8fe3cb2329eaeeda3a124d1e2c3786e7ff5187).

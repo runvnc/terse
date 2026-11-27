@@ -14,16 +14,16 @@
 <p>When <code>terse-host</code> opens, the first thing you see, the launcher with its tiles, is not part of the host. It is a Terse32 program like any other, the shell, with one device the others lack: Machines, device 8, which starts other machines and says where their screens go. You can write your own, in C here or in Rust on <a href="guide-shell-rust.html">the next page</a>.</p>
 <h2 id="the-smallest-shell">The smallest shell</h2>
 <p><code>myshell.c</code> starts the built-in program <code>hello</code> and gives it the whole screen and the keyboard:</p>
-<pre>#include &quot;terse.h&quot;
+<pre><span class=m>#include</span> <span class=s>&quot;terse.h&quot;</span>
 
-static const uint8_t built_in[32];
+<span class=k>static</span> <span class=k>const</span> <span class=t>uint8_t</span> built_in[<span class=n>32</span>];
 
-int main(void)
+<span class=t>int</span> main(<span class=t>void</span>)
 {
-    uint32_t hello = mach_start_named(built_in, &quot;hello&quot;, 5);
-    mach_place(hello, 0, 0, 640, 480);
+    <span class=t>uint32_t</span> hello = mach_start_named(built_in, <span class=s>&quot;hello&quot;</span>, <span class=n>5</span>);
+    mach_place(hello, <span class=n>0</span>, <span class=n>0</span>, <span class=n>640</span>, <span class=n>480</span>);
     mach_focus(hello);
-    for (;;)
+    <span class=k>for</span> (;;)
         terse_wait_frame();
 }</pre>
 <ul>
@@ -34,15 +34,15 @@ int main(void)
 <p>Each machine is a whole separate Terse32 machine, with its own memory, devices and budget. The shell only decides what runs and where it is seen.</p>
 <h2 id="build-it-and-run-it">Build it and run it</h2>
 <p>A shell lists device 8; this one needs nothing else:</p>
-<pre>terse build myshell.c --device 8:0
-terse run --shell myshell.terse --frames 30 --dump</pre>
+<pre class="sh"><span class=k>terse</span> build myshell.c --device 8:0
+<span class=k>terse</span> run --shell myshell.terse --frames 30 --dump</pre>
 <p>The run prints the shell&#39;s own screen, then each machine&#39;s:</p>
 <pre>terse: image has no terminal device
 -- machine 1 running 0 0 640 480 hello --
  Tersenet · hello
   héllo, wörld — привет, мир</pre>
 <p>and the rest of hello&#39;s screen. The first line says only that the shell itself has no text grid to print. In a window:</p>
-<pre>terse-host --shell myshell.terse</pre>
+<pre class="sh"><span class=k>terse-host</span> --shell myshell.terse</pre>
 <h2 id="where-to-take-it">Where to take it</h2>
 <p>From here a shell is a matter of taste: a list of programs to choose from (<code>mach_builtin</code> lists the built-in ones), several machines tiled side by side, a key that brings the shell back (the host sends it a home event), saving and restoring machines. The reference shell, <code>programs/shell/shell.c</code>, does all of these in about 2,000 lines of C.</p>
 <h2 id="what-you-have-now">What you have now</h2>

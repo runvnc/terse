@@ -91,13 +91,13 @@ c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa</pre>
 <h2 id="the-sdk">The SDK</h2>
 <p><code>sdk/go</code> (package <code>tersenet</code>) and <code>sdk/rust</code> (crate <code>tersenet</code>) make every check on this page, with no options. Go:</p>
 <pre>e, err := tersenet.VerifyEntry(b)
-if err != nil {
-    return err // names the rule: tersenet.ErrKey, ...
+<span class=k>if</span> err != <span class=k>nil</span> {
+    <span class=k>return</span> err <span class=c>// names the rule: tersenet.ErrKey, ...</span>
 }
 fmt.Println(e.Seq, e.Title)</pre>
 <p>Rust:</p>
-<pre>let e = tersenet::verify_entry(&amp;bytes)?;
-println!(&quot;{} {}&quot;, e.seq, e.title);</pre>
+<pre><span class=k>let</span> e = tersenet::verify_entry(&amp;bytes)?;
+<span class=m>println!</span>(<span class=s>&quot;{} {}&quot;</span>, e.seq, e.title);</pre>
 <p>Both also offer <code>Verify</code> / <code>verify</code> (strict verification of any key, message and signature) and <code>ValidFeedKey</code> / <code>valid_feed_key</code> (section 4.1). Each is one short file: <code>sdk/go/tersenet.go</code>, <code>sdk/rust/src/lib.rs</code>. The reference implementation checks entries with the Rust one.</p>
 </article>
 </main>

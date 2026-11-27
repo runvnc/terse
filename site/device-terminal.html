@@ -128,27 +128,27 @@
 <p>For determinism and snapshots the terminal&#39;s state is, in this order: a present flag (1 byte; if <code>00h</code> nothing else follows), the 9,600 bytes of the grid, the cursor column, the cursor row, the foreground index, the background index, the cursor-shown flag, the pending wrap flag, the 768 bytes of the palette (red, green, blue for entries 0 to 255), and the incomplete UTF-8 sequence: a count k from 0 to 3, then 3 bytes holding those k bytes padded with <code>00h</code>. That is 10,379 bytes with the device, 1 without. The incomplete sequence is a valid lead byte (<code>C2h</code>-<code>F4h</code>) and the valid continuation bytes received after it.</p>
 <p>The terminal sends no events (keyboard input arrives as system events) and takes no input from the host. How the host draws the grid (font, size, cursor shape, smoothing) cannot be observed by the program. Terminal characters are drawn above the vector displays and the page, and cell backgrounds below them; <a href="device-vector.html">the 2D vector display</a> describes the layers.</p>
 <h2 id="example">Example</h2>
-<pre>#include &quot;terse.h&quot;
+<pre><span class=m>#include</span> <span class=s>&quot;terse.h&quot;</span>
 
-int main(void)
+<span class=t>int</span> main(<span class=t>void</span>)
 {
-    static const uint8_t navy[3] = {0, 0, 64};
-    uint32_t col, row;
+    <span class=k>static</span> <span class=k>const</span> <span class=t>uint8_t</span> navy[<span class=n>3</span>] = {<span class=n>0</span>, <span class=n>0</span>, <span class=n>64</span>};
+    <span class=t>uint32_t</span> col, row;
 
-    /* Redefine entry 4, then clear the grid in it. */
-    terse_call(CALL_TERM_PALETTE_SET, 4, (uint32_t)navy, 1);
-    term_color(15, 4);
+    <span class=c>/* Redefine entry 4, then clear the grid in it. */</span>
+    terse_call(CALL_TERM_PALETTE_SET, <span class=n>4</span>, (<span class=t>uint32_t</span>)navy, <span class=n>1</span>);
+    term_color(<span class=n>15</span>, <span class=n>4</span>);
     term_cmd(TERM_CLEAR);
     term_cmd(TERM_CURSOR_OFF);
 
-    term_goto(2, 1);
-    /* two wide characters, U+4E16 and U+754C */
-    term_puts(&quot;Hello, \xE4\xB8\x96\xE7\x95\x8C\n&quot;);
-    col = terse_call2(CALL_TERM_GET_CURSOR, 0, 0, &amp;row);
-    /* col = 0, row = 2 */
+    term_goto(<span class=n>2</span>, <span class=n>1</span>);
+    <span class=c>/* two wide characters, U+4E16 and U+754C */</span>
+    term_puts(<span class=s>&quot;Hello, \xE4\xB8\x96\xE7\x95\x8C\n&quot;</span>);
+    col = terse_call2(CALL_TERM_GET_CURSOR, <span class=n>0</span>, <span class=n>0</span>, &amp;row);
+    <span class=c>/* col = 0, row = 2 */</span>
 
-    term_fill(0, 29, 80, &#39;-&#39;, 11, 4);   /* by cells_write */
-    for (;;)
+    term_fill(<span class=n>0</span>, <span class=n>29</span>, <span class=n>80</span>, <span class=s>&#39;-&#39;</span>, <span class=n>11</span>, <span class=n>4</span>);   <span class=c>/* by cells_write */</span>
+    <span class=k>for</span> (;;)
         terse_wait_frame();
 }</pre>
 <p>After the <code>puts</code>, the cursor is at (0, 2): the newline moved it to the next row. The two Chinese characters take four cells, columns 9 to 12 of row 1.</p>

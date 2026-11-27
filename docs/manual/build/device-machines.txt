@@ -23,7 +23,7 @@ The shell starts machines under handles 1 to 8. Each is a complete, separate mac
 
 Each handle also has a run flag, a rectangle (x, y, width, height in the shell's screen units) and possibly an identity. The focus is a handle, or 0 for the shell. The system also has a view of the shell's 3D scene, set by `face` (see Screens and the view, below).
 
-A program's identity is (publisher's feed key, name), as in a program entry of a feed. Built-in programs have 32 zero bytes and their image title. A machine started with `start_program` keeps that identity for life; one started with `start` has none; a restored one has its snapshot's. Identity decides whose named records a machine reads ([named records](terse:bbd86d19c4c2cfb492bebe681c39505e4c76e01acf6b35c3836859462e4ba920)).
+A program's identity is (publisher's feed key, name), as in a program entry of a feed. Built-in programs have 32 zero bytes and their image title. A machine started with `start_program` keeps that identity for life; one started with `start` has none; a restored one has its snapshot's. Identity decides whose named records a machine reads ([named records](terse:c1747cb8a13bf9c5d05fe1d4cd2c66684d7f0248ddb6a534c04049ae9e0c6204)).
 
 ## Calls
 
@@ -130,7 +130,7 @@ The order in which a system runs its machines each frame, what a snapshot holds 
 
 ## Example: a minimal shell
 
-```
+```c
 #include "terse.h"
 
 static uint8_t id[32], req[82];

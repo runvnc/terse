@@ -127,26 +127,26 @@ It starts the driver only for a program that lists devices, and prints the hash 
 
 From `examples/host/rust`, after `cargo build --release`, with step 1's `exit.terse`:
 
-```
+```sh
 target/release/step4 exit.terse 0
 target/release/step4 exit.terse 1
 ```
 
 prints the hash at reset, then after the frame in which it exits:
 
-```
+```text
 9cbfa0da982561dd1c5dbaf1d5fde2121dee78c097d754aa0c2a350584bbeb5a
 3272a879392d8179997dc398726430bf92bbd413b89653be8c9af4472656fe9b
 ```
 
 the two STATE.md section 3 gives. And `hello` after 30 frames:
 
-```
+```sh
 target/release/step4 ../../../programs/hello/hello.terse 30 \
     ../../../target/release/terse-dev-terminal
 ```
 
-```
+```text
 819432152b38626f8fc54b43f50d5d4c501dc99e6904315b61dc78b796c611e2
 ```
 
@@ -154,7 +154,7 @@ which is what `terse run programs/hello/hello.terse --frames 30 --hash` prints. 
 
 Random programs find what the tests do not. `native/core-c/tests/fuzz.py` writes them: random 16-bit and 32-bit encodings, many of them faulting. This prints the name of any whose hash after 3 frames is not the reference's, and with this host prints nothing:
 
-```
+```sh
 python3 ../../../native/core-c/tests/fuzz.py fuzz 200
 for f in fuzz/*.terse; do
     a=$(target/release/step4 $f 3 2>/dev/null)
@@ -176,7 +176,7 @@ This host runs `hello` and proves it, nothing more. The rest of a complete host,
 
 ## What you have now
 
-A host that runs Terse32 programs exactly as the reference does, and proves it: `state.rs`, 54 lines, `bin/step4.rs`, 51; 1,060 lines in all. Next, write a device as a separate program: [Make a device](terse:7d520197e0c4ce7c420f4f25b82f01b4ec1e9f87bf18a1dd530f5afead039d58).
+A host that runs Terse32 programs exactly as the reference does, and proves it: `state.rs`, 54 lines, `bin/step4.rs`, 51; 1,060 lines in all. Next, write a device as a separate program: [Make a device](terse:5667d6a13b6933896bf5ff9b674027825a27d187274340d76ad53d0ad828a9f5).
 
 - The same step in Go: "Make a host in Go, step 4: prove it exact", the page before this one.
-- The rules: [State, replay and conformance](terse:e1e6cd9b57fee2aebc292f78ce9a67c351f3ccf194a275678b5682d4df01fdf9), sections "The state serialization", "The hash", "Snapshots" and "The conformance image"; the input in [Events and input](terse:90c9d1da494e9438aeddf510a212a2f0cfd43daccb0b085d942e30639ef9d438).
+- The rules: [State, replay and conformance](terse:c62d32ee0649f52baf1ed9f353f9e65a0f0ca3c1a296a4e29a1321b444283cc5), sections "The state serialization", "The hash", "Snapshots" and "The conformance image"; the input in [Events and input](terse:90c9d1da494e9438aeddf510a212a2f0cfd43daccb0b085d942e30639ef9d438).

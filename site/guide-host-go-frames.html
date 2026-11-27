@@ -13,64 +13,64 @@
 <h1 id="make-a-host-in-go-step-2-frames-and-the-budget">Make a host in Go, step 2: frames and the budget</h1>
 <p>A Terse32 program runs at the same speed on every host. Time comes in frames, 60 a second, and in each frame a program can do a fixed amount of work: 125,000 units. This step adds the file <code>frames.go</code> to the package of step 1: the frame loop and the System device&#39;s first calls.</p>
 <h2 id="the-frame-loop">The frame loop</h2>
-<pre>const FrameBudget = 125000
+<pre><span class=k>const</span> FrameBudget = <span class=n>125000</span>
 
-const (
-    Running = iota
+<span class=k>const</span> (
+    Running = <span class=k>iota</span>
     Exited
     Faulted
 )
 
-type Machine struct {
+<span class=k>type</span> Machine <span class=k>struct</span> {
     *CPU
-    Budget   int64
-    Frame    uint32
-    Stopped  byte
-    ExitCode byte
+    Budget   <span class=t>int64</span>
+    Frame    <span class=t>uint32</span>
+    Stopped  <span class=t>byte</span>
+    ExitCode <span class=t>byte</span>
     Fault    *Fault
-    Devices  func(slot, fn uint32) (result uint32, charge int64)
+    Devices  <span class=k>func</span>(slot, fn <span class=t>uint32</span>) (result <span class=t>uint32</span>, charge <span class=t>int64</span>)
 }</pre>
 <p><code>Machine</code> is the processor of step 1 with what the frame loop keeps: the budget, the frame counter, and how the machine stopped. <code>Devices</code> is for calls to other devices; it stays empty until step 3.</p>
 <p>Slot 1 is the System device. <code>BaseCharge</code> is the charge of its calls and of a call the machine does not have; <code>BadBuffer</code>, the result when a call&#39;s buffer is not where it must be. Its calls are numbered by function:</p>
-<pre>const (
-    System     = 1
-    BaseCharge = 4
-    BadBuffer  = 0xfffffffe
-    eventSize  = 4
+<pre><span class=k>const</span> (
+    System     = <span class=n>1</span>
+    BaseCharge = <span class=n>4</span>
+    BadBuffer  = <span class=n>0xfffffffe</span>
+    eventSize  = <span class=n>4</span>
 )
 
-const (
-    waitFrame  = 0
-    nextEvent  = 1
-    frameCount = 2
-    exit       = 6
+<span class=k>const</span> (
+    waitFrame  = <span class=n>0</span>
+    nextEvent  = <span class=n>1</span>
+    frameCount = <span class=n>2</span>
+    exit       = <span class=n>6</span>
 )</pre>
-<pre>func (m *Machine) RunFrame() {
+<pre><span class=k>func</span> (m *Machine) RunFrame() {
     m.Budget += FrameBudget
-    for m.Budget &gt; 0 &amp;&amp; m.Stopped == Running {
+    <span class=k>for</span> m.Budget &gt; <span class=n>0</span> &amp;&amp; m.Stopped == Running {
         cost, ecall, fault := m.Step()
-        if fault != nil {
+        <span class=k>if</span> fault != <span class=k>nil</span> {
             m.Stopped, m.Fault = Faulted, fault
-            break
+            <span class=k>break</span>
         }
         m.Budget -= cost
-        if !ecall {
-            continue
+        <span class=k>if</span> !ecall {
+            <span class=k>continue</span>
         }
-        slot, fn := m.X[A7]&gt;&gt;8, m.X[A7]&amp;0xff
-        result, charge := uint32(UnknownCall), int64(BaseCharge)
-        if slot == System {
+        slot, fn := m.X[A7]&gt;&gt;<span class=n>8</span>, m.X[A7]&amp;<span class=n>0xff</span>
+        result, charge := <span class=t>uint32</span>(UnknownCall), <span class=t>int64</span>(BaseCharge)
+        <span class=k>if</span> slot == System {
             result = m.system(fn)
-        } else if m.Devices != nil {
+        } <span class=k>else</span> <span class=k>if</span> m.Devices != <span class=k>nil</span> {
             result, charge = m.Devices(slot, fn)
         }
         m.X[A0] = result
         m.Budget -= charge
-        if slot == System &amp;&amp; fn == waitFrame {
-            break
+        <span class=k>if</span> slot == System &amp;&amp; fn == waitFrame {
+            <span class=k>break</span>
         }
     }
-    m.Budget = min(m.Budget, 0)
+    m.Budget = min(m.Budget, <span class=n>0</span>)
     m.Frame++
 }</pre>
 <p>In order:</p>
@@ -82,22 +82,22 @@ const (
 <li>A fault or <code>exit</code> stops the machine. The frame still counts.</li>
 </ul>
 <h2 id="four-calls">Four calls</h2>
-<pre>func (m *Machine) system(fn uint32) uint32 {
-    switch fn {
-    case waitFrame:
-        return m.Frame + 1
-    case nextEvent:
-        if m.Memory(m.X[A0], eventSize, true) == nil {
-            return BadBuffer
+<pre><span class=k>func</span> (m *Machine) system(fn <span class=t>uint32</span>) <span class=t>uint32</span> {
+    <span class=k>switch</span> fn {
+    <span class=k>case</span> waitFrame:
+        <span class=k>return</span> m.Frame + <span class=n>1</span>
+    <span class=k>case</span> nextEvent:
+        <span class=k>if</span> m.Memory(m.X[A0], eventSize, <span class=k>true</span>) == <span class=k>nil</span> {
+            <span class=k>return</span> BadBuffer
         }
-        return 0
-    case frameCount:
-        return m.Frame
-    case exit:
-        m.Stopped, m.ExitCode = Exited, byte(m.X[A0])
-        return 0
+        <span class=k>return</span> <span class=n>0</span>
+    <span class=k>case</span> frameCount:
+        <span class=k>return</span> m.Frame
+    <span class=k>case</span> exit:
+        m.Stopped, m.ExitCode = Exited, <span class=t>byte</span>(m.X[A0])
+        <span class=k>return</span> <span class=n>0</span>
     }
-    return UnknownCall
+    <span class=k>return</span> UnknownCall
 }</pre>
 <ul>
 <li><code>100h</code>, <code>wait_frame</code>: returns the number of the frame in which the program goes on, one more than the counter.</li>
@@ -106,58 +106,58 @@ const (
 <li><code>106h</code>, <code>exit</code>: the machine stops with exit code <code>a0</code> &amp; <code>FFh</code>. Like every call it writes its result, 0, to <code>a0</code>.</li>
 </ul>
 <h2 id="the-program">The program</h2>
-<pre>package main
+<pre><span class=k>package</span> main
 
-import (
-    &quot;fmt&quot;
-    &quot;os&quot;
-    &quot;strconv&quot;
+<span class=k>import</span> (
+    <span class=s>&quot;fmt&quot;</span>
+    <span class=s>&quot;os&quot;</span>
+    <span class=s>&quot;strconv&quot;</span>
 
-    &quot;host/machine&quot;
+    <span class=s>&quot;host/machine&quot;</span>
 )
 
-func main() {
-    file, err := os.ReadFile(os.Args[1])
-    if err != nil {
+<span class=k>func</span> main() {
+    file, err := os.ReadFile(os.Args[<span class=n>1</span>])
+    <span class=k>if</span> err != <span class=k>nil</span> {
         fmt.Fprintln(os.Stderr, err)
-        os.Exit(2)
+        os.Exit(<span class=n>2</span>)
     }
-    frames, _ := strconv.Atoi(os.Args[2])
+    frames, _ := strconv.Atoi(os.Args[<span class=n>2</span>])
     cpu, _, err := machine.Load(file)
-    if err != nil {
+    <span class=k>if</span> err != <span class=k>nil</span> {
         fmt.Fprintln(os.Stderr, err)
-        os.Exit(2)
+        os.Exit(<span class=n>2</span>)
     }
     m := &amp;machine.Machine{CPU: cpu}
-    for m.Stopped == machine.Running &amp;&amp; int(m.Frame) &lt; frames {
+    <span class=k>for</span> m.Stopped == machine.Running &amp;&amp; <span class=t>int</span>(m.Frame) &lt; frames {
         m.RunFrame()
     }
-    if m.Fault != nil {
+    <span class=k>if</span> m.Fault != <span class=k>nil</span> {
         fmt.Fprintln(os.Stderr, m.Fault)
-        os.Exit(1)
+        os.Exit(<span class=n>1</span>)
     }
-    os.Exit(int(m.ExitCode))
+    os.Exit(<span class=t>int</span>(m.ExitCode))
 }</pre>
 <p>It takes the program and the most frames to run.</p>
 <h2 id="run-it">Run it</h2>
 <p>This program calls <code>frame_count</code> 100,000 times, then waits for the next frame and exits with what <code>wait_frame</code> returned:</p>
-<pre>_start: li   t0, 100000
-        li   a7, 0x102      # frame_count
-1:      ecall
-        addi t0, t0, -1
-        bnez t0, 1b
-        li   a7, 0x100      # wait_frame
+<pre>_start: li   t0, <span class=n>100000</span>
+        li   a7, <span class=n>0x102</span>      <span class=c># frame_count</span>
+<span class=n>1</span>:      ecall
+        addi t0, t0, -<span class=n>1</span>
+        bnez t0, <span class=n>1b</span>
+        li   a7, <span class=n>0x100</span>      <span class=c># wait_frame</span>
         ecall
-        li   a7, 0x106      # exit with its result
+        li   a7, <span class=n>0x106</span>      <span class=c># exit with its result</span>
         ecall</pre>
 <p>From <code>examples/host/go</code>, after <code>go build -o bin/ ./...</code>:</p>
-<pre>xxd -r -p &gt; frames.terse &lt;&lt;EOF
-544552530001240000010000000000006672616d657300
-000000000000000000e1629382026a9308201073000000
-fd12e39d02fe93080010730000009308601073000000
-EOF
-bin/step2 frames.terse 10
-echo $?</pre>
+<pre class="sh"><span class=k>xxd</span> -r -p &gt; frames.terse <span class=m>&lt;&lt;EOF</span>
+<span class=s>544552530001240000010000000000006672616d657300</span>
+<span class=s>000000000000000000e1629382026a9308201073000000</span>
+<span class=s>fd12e39d02fe93080010730000009308601073000000</span>
+<span class=s>EOF</span>
+<span class=k>bin/step2</span> frames.terse 10
+<span class=k>echo</span> <span class=m>$?</span></pre>
 <p>prints <code>6</code>, as <code>terse run frames.terse --frames 10</code> does. Each pass of the loop costs 7 units: the <code>ecall</code> 1 + 4, the other two instructions 1 each. 100,000 passes are 700,000 units, so the loop ends in frame 5 (frames 0 to 4 give 625,000), <code>wait_frame</code> returns 6, and the program exits in frame 6. A host that says 3 does not charge calls; 5, its <code>wait_frame</code> returns the counter instead of one more; 1, it has no budget at all. Step 1&#39;s program says 255: it has no <code>frame_count</code>, so the last call returns <code>FFFF_FFFFh</code>.</p>
 <h2 id="what-you-have-now">What you have now</h2>
 <p>A machine that runs programs at exactly the reference&#39;s speed: <code>frames.go</code>, 80 lines, and <code>step2/main.go</code>, 32. Next, give it a screen: <a href="guide-host-go-driver.html">Make a host in Go, step 3: a driver shows hello</a>.</p>

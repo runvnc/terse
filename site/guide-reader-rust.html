@@ -15,12 +15,12 @@
 <p>The program is in the Tersenet sources, in <code>examples/reader/rust</code>, so you can run it before you read it. It is one Cargo package, <code>reader</code>: a library with a module per step, and a program per step in <code>src/bin</code>. You need Rust 1.85 or later. (Make a reader in Go, step 1, is the same program in Go.)</p>
 <h2 id="an-article">An article</h2>
 <p>This is <code>examples/reader/hello.txt</code>:</p>
-<pre># Hello
+<pre><span class=k># Hello</span>
 
 My first article. It has a heading, and this paragraph,
 which is written on two lines.
 
-## A subheading
+<span class=k>## A subheading</span>
 
 A reader joins the lines of a paragraph into one,
 then wraps it again to the width of its own column,
@@ -28,77 +28,77 @@ so the lines you see may not be the lines written.</pre>
 <p>A line that starts with <code># </code> is a heading, and one that starts with <code>## </code> a subheading. The other lines are paragraphs: blank lines separate them, and the lines of one paragraph are joined with spaces, then wrapped to the reader&#39;s width. That is all this step shows.</p>
 <h2 id="the-code">The code</h2>
 <p><code>src/lib.rs</code> lists the library&#39;s modules, this step&#39;s and the next:</p>
-<pre>pub mod article;
-pub mod relay;</pre>
+<pre><span class=k>pub</span> <span class=k>mod</span> article;
+<span class=k>pub</span> <span class=k>mod</span> relay;</pre>
 <p><code>src/article.rs</code> shows an article:</p>
-<pre>const WIDTH: usize = 68;
+<pre><span class=k>const</span> WIDTH: <span class=t>usize</span> = <span class=n>68</span>;
 
-pub fn show(text: &amp;[u8]) {
-    let text = String::from_utf8_lossy(text);
-    let text = text.strip_prefix(&#39;\u{feff}&#39;).unwrap_or(&amp;text);
-    let mut paragraph = Vec::new();
-    for line in text.split(&#39;\n&#39;).chain([&quot;&quot;]) {
-        let heading = match line.strip_prefix(&quot;# &quot;) {
-            Some(text) =&gt; Some((text, &#39;=&#39;)),
-            None =&gt; line.strip_prefix(&quot;## &quot;).map(|t| (t, &#39;-&#39;)),
+<span class=k>pub</span> <span class=k>fn</span> show(text: &amp;[<span class=t>u8</span>]) {
+    <span class=k>let</span> text = <span class=t>String</span>::from_utf8_lossy(text);
+    <span class=k>let</span> text = text.strip_prefix(<span class=s>&#39;\u{feff}&#39;</span>).unwrap_or(&amp;text);
+    <span class=k>let</span> <span class=k>mut</span> paragraph = <span class=t>Vec</span>::new();
+    <span class=k>for</span> line <span class=k>in</span> text.split(<span class=s>&#39;\n&#39;</span>).chain([<span class=s>&quot;&quot;</span>]) {
+        <span class=k>let</span> heading = <span class=k>match</span> line.strip_prefix(<span class=s>&quot;# &quot;</span>) {
+            <span class=t>Some</span>(text) =&gt; <span class=t>Some</span>((text, <span class=s>&#39;=&#39;</span>)),
+            <span class=t>None</span> =&gt; line.strip_prefix(<span class=s>&quot;## &quot;</span>).map(|t| (t, <span class=s>&#39;-&#39;</span>)),
         };
-        let blank = line.chars().all(|c| &quot; \t\r&quot;.contains(c));
-        if heading.is_none() &amp;&amp; !blank {
+        <span class=k>let</span> blank = line.chars().all(|c| <span class=s>&quot; \t\r&quot;</span>.contains(c));
+        <span class=k>if</span> heading.is_none() &amp;&amp; !blank {
             paragraph.push(line);
-            continue;
+            <span class=k>continue</span>;
         }
-        if !paragraph.is_empty() {
-            block(&amp;paragraph.join(&quot; &quot;), None);
+        <span class=k>if</span> !paragraph.is_empty() {
+            block(&amp;paragraph.join(<span class=s>&quot; &quot;</span>), <span class=t>None</span>);
             paragraph.clear();
         }
-        if let Some((text, rule)) = heading {
-            block(text, Some(rule));
+        <span class=k>if</span> <span class=k>let</span> <span class=t>Some</span>((text, rule)) = heading {
+            block(text, <span class=t>Some</span>(rule));
         }
     }
 }
 
-fn block(text: &amp;str, rule: Option&lt;char&gt;) {
-    let mut lines = wrap(text);
-    if let Some(rule) = rule {
-        let n = lines.join(&quot; &quot;).chars().count().min(WIDTH);
+<span class=k>fn</span> block(text: &amp;<span class=t>str</span>, rule: <span class=t>Option</span>&lt;<span class=t>char</span>&gt;) {
+    <span class=k>let</span> <span class=k>mut</span> lines = wrap(text);
+    <span class=k>if</span> <span class=k>let</span> <span class=t>Some</span>(rule) = rule {
+        <span class=k>let</span> n = lines.join(<span class=s>&quot; &quot;</span>).chars().count().min(WIDTH);
         lines.push(rule.to_string().repeat(n));
     }
-    println!(&quot;{}\n&quot;, lines.join(&quot;\n&quot;));
+    <span class=m>println!</span>(<span class=s>&quot;{}\n&quot;</span>, lines.join(<span class=s>&quot;\n&quot;</span>));
 }
 
-fn wrap(text: &amp;str) -&gt; Vec&lt;String&gt; {
-    let mut lines = vec![String::new()];
-    let text = visible(text);
-    for word in text.split(&#39; &#39;).filter(|w| !w.is_empty()) {
-        let line = lines.last_mut().unwrap();
-        let n = line.chars().count() + 1 + word.chars().count();
-        if line.is_empty() {
+<span class=k>fn</span> wrap(text: &amp;<span class=t>str</span>) -&gt; <span class=t>Vec</span>&lt;<span class=t>String</span>&gt; {
+    <span class=k>let</span> <span class=k>mut</span> lines = <span class=m>vec!</span>[<span class=t>String</span>::new()];
+    <span class=k>let</span> text = visible(text);
+    <span class=k>for</span> word <span class=k>in</span> text.split(<span class=s>&#39; &#39;</span>).filter(|w| !w.is_empty()) {
+        <span class=k>let</span> line = lines.last_mut().unwrap();
+        <span class=k>let</span> n = line.chars().count() + <span class=n>1</span> + word.chars().count();
+        <span class=k>if</span> line.is_empty() {
             line.push_str(word);
-        } else if n &gt; WIDTH {
+        } <span class=k>else</span> <span class=k>if</span> n &gt; WIDTH {
             lines.push(word.to_string());
-        } else {
-            line.push(&#39; &#39;);
+        } <span class=k>else</span> {
+            line.push(<span class=s>&#39; &#39;</span>);
             line.push_str(word);
         }
     }
     lines
 }
 
-pub fn visible(text: &amp;str) -&gt; String {
+<span class=k>pub</span> <span class=k>fn</span> visible(text: &amp;<span class=t>str</span>) -&gt; <span class=t>String</span> {
     text.chars()
-        .filter_map(|c| match c {
-            &#39;\t&#39; | &#39;\r&#39; =&gt; Some(&#39; &#39;),
-            c if c.is_control() =&gt; None,
-            c =&gt; Some(c),
+        .filter_map(|c| <span class=k>match</span> c {
+            <span class=s>&#39;\t&#39;</span> | <span class=s>&#39;\r&#39;</span> =&gt; <span class=t>Some</span>(<span class=s>&#39; &#39;</span>),
+            c <span class=k>if</span> c.is_control() =&gt; <span class=t>None</span>,
+            c =&gt; <span class=t>Some</span>(c),
         })
         .collect()
 }</pre>
 <p><code>src/bin/show.rs</code> is the program:</p>
-<pre>// Step 1: show an article from a file.
-fn main() -&gt; std::io::Result&lt;()&gt; {
-    let args: Vec&lt;String&gt; = std::env::args().collect();
-    reader::article::show(&amp;std::fs::read(&amp;args[1])?);
-    Ok(())
+<pre><span class=c>// Step 1: show an article from a file.</span>
+<span class=k>fn</span> main() -&gt; std::io::<span class=t>Result</span>&lt;()&gt; {
+    <span class=k>let</span> args: <span class=t>Vec</span>&lt;<span class=t>String</span>&gt; = std::env::args().collect();
+    reader::article::show(&amp;std::fs::read(&amp;args[<span class=n>1</span>])?);
+    <span class=t>Ok</span>(())
 }</pre>
 <p>That is 70 lines in all.</p>
 <h2 id="how-it-works">How it works</h2>
@@ -108,8 +108,8 @@ fn main() -&gt; std::io::Result&lt;()&gt; {
 <p><code>wrap</code> cuts the text into words at spaces and fills lines of up to 68 characters, the column the format recommends for a monospaced reader. A run of spaces becomes one, which the format allows.</p>
 <p><code>visible</code> is how text is shown: a tab or a carriage return as a space, other control characters not at all.</p>
 <p>Run it:</p>
-<pre>cd examples/reader/rust
-cargo run -q --bin show ../hello.txt</pre>
+<pre class="sh"><span class=k>cd</span> examples/reader/rust
+<span class=k>cargo</span> run -q --bin show ../hello.txt</pre>
 <p>The first time, Cargo also downloads and builds the libraries that steps 2 and 3 use. It prints:</p>
 <pre>Hello
 =====

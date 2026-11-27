@@ -2,13 +2,13 @@
 
 Start the window from a terminal:
 
-```
+```sh
 terse-host
 ```
 
 (On Windows, double-click `terse-host.exe`.) A window opens, and the terminal shows a few lines about it. One says which relay it uses; unless you have set up others, it is one the window starts itself, which only this computer can reach:
 
-```
+```text
 terse-host: relay ws://127.0.0.1:7878 (started here, store …)
 ```
 
@@ -18,7 +18,7 @@ A relay is where articles are kept and passed on; this one keeps them in the fol
 
 The window opens on the launcher, a list of programs:
 
-```
+```text
 PROGRAMS
 Manual
 reader
@@ -41,7 +41,7 @@ F12 is the home key. Wherever you are, F12 brings you back to the launcher; no p
 
 Choose "reader" and press Enter. The reader opens on your timeline, the newest articles of the feeds you follow. It is empty for now:
 
-```
+```text
 No articles yet
 The timeline shows the articles of the feeds this host
 subscribes to, newest first. New articles appear here as
@@ -59,10 +59,10 @@ Press ? in the reader for every key of every view. Esc on the timeline stops the
 
 ## Quit
 
-Close the window. Nothing needs saving: what you publish and follow is kept as you go. (To keep the programs you have open for next time, press S in the launcher first: [Find and play a game](terse:abf06042b9c64dd049bd8bda14923c0b7e8e9077b69e48607fad700e28a2122e) shows how.)
+Close the window. Nothing needs saving: what you publish and follow is kept as you go. (To keep the programs you have open for next time, press S in the launcher first: [Find and play a game](terse:c93727197ccf1f6993c75c3b0165e7dbe83f914f948a3b66ebbb6b28073bf9fc) shows how.)
 
 ## What you have now
 
-Tersenet running, the launcher, and the reader with this manual in it. Next, make the key that is your identity: [Create your profile](terse:58ac7e785b7f6bfe4cae2aa96373ad4a7e6b87c1bb3e93ea2dd28b6e171072f6).
+Tersenet running, the launcher, and the reader with this manual in it. Next, make the key that is your identity: [Create your profile](terse:6db4bfae96460f629cbea652979815bf7bbcf2f40c3ad0a64c27d5e98795c440).
 
-Every key of the launcher, the layouts and the tiles is in [Using the shell](terse:4f6634e39d7c399c0d87b01a9bd385d09aa52f1e8e51b40646c4b16c84221a72).
+Every key of the launcher, the layouts and the tiles is in [Using the shell](terse:a9e06ce929d6f41a64cc9f0bc61ce3627566ba4e3639c529162bbb03717b3b70).

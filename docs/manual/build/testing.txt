@@ -4,7 +4,7 @@ A program is tested in two ways. `terse run` runs it without a window, exactly: 
 
 ## Headless: terse run
 
-```
+```sh
 terse run prog.terse --frames 60 --events keys.txt --dump
 ```
 
@@ -21,7 +21,7 @@ terse run prog.terse --frames 60 --events keys.txt --dump
 | `--without <slot>` | runs without an optional device, as a host that lacks it |
 | `--shell` | runs the image as a shell, with the machines it starts; `--hash-all` hashes each |
 
-A headless run has no clock (the Unix time is 0), no random bytes (`random` gives zeros) and no controllers but the script's, and content requests complete at the start of the next frame: so it is reproducible. The hash covers the whole machine (CPU, RAM, devices); [State, replay and conformance](terse:e1e6cd9b57fee2aebc292f78ce9a67c351f3ccf194a275678b5682d4df01fdf9) says what it holds.
+A headless run has no clock (the Unix time is 0), no random bytes (`random` gives zeros) and no controllers but the script's, and content requests complete at the start of the next frame: so it is reproducible. The hash covers the whole machine (CPU, RAM, devices); [State, replay and conformance](terse:c62d32ee0649f52baf1ed9f353f9e65a0f0ca3c1a296a4e29a1321b444283cc5) says what it holds.
 
 | Exit status | When |
 |---|---|
@@ -58,7 +58,7 @@ A headless run reads the window's commands below and does nothing with them, say
 
 ## In the window: terse-host --drive
 
-```
+```sh
 terse-host prog.terse --drive script.txt --renderer software
 ```
 

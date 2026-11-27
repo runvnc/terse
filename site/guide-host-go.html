@@ -24,296 +24,296 @@
 <tr><td>32</td><td>2 each</td><td>each device: its slot and version (<code>80h</code>: optional)</td></tr>
 </tbody></table></div>
 <p>Bytes 11 to 31 hold a title, which a host does not need. The rest is in <a href="machine.html">The Terse32 machine</a>, &quot;The image format&quot;.</p>
-<pre>package machine
+<pre><span class=k>package</span> machine
 
-import (
-    &quot;errors&quot;
-    &quot;strings&quot;
+<span class=k>import</span> (
+    <span class=s>&quot;errors&quot;</span>
+    <span class=s>&quot;strings&quot;</span>
 )
 
-const (
-    headerSize  = 32
-    magic       = &quot;TERS\x00\x01&quot;
-    romLenAt    = 6
-    ramPagesAt  = 9
-    devicesAt   = 10
-    maxROM      = 262144
-    maxRAMPages = 96
-    maxDevices  = 16
-    deviceSize  = 2
-    PageSize    = 8192
-    optional    = 0x80
+<span class=k>const</span> (
+    headerSize  = <span class=n>32</span>
+    magic       = <span class=s>&quot;TERS\x00\x01&quot;</span>
+    romLenAt    = <span class=n>6</span>
+    ramPagesAt  = <span class=n>9</span>
+    devicesAt   = <span class=n>10</span>
+    maxROM      = <span class=n>262144</span>
+    maxRAMPages = <span class=n>96</span>
+    maxDevices  = <span class=n>16</span>
+    deviceSize  = <span class=n>2</span>
+    PageSize    = <span class=n>8192</span>
+    optional    = <span class=n>0x80</span>
 )
 
-type Device struct {
-    Slot, Version byte
-    Optional      bool
+<span class=k>type</span> Device <span class=k>struct</span> {
+    Slot, Version <span class=t>byte</span>
+    Optional      <span class=t>bool</span>
 }
 
-func Load(file []byte) (*CPU, []Device, error) {
-    if len(file) &lt; headerSize ||
-        !strings.HasPrefix(string(file), magic) {
-        return nil, nil, errors.New(&quot;not a Terse32 program&quot;)
+<span class=k>func</span> Load(file []<span class=t>byte</span>) (*CPU, []Device, <span class=t>error</span>) {
+    <span class=k>if</span> len(file) &lt; headerSize ||
+        !strings.HasPrefix(<span class=t>string</span>(file), magic) {
+        <span class=k>return</span> <span class=k>nil</span>, <span class=k>nil</span>, errors.New(<span class=s>&quot;not a Terse32 program&quot;</span>)
     }
     r := file[romLenAt:]
-    romLen := int(r[0]) | int(r[1])&lt;&lt;8 | int(r[2])&lt;&lt;16
-    pages, count := int(file[ramPagesAt]), int(file[devicesAt])
+    romLen := <span class=t>int</span>(r[<span class=n>0</span>]) | <span class=t>int</span>(r[<span class=n>1</span>])&lt;&lt;<span class=n>8</span> | <span class=t>int</span>(r[<span class=n>2</span>])&lt;&lt;<span class=n>16</span>
+    pages, count := <span class=t>int</span>(file[ramPagesAt]), <span class=t>int</span>(file[devicesAt])
     romAt := headerSize + deviceSize*count
-    if romLen &lt; 1 || romLen &gt; maxROM || pages &lt; 1 ||
+    <span class=k>if</span> romLen &lt; <span class=n>1</span> || romLen &gt; maxROM || pages &lt; <span class=n>1</span> ||
         pages &gt; maxRAMPages || count &gt; maxDevices ||
         len(file) != romAt+romLen {
-        return nil, nil, errors.New(&quot;a malformed program file&quot;)
+        <span class=k>return</span> <span class=k>nil</span>, <span class=k>nil</span>, errors.New(<span class=s>&quot;a malformed program file&quot;</span>)
     }
-    var devices []Device
-    for i := headerSize; i &lt; romAt; i += deviceSize {
-        version := file[i+1]
+    <span class=k>var</span> devices []Device
+    <span class=k>for</span> i := headerSize; i &lt; romAt; i += deviceSize {
+        version := file[i+<span class=n>1</span>]
         devices = append(devices, Device{file[i],
-            version &amp;^ optional, version&amp;optional != 0})
+            version &amp;^ optional, version&amp;optional != <span class=n>0</span>})
     }
     cpu := &amp;CPU{PC: ROMBase, ROM: file[romAt:],
-        RAM: make([]byte, pages*PageSize)}
-    cpu.X[SP] = RAMBase + uint32(len(cpu.RAM))
-    return cpu, devices, nil
+        RAM: make([]<span class=t>byte</span>, pages*PageSize)}
+    cpu.X[SP] = RAMBase + <span class=t>uint32</span>(len(cpu.RAM))
+    <span class=k>return</span> cpu, devices, <span class=k>nil</span>
 }</pre>
 <p>The list of devices matters from step 3 on.</p>
 <h2 id="decoding">Decoding</h2>
 <p>The processor is RV32IMC: RISC-V&#39;s 32-bit integer instructions, multiply and divide (M) and 16-bit compressed forms of the common ones (C). <code>decode</code> takes a 32-bit instruction apart into its fields:</p>
-<pre>type instruction struct {
-    op, f3, f7, rd, rs1, rs2, imm uint32
+<pre><span class=k>type</span> instruction <span class=k>struct</span> {
+    op, f3, f7, rd, rs1, rs2, imm <span class=t>uint32</span>
 }
 
-func sext(v, bits uint32) uint32 {
-    return uint32(int32(v&lt;&lt;(32-bits)) &gt;&gt; (32 - bits))
+<span class=k>func</span> sext(v, bits <span class=t>uint32</span>) <span class=t>uint32</span> {
+    <span class=k>return</span> <span class=t>uint32</span>(<span class=t>int32</span>(v&lt;&lt;(<span class=n>32</span>-bits)) &gt;&gt; (<span class=n>32</span> - bits))
 }
 
-func decode(i uint32) instruction {
-    in := instruction{op: i &amp; 0x7f, rd: i &gt;&gt; 7 &amp; 31,
-        f3: i &gt;&gt; 12 &amp; 7, rs1: i &gt;&gt; 15 &amp; 31, rs2: i &gt;&gt; 20 &amp; 31,
-        f7: i &gt;&gt; 25}
-    switch in.op {
-    case 0x37, 0x17:
-        in.imm = i &amp;^ 0xfff
-    case 0x6f:
-        in.imm = sext(i&gt;&gt;11&amp;0x100000|i&amp;0xff000|i&gt;&gt;9&amp;0x800|
-            i&gt;&gt;20&amp;0x7fe, 21)
-    case 0x63:
-        in.imm = sext(i&gt;&gt;19&amp;0x1000|i&lt;&lt;4&amp;0x800|i&gt;&gt;20&amp;0x7e0|
-            i&gt;&gt;7&amp;0x1e, 13)
-    case 0x23:
-        in.imm = sext(i&gt;&gt;20&amp;0xfe0|i&gt;&gt;7&amp;31, 12)
-    default:
-        in.imm = sext(i&gt;&gt;20, 12)
+<span class=k>func</span> decode(i <span class=t>uint32</span>) instruction {
+    in := instruction{op: i &amp; <span class=n>0x7f</span>, rd: i &gt;&gt; <span class=n>7</span> &amp; <span class=n>31</span>,
+        f3: i &gt;&gt; <span class=n>12</span> &amp; <span class=n>7</span>, rs1: i &gt;&gt; <span class=n>15</span> &amp; <span class=n>31</span>, rs2: i &gt;&gt; <span class=n>20</span> &amp; <span class=n>31</span>,
+        f7: i &gt;&gt; <span class=n>25</span>}
+    <span class=k>switch</span> in.op {
+    <span class=k>case</span> <span class=n>0x37</span>, <span class=n>0x17</span>:
+        in.imm = i &amp;^ <span class=n>0xfff</span>
+    <span class=k>case</span> <span class=n>0x6f</span>:
+        in.imm = sext(i&gt;&gt;<span class=n>11</span>&amp;<span class=n>0x100000</span>|i&amp;<span class=n>0xff000</span>|i&gt;&gt;<span class=n>9</span>&amp;<span class=n>0x800</span>|
+            i&gt;&gt;<span class=n>20</span>&amp;<span class=n>0x7fe</span>, <span class=n>21</span>)
+    <span class=k>case</span> <span class=n>0x63</span>:
+        in.imm = sext(i&gt;&gt;<span class=n>19</span>&amp;<span class=n>0x1000</span>|i&lt;&lt;<span class=n>4</span>&amp;<span class=n>0x800</span>|i&gt;&gt;<span class=n>20</span>&amp;<span class=n>0x7e0</span>|
+            i&gt;&gt;<span class=n>7</span>&amp;<span class=n>0x1e</span>, <span class=n>13</span>)
+    <span class=k>case</span> <span class=n>0x23</span>:
+        in.imm = sext(i&gt;&gt;<span class=n>20</span>&amp;<span class=n>0xfe0</span>|i&gt;&gt;<span class=n>7</span>&amp;<span class=n>31</span>, <span class=n>12</span>)
+    <span class=k>default</span>:
+        in.imm = sext(i&gt;&gt;<span class=n>20</span>, <span class=n>12</span>)
     }
-    return in
+    <span class=k>return</span> in
 }</pre>
 <p><code>expand</code> gives a 16-bit instruction the same fields, as the 32-bit instruction it stands for, so that one <code>execute</code> runs both. Its first cases:</p>
-<pre>func expand(c uint32) instruction {
-    rd, rs2 := c&gt;&gt;7&amp;31, c&gt;&gt;2&amp;31
-    rdc, rs2c := 8+c&gt;&gt;7&amp;7, 8+c&gt;&gt;2&amp;7
-    imm := sext(c&gt;&gt;7&amp;0x20|c&gt;&gt;2&amp;31, 6)
-    word := c&gt;&gt;7&amp;0x38 | c&gt;&gt;4&amp;4 | c&lt;&lt;1&amp;0x40
-    jump := sext(c&gt;&gt;1&amp;0x800|c&gt;&gt;7&amp;0x10|c&gt;&gt;1&amp;0x300|c&lt;&lt;2&amp;0x400|
-        c&gt;&gt;1&amp;0x40|c&lt;&lt;1&amp;0x80|c&gt;&gt;2&amp;0xe|c&lt;&lt;3&amp;0x20, 12)
-    branch := sext(c&gt;&gt;4&amp;0x100|c&gt;&gt;7&amp;0x18|c&lt;&lt;1&amp;0xc0|c&gt;&gt;2&amp;6|
-        c&lt;&lt;3&amp;0x20, 9)
-    switch c&amp;3&lt;&lt;3 | c&gt;&gt;13 {
-    case 0o00:
-        u := c&gt;&gt;7&amp;0x30 | c&gt;&gt;1&amp;0x3c0 | c&gt;&gt;4&amp;4 | c&gt;&gt;2&amp;8
-        if u != 0 {
-            return instruction{op: 0x13, rd: rs2c, rs1: 2,
+<pre><span class=k>func</span> expand(c <span class=t>uint32</span>) instruction {
+    rd, rs2 := c&gt;&gt;<span class=n>7</span>&amp;<span class=n>31</span>, c&gt;&gt;<span class=n>2</span>&amp;<span class=n>31</span>
+    rdc, rs2c := <span class=n>8</span>+c&gt;&gt;<span class=n>7</span>&amp;<span class=n>7</span>, <span class=n>8</span>+c&gt;&gt;<span class=n>2</span>&amp;<span class=n>7</span>
+    imm := sext(c&gt;&gt;<span class=n>7</span>&amp;<span class=n>0x20</span>|c&gt;&gt;<span class=n>2</span>&amp;<span class=n>31</span>, <span class=n>6</span>)
+    word := c&gt;&gt;<span class=n>7</span>&amp;<span class=n>0x38</span> | c&gt;&gt;<span class=n>4</span>&amp;<span class=n>4</span> | c&lt;&lt;<span class=n>1</span>&amp;<span class=n>0x40</span>
+    jump := sext(c&gt;&gt;<span class=n>1</span>&amp;<span class=n>0x800</span>|c&gt;&gt;<span class=n>7</span>&amp;<span class=n>0x10</span>|c&gt;&gt;<span class=n>1</span>&amp;<span class=n>0x300</span>|c&lt;&lt;<span class=n>2</span>&amp;<span class=n>0x400</span>|
+        c&gt;&gt;<span class=n>1</span>&amp;<span class=n>0x40</span>|c&lt;&lt;<span class=n>1</span>&amp;<span class=n>0x80</span>|c&gt;&gt;<span class=n>2</span>&amp;<span class=n>0xe</span>|c&lt;&lt;<span class=n>3</span>&amp;<span class=n>0x20</span>, <span class=n>12</span>)
+    branch := sext(c&gt;&gt;<span class=n>4</span>&amp;<span class=n>0x100</span>|c&gt;&gt;<span class=n>7</span>&amp;<span class=n>0x18</span>|c&lt;&lt;<span class=n>1</span>&amp;<span class=n>0xc0</span>|c&gt;&gt;<span class=n>2</span>&amp;<span class=n>6</span>|
+        c&lt;&lt;<span class=n>3</span>&amp;<span class=n>0x20</span>, <span class=n>9</span>)
+    <span class=k>switch</span> c&amp;<span class=n>3</span>&lt;&lt;<span class=n>3</span> | c&gt;&gt;<span class=n>13</span> {
+    <span class=k>case</span> <span class=n>0o00</span>:
+        u := c&gt;&gt;<span class=n>7</span>&amp;<span class=n>0x30</span> | c&gt;&gt;<span class=n>1</span>&amp;<span class=n>0x3c0</span> | c&gt;&gt;<span class=n>4</span>&amp;<span class=n>4</span> | c&gt;&gt;<span class=n>2</span>&amp;<span class=n>8</span>
+        <span class=k>if</span> u != <span class=n>0</span> {
+            <span class=k>return</span> instruction{op: <span class=n>0x13</span>, rd: rs2c, rs1: <span class=n>2</span>,
                 imm: u}
         }
-    case 0o02:
-        return instruction{op: 0x03, f3: 2, rd: rs2c, rs1: rdc,
+    <span class=k>case</span> <span class=n>0o02</span>:
+        <span class=k>return</span> instruction{op: <span class=n>0x03</span>, f3: <span class=n>2</span>, rd: rs2c, rs1: rdc,
             imm: word}
-    case 0o06:
-        return instruction{op: 0x23, f3: 2, rs1: rdc, rs2: rs2c,
+    <span class=k>case</span> <span class=n>0o06</span>:
+        <span class=k>return</span> instruction{op: <span class=n>0x23</span>, f3: <span class=n>2</span>, rs1: rdc, rs2: rs2c,
             imm: word}
-    case 0o10:
-        return instruction{op: 0x13, rd: rd, rs1: rd, imm: imm}
-    case 0o11:
-        return instruction{op: 0x6f, rd: 1, imm: jump}
-    case 0o12:
-        return instruction{op: 0x13, rd: rd, imm: imm}</pre>
+    <span class=k>case</span> <span class=n>0o10</span>:
+        <span class=k>return</span> instruction{op: <span class=n>0x13</span>, rd: rd, rs1: rd, imm: imm}
+    <span class=k>case</span> <span class=n>0o11</span>:
+        <span class=k>return</span> instruction{op: <span class=n>0x6f</span>, rd: <span class=n>1</span>, imm: jump}
+    <span class=k>case</span> <span class=n>0o12</span>:
+        <span class=k>return</span> instruction{op: <span class=n>0x13</span>, rd: rd, imm: imm}</pre>
 <p>and so on for the other 16-bit forms, 90 lines in all. A form the machine does not have, or one the specification reserves, such as an immediate of zero where one is needed, comes out as <code>instruction{}</code>, whose opcode 0 is no instruction at all.</p>
 <h2 id="executing">Executing</h2>
 <p><code>Step</code> fetches one instruction from ROM or RAM, 16 or 32 bits, and runs it. It returns what the instruction costs, which step 2 uses, whether it was an <code>ecall</code>, or a fault:</p>
-<pre>func (c *CPU) Step() (cost int64, ecall bool, fault *Fault) {
+<pre><span class=k>func</span> (c *CPU) Step() (cost <span class=t>int64</span>, ecall <span class=t>bool</span>, fault *Fault) {
     raw, fault := c.fetch()
-    if fault != nil {
-        return 0, false, fault
+    <span class=k>if</span> fault != <span class=k>nil</span> {
+        <span class=k>return</span> <span class=n>0</span>, <span class=k>false</span>, fault
     }
-    in, next := decode(raw), c.PC+4
-    if raw&amp;3 != 3 {
-        in, next = expand(raw), c.PC+2
+    in, next := decode(raw), c.PC+<span class=n>4</span>
+    <span class=k>if</span> raw&amp;<span class=n>3</span> != <span class=n>3</span> {
+        in, next = expand(raw), c.PC+<span class=n>2</span>
     }
     cost = ROMCost
-    if c.PC &gt;= RAMBase {
+    <span class=k>if</span> c.PC &gt;= RAMBase {
         cost = RAMCost
     }
     ecall, fault = c.execute(in, next)
-    if fault != nil &amp;&amp; fault.Kind == Illegal {
+    <span class=k>if</span> fault != <span class=k>nil</span> &amp;&amp; fault.Kind == Illegal {
         fault.Address, fault.Encoding = c.PC, raw
     }
-    return cost, ecall, fault
+    <span class=k>return</span> cost, ecall, fault
 }</pre>
 <p><code>execute</code> is one switch on the opcode. Each case checks the encoding as the specification says, then writes the result to <code>rd</code> (never to <code>x0</code>) and moves <code>pc</code> on:</p>
-<pre>func (c *CPU) execute(in instruction, next uint32) (
-    bool, *Fault) {
+<pre><span class=k>func</span> (c *CPU) execute(in instruction, next <span class=t>uint32</span>) (
+    <span class=t>bool</span>, *Fault) {
     a, b, pc := c.X[in.rs1], c.X[in.rs2], c.PC
     illegal := &amp;Fault{Kind: Illegal}
-    switch in.op {
-    case 0x37:
+    <span class=k>switch</span> in.op {
+    <span class=k>case</span> <span class=n>0x37</span>:
         c.set(in.rd, in.imm)
-    case 0x17:
+    <span class=k>case</span> <span class=n>0x17</span>:
         c.set(in.rd, pc+in.imm)
-    case 0x6f:
+    <span class=k>case</span> <span class=n>0x6f</span>:
         c.set(in.rd, next)
         next = pc + in.imm
-    case 0x67:
-        if in.f3 != 0 {
-            return false, illegal
+    <span class=k>case</span> <span class=n>0x67</span>:
+        <span class=k>if</span> in.f3 != <span class=n>0</span> {
+            <span class=k>return</span> <span class=k>false</span>, illegal
         }
         c.set(in.rd, next)
-        next = (a + in.imm) &amp;^ 1
-    case 0x63:
-        if in.f3 == 2 || in.f3 == 3 {
-            return false, illegal
+        next = (a + in.imm) &amp;^ <span class=n>1</span>
+    <span class=k>case</span> <span class=n>0x63</span>:
+        <span class=k>if</span> in.f3 == <span class=n>2</span> || in.f3 == <span class=n>3</span> {
+            <span class=k>return</span> <span class=k>false</span>, illegal
         }
-        if branches(in.f3, a, b) {
+        <span class=k>if</span> branches(in.f3, a, b) {
             next = pc + in.imm
         }
-    case 0x03:
-        if in.f3 == 3 || in.f3 &gt; 5 {
-            return false, illegal
+    <span class=k>case</span> <span class=n>0x03</span>:
+        <span class=k>if</span> in.f3 == <span class=n>3</span> || in.f3 &gt; <span class=n>5</span> {
+            <span class=k>return</span> <span class=k>false</span>, illegal
         }
-        size := uint32(1) &lt;&lt; (in.f3 &amp; 3)
-        mem, fault := c.access(a+in.imm, size, false)
-        if fault != nil {
-            return false, fault
+        size := <span class=t>uint32</span>(<span class=n>1</span>) &lt;&lt; (in.f3 &amp; <span class=n>3</span>)
+        mem, fault := c.access(a+in.imm, size, <span class=k>false</span>)
+        <span class=k>if</span> fault != <span class=k>nil</span> {
+            <span class=k>return</span> <span class=k>false</span>, fault
         }
-        var word [4]byte
+        <span class=k>var</span> word [<span class=n>4</span>]<span class=t>byte</span>
         copy(word[:], mem)
         v := le.Uint32(word[:])
-        if in.f3 &lt; 2 {
-            v = sext(v, 8*size)
+        <span class=k>if</span> in.f3 &lt; <span class=n>2</span> {
+            v = sext(v, <span class=n>8</span>*size)
         }
         c.set(in.rd, v)
-    case 0x23:
-        if in.f3 &gt; 2 {
-            return false, illegal
+    <span class=k>case</span> <span class=n>0x23</span>:
+        <span class=k>if</span> in.f3 &gt; <span class=n>2</span> {
+            <span class=k>return</span> <span class=k>false</span>, illegal
         }
-        mem, fault := c.access(a+in.imm, 1&lt;&lt;in.f3, true)
-        if fault != nil {
-            return false, fault
+        mem, fault := c.access(a+in.imm, <span class=n>1</span>&lt;&lt;in.f3, <span class=k>true</span>)
+        <span class=k>if</span> fault != <span class=k>nil</span> {
+            <span class=k>return</span> <span class=k>false</span>, fault
         }
-        var word [4]byte
+        <span class=k>var</span> word [<span class=n>4</span>]<span class=t>byte</span>
         le.PutUint32(word[:], b)
         copy(mem, word[:])
-    case 0x13:
-        arithmetic := in.f3 == 5 &amp;&amp; in.f7 == 32
-        if in.f3&amp;3 == 1 &amp;&amp; in.f7 != 0 &amp;&amp; !arithmetic {
-            return false, illegal
+    <span class=k>case</span> <span class=n>0x13</span>:
+        arithmetic := in.f3 == <span class=n>5</span> &amp;&amp; in.f7 == <span class=n>32</span>
+        <span class=k>if</span> in.f3&amp;<span class=n>3</span> == <span class=n>1</span> &amp;&amp; in.f7 != <span class=n>0</span> &amp;&amp; !arithmetic {
+            <span class=k>return</span> <span class=k>false</span>, illegal
         }
         c.set(in.rd, alu(in.f3, arithmetic, a, in.imm))
-    case 0x33:
-        alternate := in.f7 == 32 &amp;&amp; (in.f3 == 0 || in.f3 == 5)
-        switch {
-        case in.f7 == 1:
+    <span class=k>case</span> <span class=n>0x33</span>:
+        alternate := in.f7 == <span class=n>32</span> &amp;&amp; (in.f3 == <span class=n>0</span> || in.f3 == <span class=n>5</span>)
+        <span class=k>switch</span> {
+        <span class=k>case</span> in.f7 == <span class=n>1</span>:
             c.set(in.rd, muldiv(in.f3, a, b))
-        case in.f7 == 0 || alternate:
+        <span class=k>case</span> in.f7 == <span class=n>0</span> || alternate:
             c.set(in.rd, alu(in.f3, alternate, a, b))
-        default:
-            return false, illegal
+        <span class=k>default</span>:
+            <span class=k>return</span> <span class=k>false</span>, illegal
         }
-    case 0x0f:
-        if in.f3 != 0 {
-            return false, illegal
+    <span class=k>case</span> <span class=n>0x0f</span>:
+        <span class=k>if</span> in.f3 != <span class=n>0</span> {
+            <span class=k>return</span> <span class=k>false</span>, illegal
         }
-    case 0x73:
-        if in.f3|in.rd|in.rs1 != 0 || in.imm &gt; 1 {
-            return false, illegal
+    <span class=k>case</span> <span class=n>0x73</span>:
+        <span class=k>if</span> in.f3|in.rd|in.rs1 != <span class=n>0</span> || in.imm &gt; <span class=n>1</span> {
+            <span class=k>return</span> <span class=k>false</span>, illegal
         }
-        if in.imm == 1 {
-            return false, &amp;Fault{Kind: Breakpoint, Address: pc}
+        <span class=k>if</span> in.imm == <span class=n>1</span> {
+            <span class=k>return</span> <span class=k>false</span>, &amp;Fault{Kind: Breakpoint, Address: pc}
         }
         c.PC = next
-        return true, nil
-    default:
-        return false, illegal
+        <span class=k>return</span> <span class=k>true</span>, <span class=k>nil</span>
+    <span class=k>default</span>:
+        <span class=k>return</span> <span class=k>false</span>, illegal
     }
     c.PC = next
-    return false, nil
+    <span class=k>return</span> <span class=k>false</span>, <span class=k>nil</span>
 }</pre>
 <p>The rest of <code>cpu.go</code> is the arithmetic of <code>alu</code> and <code>muldiv</code> (division by zero gives RISC-V&#39;s answers, not a trap), the branch conditions, and memory: <code>access</code> faults on a load or store that is misaligned or outside RAM (and ROM, for a load), checking alignment first.</p>
 <p>A fault stops the machine with <code>pc</code> on the faulting instruction, which is not carried out: an encoding the machine does not have (<code>ebreak</code> and the CSR instructions among them), a fetch, load or store outside memory, or a misaligned load or store.</p>
 <h2 id="calls">Calls</h2>
 <p><code>ecall</code> calls a device: <code>a7</code> (<code>x17</code>) holds the device&#39;s slot × 256 + the function, <code>a0</code> to <code>a5</code> (<code>x10</code> to <code>x15</code>) the arguments, and the result goes in <code>a0</code>. <code>cpu.go</code> names these registers, the stack pointer and the result of a call the machine does not have, <code>FFFF_FFFFh</code>:</p>
-<pre>const (
-    SP = 2
-    A0 = 10
-    A1 = 11
-    A5 = 15
-    A7 = 17
+<pre><span class=k>const</span> (
+    SP = <span class=n>2</span>
+    A0 = <span class=n>10</span>
+    A1 = <span class=n>11</span>
+    A5 = <span class=n>15</span>
+    A7 = <span class=n>17</span>
 )
 
-const UnknownCall = 0xffffffff</pre>
+<span class=k>const</span> UnknownCall = <span class=n>0xffffffff</span></pre>
 <p>This step has one call, <code>exit</code>, <code>106h</code>; every other call returns that result, as a call the machine does not have must:</p>
-<pre>package main
+<pre><span class=k>package</span> main
 
-import (
-    &quot;fmt&quot;
-    &quot;os&quot;
+<span class=k>import</span> (
+    <span class=s>&quot;fmt&quot;</span>
+    <span class=s>&quot;os&quot;</span>
 
-    &quot;host/machine&quot;
+    <span class=s>&quot;host/machine&quot;</span>
 )
 
-const exit = 0x106
+<span class=k>const</span> exit = <span class=n>0x106</span>
 
-func main() {
-    file, err := os.ReadFile(os.Args[1])
-    if err != nil {
+<span class=k>func</span> main() {
+    file, err := os.ReadFile(os.Args[<span class=n>1</span>])
+    <span class=k>if</span> err != <span class=k>nil</span> {
         fmt.Fprintln(os.Stderr, err)
-        os.Exit(2)
+        os.Exit(<span class=n>2</span>)
     }
     cpu, _, err := machine.Load(file)
-    if err != nil {
+    <span class=k>if</span> err != <span class=k>nil</span> {
         fmt.Fprintln(os.Stderr, err)
-        os.Exit(2)
+        os.Exit(<span class=n>2</span>)
     }
-    for {
+    <span class=k>for</span> {
         _, ecall, fault := cpu.Step()
-        if fault != nil {
+        <span class=k>if</span> fault != <span class=k>nil</span> {
             fmt.Fprintln(os.Stderr, fault)
-            os.Exit(1)
+            os.Exit(<span class=n>1</span>)
         }
-        if ecall &amp;&amp; cpu.X[machine.A7] == exit {
-            os.Exit(int(byte(cpu.X[machine.A0])))
+        <span class=k>if</span> ecall &amp;&amp; cpu.X[machine.A7] == exit {
+            os.Exit(<span class=t>int</span>(<span class=t>byte</span>(cpu.X[machine.A0])))
         }
-        if ecall {
+        <span class=k>if</span> ecall {
             cpu.X[machine.A0] = machine.UnknownCall
         }
     }
 }</pre>
 <h2 id="run-it">Run it</h2>
 <p>Build all four steps at once, into <code>bin</code>. The first build downloads the BLAKE3 package:</p>
-<pre>cd examples/host/go
-go build -o bin/ ./...</pre>
+<pre class="sh"><span class=k>cd</span> examples/host/go
+<span class=k>go</span> build -o bin/ ./...</pre>
 <p>A program that exits with code 7, <code>c.li a0, 7</code>, <code>addi a7, x0, 106h</code> and <code>ecall</code>, as a file:</p>
-<pre>xxd -r -p &gt; exit.terse &lt;&lt;EOF
-5445525300010a000001000000000000657869740000
-000000000000000000001d459308601073000000
-EOF
-bin/step1 exit.terse
-echo $?</pre>
+<pre class="sh"><span class=k>xxd</span> -r -p &gt; exit.terse <span class=m>&lt;&lt;EOF</span>
+<span class=s>5445525300010a000001000000000000657869740000</span>
+<span class=s>000000000000000000001d459308601073000000</span>
+<span class=s>EOF</span>
+<span class=k>bin/step1</span> exit.terse
+<span class=k>echo</span> <span class=m>$?</span></pre>
 <p>prints <code>7</code>. This one adds 100 + 99 + ... + 1 and exits with the sum&#39;s low byte:</p>
-<pre>xxd -r -p &gt; sum.terse &lt;&lt;EOF
-544552530001160000010000000000007375
-6d0000000000000000000000000001459302
-40061695fd12e39e02fe9308601073000000
-EOF
-bin/step1 sum.terse
-echo $?</pre>
+<pre class="sh"><span class=k>xxd</span> -r -p &gt; sum.terse <span class=m>&lt;&lt;EOF</span>
+<span class=s>544552530001160000010000000000007375</span>
+<span class=s>6d0000000000000000000000000001459302</span>
+<span class=s>40061695fd12e39e02fe9308601073000000</span>
+<span class=s>EOF</span>
+<span class=k>bin/step1</span> sum.terse
+<span class=k>echo</span> <span class=m>$?</span></pre>
 <p>prints <code>186</code>. The reference gives the same: <code>terse run exit.terse --frames 1</code>, then <code>echo $?</code>.</p>
 <h2 id="what-you-have-now">What you have now</h2>
 <p>A Terse32 processor that runs a program to its end: <code>cpu.go</code> (283 lines), <code>decode.go</code> (122), <code>image.go</code> (51) and <code>step1/main.go</code> (36). Next, make it keep time: <a href="guide-host-go-frames.html">Make a host in Go, step 2: frames and the budget</a>.</p>

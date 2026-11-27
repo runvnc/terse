@@ -14,29 +14,29 @@
 <p><code>terse build</code> is a convenience: an image can be built with the compilers alone and <code>terse pack</code>. This article gives those commands, then what any other compiler or language runtime must do to make a Terse32 program.</p>
 <h2 id="by-hand">By hand</h2>
 <p><code>terse build --show</code> prints the commands it runs; <code>terse build --write-lib lib</code> writes the files they use. With those, in fish:</p>
-<pre>terse build --write-lib lib
-set CFLAGS --target=riscv32-unknown-elf -march=rv32imc \
+<pre class="sh"><span class=k>terse</span> build --write-lib lib
+<span class=k>set</span> CFLAGS --target=riscv32-unknown-elf -march=rv32imc \
     -mabi=ilp32 -Os -ffreestanding -nostdlib -fno-builtin \
     -ffunction-sections -fdata-sections
-clang $CFLAGS -I lib -c lib/crt0.S -o 0.o
-clang $CFLAGS -I lib -c hello.c -o 1.o
-clang $CFLAGS -I lib -c lib/terse.c -o 2.o
-ld.lld -T lib/terse.ld --gc-sections 0.o 1.o 2.o \
+<span class=k>clang</span> <span class=m>$CFLAGS</span> -I lib -c lib/crt0.S -o 0.o
+<span class=k>clang</span> <span class=m>$CFLAGS</span> -I lib -c hello.c -o 1.o
+<span class=k>clang</span> <span class=m>$CFLAGS</span> -I lib -c lib/terse.c -o 2.o
+<span class=k>ld.lld</span> -T lib/terse.ld --gc-sections 0.o 1.o 2.o \
     -o hello.elf
-llvm-objcopy -O binary hello.elf hello.bin
-terse pack --rom hello.bin --title hello --ram-pages 2 \
+<span class=k>llvm-objcopy</span> -O binary hello.elf hello.bin
+<span class=k>terse</span> pack --rom hello.bin --title hello --ram-pages 2 \
     --device 2:0 --device 3:0 -o hello.terse</pre>
 <p>(In sh, <code>CFLAGS=&quot;...&quot;</code>.) The <code>build.sh</code> of each program in <code>programs/</code> is such a script. For Rust:</p>
-<pre>terse build --write-lib lib
-rustc --edition 2024 --target riscv32imc-unknown-none-elf \
+<pre class="sh"><span class=k>terse</span> build --write-lib lib
+<span class=k>rustc</span> --edition 2024 --target riscv32imc-unknown-none-elf \
     -C opt-level=s -Cpanic=abort --crate-type rlib \
     --crate-name terse -o libterse.rlib lib/terse.rs
-rustc --edition 2024 --target riscv32imc-unknown-none-elf \
+<span class=k>rustc</span> --edition 2024 --target riscv32imc-unknown-none-elf \
     -C opt-level=s -Cpanic=abort -C lto --crate-type bin \
     -C link-arg=-Tlib/terse.ld --extern terse=libterse.rlib \
     -o hello.elf hello.rs
-llvm-objcopy -O binary hello.elf hello.bin
-terse pack --rom hello.bin --title hello --ram-pages 1 \
+<span class=k>llvm-objcopy</span> -O binary hello.elf hello.bin
+<span class=k>terse</span> pack --rom hello.bin --title hello --ram-pages 1 \
     --device 2:0 --device 3:0 -o hello.terse</pre>
 <p><code>rust-objcopy</code>, which rustup&#39;s <code>llvm-tools</code> component installs, does what <code>llvm-objcopy</code> does.</p>
 <h2 id="other-languages">Other languages</h2>

@@ -6,7 +6,7 @@ A feed is one author's numbered series of entries. Each entry is small and signe
 
 `src/bin/follow.rs`, with step 1's `article` and step 2's `relay` modules:
 
-```
+```rust
 // Step 3: follow a feed and open one of its articles.
 use reader::{article, relay};
 use std::collections::HashMap;
@@ -99,7 +99,7 @@ Then the relay sends the feed's entries, oldest first, each in an Entry message:
 
 `tersenet::verify_entry` checks an entry by every rule the network sets and returns its fields, or the rule it breaks (`tersenet::Invalid`): the length, a title of at most 120 bytes and valid UTF-8, a `seq` from 1, a kind that is not reserved, a size from 1 byte to 1 MiB (4 KiB for a profile), a display name as a profile's or a program's title, and the signature. `main` keeps the valid entries of the feed asked for that are of kind 1, articles, and prints each one's number and title; any other entry is dropped, unseen.
 
-The signature is Ed25519, over the 13 bytes `terse-entry-0` followed by the entry without its signature, and it is checked strictly. `ed25519-dalek`'s `verify_strict` comes close, but its `VerifyingKey::from_bytes` accepts a key that is not the canonical encoding of its point, and with the crate's `legacy_compatibility` feature, which any crate in a program can turn on, it accepts an S that is not below the group order. [Signatures and valid entries](terse:e17975216f3b143a63a4def4e4024579315b43b9cc22d6ee49b85cd0015b8092) gives every rule and the reason for it, enough to write the check yourself. The SDK is one file, `sdk/rust/src/lib.rs` in the Tersenet sources, 164 lines with its comments, built on `curve25519-dalek`: read it. `vectors/entries.txt` holds a forged entry for each rule; the test sends every one to this program from a fake relay, and only the valid articles are listed.
+The signature is Ed25519, over the 13 bytes `terse-entry-0` followed by the entry without its signature, and it is checked strictly. `ed25519-dalek`'s `verify_strict` comes close, but its `VerifyingKey::from_bytes` accepts a key that is not the canonical encoding of its point, and with the crate's `legacy_compatibility` feature, which any crate in a program can turn on, it accepts an S that is not below the group order. [Signatures and valid entries](terse:e1ee562a05c450f2d61ea14548d25ce3ef49daac37eebb8b28634239038de3a3) gives every rule and the reason for it, enough to write the check yourself. The SDK is one file, `sdk/rust/src/lib.rs` in the Tersenet sources, 164 lines with its comments, built on `curve25519-dalek`: read it. `vectors/entries.txt` holds a forged entry for each rule; the test sends every one to this program from a fake relay, and only the valid articles are listed.
 
 To open an entry, `main` gets its blob with step 2's `relay::get`, which checks its hash and skips any entry the relay sends meanwhile, and shows it with `article::show`.
 
@@ -111,7 +111,7 @@ In a package of your own, `cargo add tersenet` adds it to `Cargo.toml`. In the T
 
 With the relay of step 2 running, make a key and publish the article as entry 1 of your feed:
 
-```
+```sh
 terse key new
 terse feed publish ../hello.txt --title Hello \
   --relay ws://127.0.0.1:7979
@@ -119,18 +119,18 @@ terse feed publish ../hello.txt --title Hello \
 
 `terse key new` makes your key and prints it; if you made a profile in the user guide you have one already. `terse key show` prints it, so give it to the program:
 
-```
+```sh
 cargo run -q --bin follow ws://127.0.0.1:7979 \
   $(terse key show)
 ```
 
-```
+```text
 1  Hello
 ```
 
 Add an entry's number to open it:
 
-```
+```sh
 cargo run -q --bin follow ws://127.0.0.1:7979 \
   $(terse key show) 1
 ```
@@ -139,10 +139,10 @@ It prints the list again, an empty line, and the article as step 1 shows it.
 
 ## What it leaves out
 
-A complete reader keeps its subscriptions and every entry it receives, lists the newest first, follows several feeds on several relays and stays connected for new entries, downloads small articles before you open them, and shows each feed's name with its key. It also notes when a blob's length is not the size its entry gives. The reference implementation checks entries with the same SDK (`crates/terse-net/src/entry.rs`), and `node.rs` does the rest. [Writing a reader without the machine](terse:d95e1053423ee865c1f3ec1a20495c08bc59faf7501fc4ffdd0cdcacb2919596) lists all a complete reader must do.
+A complete reader keeps its subscriptions and every entry it receives, lists the newest first, follows several feeds on several relays and stays connected for new entries, downloads small articles before you open them, and shows each feed's name with its key. It also notes when a blob's length is not the size its entry gives. The reference implementation checks entries with the same SDK (`crates/terse-net/src/entry.rs`), and `node.rs` does the rest. [Writing a reader without the machine](terse:71329baef248a899517dfd97e62dc84295fcbd56283b397769198b7e32a4c250) lists all a complete reader must do.
 
 ## What you have now
 
 A Tersenet reader in Rust: it follows a feed, checks everything it receives against its signature and hash, and shows the articles.
 
-Next, if you want to go further: Tersenet can also carry small programs, run by the Terse32 virtual machine. Nothing so far needs it. [Write a program](terse:5f024abae2d825976cb149f20923f2737a2449863b23e9b9ae646b7543588555).
+Next, if you want to go further: Tersenet can also carry small programs, run by the Terse32 virtual machine. Nothing so far needs it. [Write a program](terse:9bd9f08065474881858780b2ea9d6c767f509b1b02e90813d9016b92183ebf79).

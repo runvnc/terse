@@ -13,64 +13,64 @@
 <h1 id="make-a-host-in-rust-step-2-frames-and-the-budget">Make a host in Rust, step 2: frames and the budget</h1>
 <p>A Terse32 program runs at the same speed on every host. Time comes in frames, 60 a second, and in each frame a program can do a fixed amount of work: 125,000 units. This step adds the module <code>frames</code> to the crate of step 1: the frame loop and the System device&#39;s first calls.</p>
 <h2 id="the-frame-loop">The frame loop</h2>
-<pre>pub const FRAME_BUDGET: i64 = 125_000;
+<pre><span class=k>pub</span> <span class=k>const</span> FRAME_BUDGET: <span class=t>i64</span> = <span class=n>125_000</span>;
 
-pub enum Status {
-    Running,
-    Exited(u8),
-    Faulted(Fault),
+<span class=k>pub</span> <span class=k>enum</span> <span class=t>Status</span> {
+    <span class=t>Running</span>,
+    <span class=t>Exited</span>(<span class=t>u8</span>),
+    <span class=t>Faulted</span>(<span class=t>Fault</span>),
 }
 
-pub struct Machine {
-    pub cpu: Cpu,
-    pub budget: i64,
-    pub frame: u32,
-    pub status: Status,
+<span class=k>pub</span> <span class=k>struct</span> <span class=t>Machine</span> {
+    <span class=k>pub</span> cpu: <span class=t>Cpu</span>,
+    <span class=k>pub</span> budget: <span class=t>i64</span>,
+    <span class=k>pub</span> frame: <span class=t>u32</span>,
+    <span class=k>pub</span> status: <span class=t>Status</span>,
 }</pre>
 <p><code>Machine</code> is the processor of step 1 with what the frame loop keeps: the budget, the frame counter, and whether and how the machine stopped.</p>
 <p>Slot 1 is the System device. <code>BASE_CHARGE</code> is the charge of its calls and of a call the machine does not have; <code>BAD_BUFFER</code>, the result when a call&#39;s buffer is not where it must be. Its calls are numbered by function:</p>
-<pre>pub const SYSTEM: u32 = 1;
-pub const BASE_CHARGE: i64 = 4;
-pub const BAD_BUFFER: u32 = 0xffff_fffe;
-const EVENT_SIZE: u32 = 4;
+<pre><span class=k>pub</span> <span class=k>const</span> SYSTEM: <span class=t>u32</span> = <span class=n>1</span>;
+<span class=k>pub</span> <span class=k>const</span> BASE_CHARGE: <span class=t>i64</span> = <span class=n>4</span>;
+<span class=k>pub</span> <span class=k>const</span> BAD_BUFFER: <span class=t>u32</span> = <span class=n>0xffff_fffe</span>;
+<span class=k>const</span> EVENT_SIZE: <span class=t>u32</span> = <span class=n>4</span>;
 
-const WAIT_FRAME: u32 = 0;
-const NEXT_EVENT: u32 = 1;
-const FRAME_COUNT: u32 = 2;
-const EXIT: u32 = 6;</pre>
-<pre>    pub fn run_frame&lt;D&gt;(&amp;mut self, mut devices: D)
-    where
-        D: FnMut(&amp;mut Cpu, i64, u32, u32) -&gt; (u32, i64),
+<span class=k>const</span> WAIT_FRAME: <span class=t>u32</span> = <span class=n>0</span>;
+<span class=k>const</span> NEXT_EVENT: <span class=t>u32</span> = <span class=n>1</span>;
+<span class=k>const</span> FRAME_COUNT: <span class=t>u32</span> = <span class=n>2</span>;
+<span class=k>const</span> EXIT: <span class=t>u32</span> = <span class=n>6</span>;</pre>
+<pre>    <span class=k>pub</span> <span class=k>fn</span> run_frame&lt;D&gt;(&amp;<span class=k>mut</span> <span class=k>self</span>, <span class=k>mut</span> devices: D)
+    <span class=k>where</span>
+        D: <span class=t>FnMut</span>(&amp;<span class=k>mut</span> <span class=t>Cpu</span>, <span class=t>i64</span>, <span class=t>u32</span>, <span class=t>u32</span>) -&gt; (<span class=t>u32</span>, <span class=t>i64</span>),
     {
-        self.budget += FRAME_BUDGET;
-        while self.budget &gt; 0 &amp;&amp; self.running() {
-            let (cost, ecall) = match self.cpu.step() {
-                Ok(step) =&gt; step,
-                Err(fault) =&gt; {
-                    self.status = Status::Faulted(fault);
-                    break;
+        <span class=k>self</span>.budget += FRAME_BUDGET;
+        <span class=k>while</span> <span class=k>self</span>.budget &gt; <span class=n>0</span> &amp;&amp; <span class=k>self</span>.running() {
+            <span class=k>let</span> (cost, ecall) = <span class=k>match</span> <span class=k>self</span>.cpu.step() {
+                <span class=t>Ok</span>(step) =&gt; step,
+                <span class=t>Err</span>(fault) =&gt; {
+                    <span class=k>self</span>.status = <span class=t>Status</span>::<span class=t>Faulted</span>(fault);
+                    <span class=k>break</span>;
                 }
             };
-            self.budget -= cost;
-            if !ecall {
-                continue;
+            <span class=k>self</span>.budget -= cost;
+            <span class=k>if</span> !ecall {
+                <span class=k>continue</span>;
             }
-            let a7 = self.cpu.x[A7];
-            let (slot, function) = (a7 &gt;&gt; 8, a7 &amp; 0xff);
-            let budget = self.budget;
-            let (result, charge) = if slot == SYSTEM {
-                (self.system(function), BASE_CHARGE)
-            } else {
-                devices(&amp;mut self.cpu, budget, slot, function)
+            <span class=k>let</span> a7 = <span class=k>self</span>.cpu.x[A7];
+            <span class=k>let</span> (slot, function) = (a7 &gt;&gt; <span class=n>8</span>, a7 &amp; <span class=n>0xff</span>);
+            <span class=k>let</span> budget = <span class=k>self</span>.budget;
+            <span class=k>let</span> (result, charge) = <span class=k>if</span> slot == SYSTEM {
+                (<span class=k>self</span>.system(function), BASE_CHARGE)
+            } <span class=k>else</span> {
+                devices(&amp;<span class=k>mut</span> <span class=k>self</span>.cpu, budget, slot, function)
             };
-            self.cpu.x[A0] = result;
-            self.budget -= charge;
-            if slot == SYSTEM &amp;&amp; function == WAIT_FRAME {
-                break;
+            <span class=k>self</span>.cpu.x[A0] = result;
+            <span class=k>self</span>.budget -= charge;
+            <span class=k>if</span> slot == SYSTEM &amp;&amp; function == WAIT_FRAME {
+                <span class=k>break</span>;
             }
         }
-        self.budget = self.budget.min(0);
-        self.frame += 1;
+        <span class=k>self</span>.budget = <span class=k>self</span>.budget.min(<span class=n>0</span>);
+        <span class=k>self</span>.frame += <span class=n>1</span>;
     }</pre>
 <p>In order:</p>
 <ul>
@@ -81,17 +81,17 @@ const EXIT: u32 = 6;</pre>
 <li>A fault or <code>exit</code> stops the machine. The frame still counts.</li>
 </ul>
 <h2 id="four-calls">Four calls</h2>
-<pre>    fn system(&amp;mut self, function: u32) -&gt; u32 {
-        let a0 = self.cpu.x[A0];
-        let event = self.cpu.memory(a0, EVENT_SIZE, true);
-        match function {
-            WAIT_FRAME =&gt; self.frame + 1,
-            NEXT_EVENT if event.is_none() =&gt; BAD_BUFFER,
-            NEXT_EVENT =&gt; 0,
-            FRAME_COUNT =&gt; self.frame,
+<pre>    <span class=k>fn</span> system(&amp;<span class=k>mut</span> <span class=k>self</span>, function: <span class=t>u32</span>) -&gt; <span class=t>u32</span> {
+        <span class=k>let</span> a0 = <span class=k>self</span>.cpu.x[A0];
+        <span class=k>let</span> event = <span class=k>self</span>.cpu.memory(a0, EVENT_SIZE, <span class=k>true</span>);
+        <span class=k>match</span> function {
+            WAIT_FRAME =&gt; <span class=k>self</span>.frame + <span class=n>1</span>,
+            NEXT_EVENT <span class=k>if</span> event.is_none() =&gt; BAD_BUFFER,
+            NEXT_EVENT =&gt; <span class=n>0</span>,
+            FRAME_COUNT =&gt; <span class=k>self</span>.frame,
             EXIT =&gt; {
-                self.status = Status::Exited(a0 as u8);
-                0
+                <span class=k>self</span>.status = <span class=t>Status</span>::<span class=t>Exited</span>(a0 <span class=k>as</span> <span class=t>u8</span>);
+                <span class=n>0</span>
             }
             _ =&gt; UNKNOWN_CALL,
         }
@@ -103,50 +103,50 @@ const EXIT: u32 = 6;</pre>
 <li><code>106h</code>, <code>exit</code>: the machine stops with exit code <code>a0</code> &amp; <code>FFh</code>. Like every call it writes its result, 0, to <code>a0</code>.</li>
 </ul>
 <h2 id="the-program">The program</h2>
-<pre>use host::cpu::UNKNOWN_CALL;
-use host::frames::{BASE_CHARGE, Machine, Status};
-use host::image::load;
-use std::error::Error;
-use std::process::exit;
+<pre><span class=k>use</span> host::cpu::UNKNOWN_CALL;
+<span class=k>use</span> host::frames::{BASE_CHARGE, <span class=t>Machine</span>, <span class=t>Status</span>};
+<span class=k>use</span> host::image::load;
+<span class=k>use</span> std::error::<span class=t>Error</span>;
+<span class=k>use</span> std::process::exit;
 
-fn main() -&gt; Result&lt;(), Box&lt;dyn Error&gt;&gt; {
-    let args: Vec&lt;String&gt; = std::env::args().collect();
-    let file = std::fs::read(&amp;args[1])?;
-    let frames: u32 = args[2].parse()?;
-    let (cpu, _) = load(&amp;file)?;
-    let mut m = Machine::new(cpu);
-    while m.running() &amp;&amp; m.frame &lt; frames {
+<span class=k>fn</span> main() -&gt; <span class=t>Result</span>&lt;(), <span class=t>Box</span>&lt;<span class=k>dyn</span> <span class=t>Error</span>&gt;&gt; {
+    <span class=k>let</span> args: <span class=t>Vec</span>&lt;<span class=t>String</span>&gt; = std::env::args().collect();
+    <span class=k>let</span> file = std::fs::read(&amp;args[<span class=n>1</span>])?;
+    <span class=k>let</span> frames: <span class=t>u32</span> = args[<span class=n>2</span>].parse()?;
+    <span class=k>let</span> (cpu, _) = load(&amp;file)?;
+    <span class=k>let</span> <span class=k>mut</span> m = <span class=t>Machine</span>::new(cpu);
+    <span class=k>while</span> m.running() &amp;&amp; m.frame &lt; frames {
         m.run_frame(|_, _, _, _| (UNKNOWN_CALL, BASE_CHARGE));
     }
-    match m.status {
-        Status::Faulted(fault) =&gt; {
-            eprintln!(&quot;{fault}&quot;);
-            exit(1)
+    <span class=k>match</span> m.status {
+        <span class=t>Status</span>::<span class=t>Faulted</span>(fault) =&gt; {
+            <span class=m>eprintln!</span>(<span class=s>&quot;{fault}&quot;</span>);
+            exit(<span class=n>1</span>)
         }
-        Status::Exited(code) =&gt; exit(code as i32),
-        Status::Running =&gt; Ok(()),
+        <span class=t>Status</span>::<span class=t>Exited</span>(code) =&gt; exit(code <span class=k>as</span> <span class=t>i32</span>),
+        <span class=t>Status</span>::<span class=t>Running</span> =&gt; <span class=t>Ok</span>(()),
     }
 }</pre>
 <p>It takes the program and the most frames to run; <code>|_, _, _, _| (u32::MAX, 4)</code> answers a call to any device but the System device: <code>FFFF_FFFFh</code>, charge 4.</p>
 <h2 id="run-it">Run it</h2>
 <p>This program calls <code>frame_count</code> 100,000 times, then waits for the next frame and exits with what <code>wait_frame</code> returned:</p>
-<pre>_start: li   t0, 100000
-        li   a7, 0x102      # frame_count
-1:      ecall
-        addi t0, t0, -1
-        bnez t0, 1b
-        li   a7, 0x100      # wait_frame
+<pre>_start: li   t0, <span class=n>100000</span>
+        li   a7, <span class=n>0x102</span>      <span class=c># frame_count</span>
+<span class=n>1</span>:      ecall
+        addi t0, t0, -<span class=n>1</span>
+        bnez t0, <span class=n>1b</span>
+        li   a7, <span class=n>0x100</span>      <span class=c># wait_frame</span>
         ecall
-        li   a7, 0x106      # exit with its result
+        li   a7, <span class=n>0x106</span>      <span class=c># exit with its result</span>
         ecall</pre>
 <p>From <code>examples/host/rust</code>, after <code>cargo build --release</code>:</p>
-<pre>xxd -r -p &gt; frames.terse &lt;&lt;EOF
-544552530001240000010000000000006672616d657300
-000000000000000000e1629382026a9308201073000000
-fd12e39d02fe93080010730000009308601073000000
-EOF
-target/release/step2 frames.terse 10
-echo $?</pre>
+<pre class="sh"><span class=k>xxd</span> -r -p &gt; frames.terse <span class=m>&lt;&lt;EOF</span>
+<span class=s>544552530001240000010000000000006672616d657300</span>
+<span class=s>000000000000000000e1629382026a9308201073000000</span>
+<span class=s>fd12e39d02fe93080010730000009308601073000000</span>
+<span class=s>EOF</span>
+<span class=k>target/release/step2</span> frames.terse 10
+<span class=k>echo</span> <span class=m>$?</span></pre>
 <p>prints <code>6</code>, as <code>terse run frames.terse --frames 10</code> does. Each pass of the loop costs 7 units: the <code>ecall</code> 1 + 4, the other two instructions 1 each. 100,000 passes are 700,000 units, so the loop ends in frame 5 (frames 0 to 4 give 625,000), <code>wait_frame</code> returns 6, and the program exits in frame 6. A host that says 3 does not charge calls; 5, its <code>wait_frame</code> returns the counter instead of one more; 1, it has no budget at all.</p>
 <h2 id="what-you-have-now">What you have now</h2>
 <p>A machine that runs programs at exactly the reference&#39;s speed: <code>frames.rs</code>, 92 lines, and <code>bin/step2.rs</code>, 24. Next, give it a screen: <a href="guide-host-rust-driver.html">Make a host in Rust, step 3: a driver shows hello</a>.</p>

@@ -6,7 +6,7 @@
 
 `terse build --show` prints the commands it runs; `terse build --write-lib lib` writes the files they use. With those, in fish:
 
-```
+```sh
 terse build --write-lib lib
 set CFLAGS --target=riscv32-unknown-elf -march=rv32imc \
     -mabi=ilp32 -Os -ffreestanding -nostdlib -fno-builtin \
@@ -23,7 +23,7 @@ terse pack --rom hello.bin --title hello --ram-pages 2 \
 
 (In sh, `CFLAGS="..."`.) The `build.sh` of each program in `programs/` is such a script. For Rust:
 
-```
+```sh
 terse build --write-lib lib
 rustc --edition 2024 --target riscv32imc-unknown-none-elf \
     -C opt-level=s -Cpanic=abort --crate-type rlib \
@@ -57,4 +57,4 @@ Anything that can produce RV32IMC machine code for a bare machine can make a Ter
 
 Other compilers with a 32-bit RISC-V bare-metal target (Zig, for one) should fit these rules with their own start code and the linker script of "Building a program"; none has been tried.
 
-Next: [Running and publishing a program](terse:9a328af50c54c58cb2d80999997f444346976b4382a820c0f4a0532c7ae17de3).
+Next: [Running and publishing a program](terse:a0f5bc015757bc468af9a48c7023b7649493e79c60761004a5e2bd05b0b471f9).

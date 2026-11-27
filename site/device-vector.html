@@ -101,25 +101,25 @@
 <h2 id="state">State</h2>
 <p>The device sends no events and takes no input from the host. Its state is the style, the persistence, the fill mode and the copy of the list, held in this order: a present flag (1 byte: the machine has device 3 or device 9; if <code>00h</code> nothing follows), the style (<code>00h</code> clean, <code>01h</code> phosphor), the persistence, the fill mode (<code>00h</code> fill, <code>01h</code> outlines), the list&#39;s length m (4 bytes, 0 to 16,384) and the m bytes of the last accepted submit. For an image with device 9 and not device 3 the fill mode is <code>00h</code> and m is 0. Any afterglow a host draws is not included.</p>
 <h2 id="example">Example</h2>
-<pre>#include &quot;terse.h&quot;
+<pre><span class=m>#include</span> <span class=s>&quot;terse.h&quot;</span>
 
-static uint8_t list[256];
+<span class=k>static</span> <span class=t>uint8_t</span> list[<span class=n>256</span>];
 
-int main(void)
+<span class=t>int</span> main(<span class=t>void</span>)
 {
-    for (int16_t x = 0;; x = (x + 16) % VEC_SCREEN_W) {
+    <span class=k>for</span> (<span class=t>int16_t</span> x = <span class=n>0</span>;; x = (x + <span class=n>16</span>) % VEC_SCREEN_W) {
         vec_begin(list);
-        vec_colour(255, 200, 0, 255);
-        vec_width(32);                      /* two units */
-        vec_move(x, 120 * VEC_UNIT);
-        vec_line(x + 80 * VEC_UNIT, 360 * VEC_UNIT);
-        vec_disc(10 * VEC_UNIT);        /* at the line end */
-        vec_origin(320 * VEC_UNIT, 240 * VEC_UNIT);
-        vec_move(0, 0);                     /* screen centre */
-        vec_colour(0, 160, 255, 128);
-        vec_rect(40 * VEC_UNIT, 40 * VEC_UNIT);
+        vec_colour(<span class=n>255</span>, <span class=n>200</span>, <span class=n>0</span>, <span class=n>255</span>);
+        vec_width(<span class=n>32</span>);                      <span class=c>/* two units */</span>
+        vec_move(x, <span class=n>120</span> * VEC_UNIT);
+        vec_line(x + <span class=n>80</span> * VEC_UNIT, <span class=n>360</span> * VEC_UNIT);
+        vec_disc(<span class=n>10</span> * VEC_UNIT);        <span class=c>/* at the line end */</span>
+        vec_origin(<span class=n>320</span> * VEC_UNIT, <span class=n>240</span> * VEC_UNIT);
+        vec_move(<span class=n>0</span>, <span class=n>0</span>);                     <span class=c>/* screen centre */</span>
+        vec_colour(<span class=n>0</span>, <span class=n>160</span>, <span class=n>255</span>, <span class=n>128</span>);
+        vec_rect(<span class=n>40</span> * VEC_UNIT, <span class=n>40</span> * VEC_UNIT);
         vec_end();
-        vec_submit_list(list);              /* VEC_DONE */
+        vec_submit_list(list);              <span class=c>/* VEC_DONE */</span>
         terse_wait_frame();
     }
 }</pre>

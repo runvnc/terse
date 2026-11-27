@@ -6,7 +6,7 @@ The reader is where you spend most of your time in Tersenet. It has a few views,
 
 The timeline lists the articles of every feed you follow, newest first. Each has its title and, below it, the feed's name and short key, the date and time (UTC) and the size:
 
-```
+```text
 Timeline
 2 articles  ·  1 feed
 A game for you
@@ -27,7 +27,7 @@ Links are in colour. Tab moves to the next one (Shift+Tab to the one before), wh
 
 - another article, which opens in place: Esc comes back, up to 8 articles deep, each where you left it;
 - a feed, whose page shows its name and key and offers to subscribe (the next page);
-- a program, which the launcher starts in a tile of its own, after asking you if it is not one of the built-in ones ([Find and play a game](terse:abf06042b9c64dd049bd8bda14923c0b7e8e9077b69e48607fad700e28a2122e)).
+- a program, which the launcher starts in a tile of its own, after asking you if it is not one of the built-in ones ([Find and play a game](terse:c93727197ccf1f6993c75c3b0165e7dbe83f914f948a3b66ebbb6b28073bf9fc)).
 
 There are no links to web pages: an address such as `https://example.org` in an article is plain text. Links are written `terse:` and a long number, and a reader shows them by their text or shortened.
 
@@ -43,6 +43,6 @@ M on the timeline opens the first page of this manual. It is part of every Terse
 
 ## What you have now
 
-The timeline, articles, links and search. The timeline is only as good as the feeds you follow, so next: [Subscribe to someone's feed](terse:dddff42bffb9829f4367148d2b4593940088486739b35c724d89de7729fd2a5a).
+The timeline, articles, links and search. The timeline is only as good as the feeds you follow, so next: [Subscribe to someone's feed](terse:b8dc19fd8befa51a4c926e51a80b81e70499f2195aef83cf4c8d3f1b70dfb0a1).
 
-Every view and key of the reader is in [Using the reader](terse:272579492983cb0a35aa8af4b1eaa7731f8688634562aa9d12de47af4a74e19b).
+Every view and key of the reader is in [Using the reader](terse:2a952553a0a4a7eafb5e4e16e4cf2da8e84ba716d7374ff96e7a888b33def192).

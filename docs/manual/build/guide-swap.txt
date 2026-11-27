@@ -6,7 +6,7 @@ Every part of Tersenet has a reference version in the sources, and each can be r
 
 Run a relay, `terse-relay --store try-relay`, and point your reader at `ws://127.0.0.1:7878`. Publish to it with `terse feed publish` (step 3 of the reader guide). Or let the reference node do the network and talk to it over its socket:
 
-```
+```sh
 terse node
 ```
 
@@ -16,7 +16,7 @@ terse node
 
 A core that speaks the device bus starts the reference drivers: `terse-dev-terminal`, `terse-dev-vector` and the others. The hosts of "Make a host" do, from step 3 on, the Go one here (built in `examples/host/go` with `go build -o bin/ ./...`):
 
-```
+```sh
 examples/host/go/bin/step4 programs/hello/hello.terse 30 \
     target/release/terse-dev-terminal
 target/release/terse run programs/hello/hello.terse \
@@ -25,7 +25,7 @@ target/release/terse run programs/hello/hello.terse \
 
 Both print the same hash. So does `tcore`, an independent core in C, which starts every reference driver from one folder:
 
-```
+```sh
 make -C native/core-c
 native/core-c/tcore programs/hello/hello.terse \
     --frames 30 --hash --drivers target/release
@@ -35,7 +35,7 @@ native/core-c/tcore programs/hello/hello.terse \
 
 `terse-bus` is the reference core on the bus. `--driver 2=...` makes your program the driver of device 2, here the Go terminal of "Make a device in Go":
 
-```
+```sh
 target/release/terse-bus programs/hello/hello.terse \
     --frames 30 --hash \
     --driver 2=$PWD/examples/device/go/terminal
@@ -47,14 +47,14 @@ target/release/terse-bus programs/hello/hello.terse \
 
 Neither part need be the reference's. The Go host with the Rust driver:
 
-```
+```sh
 examples/host/go/bin/step4 programs/hello/hello.terse 30 \
     examples/device/rust/target/release/terminal
 ```
 
 and `tcore` with the C example driver, `native/driver-example/terminal.c`:
 
-```
+```sh
 cc -std=c11 -O2 -o terminal native/driver-example/terminal.c
 native/core-c/tcore programs/hello/hello.terse --frames 30 \
     --hash --drivers target/release --driver 2=$PWD/terminal
@@ -66,7 +66,7 @@ The sources' tests run every pairing of the two example hosts and the two exampl
 
 To have `terse-bus` use a driver every time, with no `--driver`, install it. Only a complete driver may be installed, one that implements the whole device; the Go and Rust examples are not, the C one is:
 
-```
+```sh
 terse drivers add terminal
 target/release/terse-bus programs/hello/hello.terse \
     --frames 30 --hash
@@ -83,4 +83,4 @@ target/release/terse-bus programs/hello/hello.terse \
 
 ## What you have now
 
-The means to test any part you write against the reference, one part at a time. Next, the program that holds a whole system of machines together: [Make a shell](terse:0247e076ba62f1d7aacd4f83c58e52300eace97b96fd39472398d1c555a26d5b).
+The means to test any part you write against the reference, one part at a time. Next, the program that holds a whole system of machines together: [Make a shell](terse:acc421ed207b6df2ba92500016dcc8da43f513203a9f6d512cdd404959931be3).

@@ -153,7 +153,7 @@ It takes the program and the most frames to run.
 
 This program calls `frame_count` 100,000 times, then waits for the next frame and exits with what `wait_frame` returned:
 
-```
+```asm
 _start: li   t0, 100000
         li   a7, 0x102      # frame_count
 1:      ecall
@@ -167,7 +167,7 @@ _start: li   t0, 100000
 
 From `examples/host/go`, after `go build -o bin/ ./...`:
 
-```
+```sh
 xxd -r -p > frames.terse <<EOF
 544552530001240000010000000000006672616d657300
 000000000000000000e1629382026a9308201073000000
@@ -181,8 +181,8 @@ prints `6`, as `terse run frames.terse --frames 10` does. Each pass of the loop 
 
 ## What you have now
 
-A machine that runs programs at exactly the reference's speed: `frames.go`, 80 lines, and `step2/main.go`, 32. Next, give it a screen: [Make a host in Go, step 3: a driver shows hello](terse:74d1e670b485498e6f85748899d74519a790ab4867c15887a4fa227ef195809e).
+A machine that runs programs at exactly the reference's speed: `frames.go`, 80 lines, and `step2/main.go`, 32. Next, give it a screen: [Make a host in Go, step 3: a driver shows hello](terse:e58210ba247c1d4e2c868c664c72012c04c21ef9592b84bba80c22290c107532).
 
-- The same step in Rust: [Make a host in Rust, step 2: frames and the budget](terse:9a62cf9b446261211bf0c1ceaaba1319e5feb5c64e57bddf09b4581b0d93c593).
+- The same step in Rust: [Make a host in Rust, step 2: frames and the budget](terse:2fbd25ea3e9014c8d717bde4adb105d6178e11f54d46f81d15290d472927ac73).
 - Full implementations: `native/core-c/main.c` (the frame loop) and `machine.c` (all ten System calls); the reference's `crates/terse-core/src/machine.rs` and `system.rs`.
-- The rules: [The Terse32 machine](terse:d5582dce5b933ab662643e810c537ba15a1888f126018b878cc7946ccdc9e258), section "Frames and the budget"; [The system device (device 1)](terse:a21c203f96e190cf8e674e66b350b1909137412eacf5661857870728d7df295d); [Charges and limits](terse:700aa265f5d0ae8141b841e6eeecb0b6146ac6935da3121441ee039db69ecf7c).
+- The rules: [The Terse32 machine](terse:0e51edb20b815c926fe623365bae2c282c9b8193930d50be70974083725df724), section "Frames and the budget"; [The system device (device 1)](terse:81d1c876ae9c23111795061076a161d6d06fb50e9efb806ae43f4029ffbe9ff9); [Charges and limits](terse:700aa265f5d0ae8141b841e6eeecb0b6146ac6935da3121441ee039db69ecf7c).

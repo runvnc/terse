@@ -75,19 +75,19 @@
 <tr><td>a request this machine made earlier still waits (the shell has not read it with <code>request</code>)</td><td>0, nothing else happens</td></tr>
 <tr><td>otherwise</td><td>1: the request waits for the shell</td></tr>
 </tbody></table></div>
-<p>The shell is told of a waiting request at the start of the next system frame, by an open requested event, and reads it with the machines device&#39;s <code>request</code> call; then the machine may make another. What the shell does with the request is its own policy, and the machine is not told. The built-in shell, for example, takes requests only from the machine with the keyboard, asks the user before starting a program that is not built in, and opens a blob according to its first bytes. See [the machines device](<a href="device-machines.html" title="The Machines device (device 8)">terse:b756d4…213d9f</a>).</p>
+<p>The shell is told of a waiting request at the start of the next system frame, by an open requested event, and reads it with the machines device&#39;s <code>request</code> call; then the machine may make another. What the shell does with the request is its own policy, and the machine is not told. The built-in shell, for example, takes requests only from the machine with the keyboard, asks the user before starting a program that is not built in, and opens a blob according to its first bytes. See [the machines device](<a href="device-machines.html" title="The Machines device (device 8)">terse:9f39c6…4dcc7a</a>).</p>
 <p>In C, <code>terse_open(request)</code> with the kinds <code>OPEN_BLOB</code> and <code>OPEN_PROGRAM</code>:</p>
-<pre>#include &quot;terse.h&quot;
+<pre><span class=m>#include</span> <span class=s>&quot;terse.h&quot;</span>
 
-/* Ask the shell to start the built-in program &quot;sparks&quot;. */
-uint32_t open_sparks(void)
+<span class=c>/* Ask the shell to start the built-in program &quot;sparks&quot;. */</span>
+<span class=t>uint32_t</span> open_sparks(<span class=t>void</span>)
 {
-    uint8_t req[34 + 6];
-    memset(req, 0, sizeof req); /* zero key: a built-in */
-    req[0] = OPEN_PROGRAM;
-    req[33] = 6;
-    memcpy(req + 34, &quot;sparks&quot;, 6);
-    return terse_open(req);     /* 1 passed, 0 not */
+    <span class=t>uint8_t</span> req[<span class=n>34</span> + <span class=n>6</span>];
+    memset(req, <span class=n>0</span>, <span class=k>sizeof</span> req); <span class=c>/* zero key: a built-in */</span>
+    req[<span class=n>0</span>] = OPEN_PROGRAM;
+    req[<span class=n>33</span>] = <span class=n>6</span>;
+    memcpy(req + <span class=n>34</span>, <span class=s>&quot;sparks&quot;</span>, <span class=n>6</span>);
+    <span class=k>return</span> terse_open(req);     <span class=c>/* 1 passed, 0 not */</span>
 }</pre>
 <h2 id="argument">argument</h2>
 <p><code>argument</code> writes the machine&#39;s argument, the blob ID its shell gave it before its first frame (with the machines device&#39;s <code>argument</code> call), to the 32-byte buffer and returns 1. A machine that has none (the shell gave none, it runs on its own, or it is the shell) gets 0 and nothing is written. The argument never changes during the machine&#39;s life and is part of its state; a machine restored from a snapshot has the argument it had when the snapshot was taken. The built-in shell, for example, starts a document&#39;s program with the document&#39;s blob ID as the argument. In C: <code>terse_argument(id)</code>.</p>
@@ -109,21 +109,21 @@ uint32_t open_sparks(void)
 <tr><td>which optional devices were granted</td><td></td></tr>
 </tbody></table></div>
 <h2 id="example">Example</h2>
-<pre>#include &quot;terse.h&quot;
+<pre><span class=m>#include</span> <span class=s>&quot;terse.h&quot;</span>
 
-int main(void)
+<span class=t>int</span> main(<span class=t>void</span>)
 {
     terse_event e;
     terse_pad pad;
-    uint8_t seed[16];
-    terse_random(seed, sizeof seed);
-    for (;;) {
-        while (terse_event_pop(&amp;e) != EV_NONE)
-            if (e.type == EV_KEY_DOWN &amp;&amp; e.a == KEY_ESCAPE)
-                return 0;              /* exit code 0 */
-        terse_pad_read(0, &amp;pad);
-        if (pad.connected &amp;&amp; (pad.buttons &amp; PAD_A))
-            seed[0]++;
+    <span class=t>uint8_t</span> seed[<span class=n>16</span>];
+    terse_random(seed, <span class=k>sizeof</span> seed);
+    <span class=k>for</span> (;;) {
+        <span class=k>while</span> (terse_event_pop(&amp;e) != EV_NONE)
+            <span class=k>if</span> (e.type == EV_KEY_DOWN &amp;&amp; e.a == KEY_ESCAPE)
+                <span class=k>return</span> <span class=n>0</span>;              <span class=c>/* exit code 0 */</span>
+        terse_pad_read(<span class=n>0</span>, &amp;pad);
+        <span class=k>if</span> (pad.connected &amp;&amp; (pad.buttons &amp; PAD_A))
+            seed[<span class=n>0</span>]++;
         terse_wait_frame();
     }
 }</pre>

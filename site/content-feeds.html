@@ -142,33 +142,33 @@
 </ul>
 <p>Identity, names, programs, subscriptions, timeline and find need no consent. The program is not told that a request is waiting for the user.</p>
 <h2 id="example-list-the-timeline-s-titles">Example: list the timeline&#39;s titles</h2>
-<pre>#include &quot;terse.h&quot;
+<pre><span class=m>#include</span> <span class=s>&quot;terse.h&quot;</span>
 
-static content_req req;
-static uint8_t buf[4096];
+<span class=k>static</span> content_req req;
+<span class=k>static</span> <span class=t>uint8_t</span> buf[<span class=n>4096</span>];
 
-/* Called after a content-done event for this request. */
-void show_titles(void)
+<span class=c>/* Called after a content-done event for this request. */</span>
+<span class=t>void</span> show_titles(<span class=t>void</span>)
 {
-    uint32_t at = 0;
-    if (req.status != STATUS_DONE)
-        return;
-    while (at &lt; req.length) {
-        uint8_t L = buf[at];
-        const uint8_t *e = buf + at + 2; /* the entry */
-        if (e[40] == ENTRY_ARTICLE) {
-            term_write(e + 109, e[108]);
-            term_puts(buf[at + 1] &amp; TIMELINE_LOCAL
-                          ? &quot;\n&quot; : &quot; (remote)\n&quot;);
+    <span class=t>uint32_t</span> at = <span class=n>0</span>;
+    <span class=k>if</span> (req.status != STATUS_DONE)
+        <span class=k>return</span>;
+    <span class=k>while</span> (at &lt; req.length) {
+        <span class=t>uint8_t</span> L = buf[at];
+        <span class=k>const</span> <span class=t>uint8_t</span> *e = buf + at + <span class=n>2</span>; <span class=c>/* the entry */</span>
+        <span class=k>if</span> (e[<span class=n>40</span>] == ENTRY_ARTICLE) {
+            term_write(e + <span class=n>109</span>, e[<span class=n>108</span>]);
+            term_puts(buf[at + <span class=n>1</span>] &amp; TIMELINE_LOCAL
+                          ? <span class=s>&quot;\n&quot;</span> : <span class=s>&quot; (remote)\n&quot;</span>);
         }
-        at += 1 + L;
+        at += <span class=n>1</span> + L;
     }
 }
 
-uint8_t ask(void)
+<span class=t>uint8_t</span> ask(<span class=t>void</span>)
 {
-    return content_feed(&amp;req, CONTENT_TIMELINE, 0,
-                        sizeof buf, buf);
+    <span class=k>return</span> content_feed(&amp;req, CONTENT_TIMELINE, <span class=n>0</span>,
+                        <span class=k>sizeof</span> buf, buf);
 }</pre>
 <p>Call <code>ask</code> at start and again on each <code>EV_FEEDS_UPDATED</code>; <code>req.size</code> says how many entries exist in all.</p>
 </article>

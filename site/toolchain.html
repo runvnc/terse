@@ -19,13 +19,13 @@
 </ul>
 <p>Nothing else. The C library, the start-up code, the linker script and the Rust runtime are built into <code>terse</code>, and <code>terse build</code> takes the ROM out of the linked ELF file itself, so <code>llvm-objcopy</code> is not needed. When a tool is missing, <code>terse build</code> says in one sentence what to install. The compiler&#39;s own errors and warnings are shown as it prints them.</p>
 <h2 id="the-commands">The commands</h2>
-<pre>terse new &lt;file.c|file.rs|file.S&gt;
-terse build &lt;source&gt;... [-o &lt;out.terse&gt;] [--title &lt;t&gt;]
-    [--ram-pages &lt;n&gt;] [--device &lt;slot:version&gt;]...
-    [--optional &lt;slot:version&gt;]... [--cflag &lt;flag&gt;]...
-    [--clang &lt;path&gt;] [--lld &lt;path&gt;] [--rustc &lt;path&gt;]
-    [--show] [--run [the options of terse run]...]
-terse build --write-lib &lt;dir&gt;</pre>
+<pre class="sh"><span class=k>terse</span> new &lt;file.c|<span class=k>file.rs</span>|<span class=k>file.S</span>&gt;
+<span class=k>terse</span> build &lt;source&gt;... [-o &lt;out.terse&gt;] [--title &lt;t&gt;]
+    <span class=k>[--ram-pages</span> &lt;n&gt;] [--device &lt;slot:version&gt;]...
+    <span class=k>[--optional</span> &lt;slot:version&gt;]... [--cflag &lt;flag&gt;]...
+    <span class=k>[--clang</span> &lt;path&gt;] [--lld &lt;path&gt;] [--rustc &lt;path&gt;]
+    <span class=k>[--show]</span> [--run [the options of terse run]...]
+<span class=k>terse</span> build --write-lib &lt;dir&gt;</pre>
 <ul>
 <li><code>terse new</code> writes a small commented program that prints a line on the terminal, waits for each frame and exits on Esc, in C, Rust or assembly by the extension. It never overwrites a file.</li>
 <li>Sources: the extension chooses the language. <code>.c</code> is C; <code>.S</code> and <code>.s</code> are assembly (<code>.S</code> goes through the C preprocessor, <code>.s</code> does not); <code>.rs</code> is Rust. Several C and assembly files may be given and are linked together in the order given. A Rust program is one <code>.rs</code> file, the crate root; its modules (<code>mod x;</code>) are found from it as rustc finds them.</li>
@@ -44,12 +44,12 @@ terse build --write-lib &lt;dir&gt;</pre>
     (4 bytes of data, the rest stack), id 54c6bd79...</pre>
 <p>(one line). The same sources and the same compiler give the same image, byte for byte.</p>
 <h2 id="what-it-runs-for-c-and-assembly">What it runs for C and assembly</h2>
-<pre>clang $CFLAGS -I &lt;lib&gt; -c &lt;lib&gt;/crt0.S -o 0.o
-clang $CFLAGS -I &lt;lib&gt; -c hello.c -o 1.o
-clang $CFLAGS -I &lt;lib&gt; -c &lt;lib&gt;/terse.c -o 2.o
-ld.lld -T &lt;lib&gt;/terse.ld --gc-sections 0.o 1.o 2.o \
+<pre class="sh"><span class=k>clang</span> <span class=m>$CFLAGS</span> -I &lt;lib&gt; -c &lt;lib&gt;/crt0.S -o 0.o
+<span class=k>clang</span> <span class=m>$CFLAGS</span> -I &lt;lib&gt; -c hello.c -o 1.o
+<span class=k>clang</span> <span class=m>$CFLAGS</span> -I &lt;lib&gt; -c &lt;lib&gt;/terse.c -o 2.o
+<span class=k>ld.lld</span> -T &lt;lib&gt;/terse.ld --gc-sections 0.o 1.o 2.o \
     -o out.elf
-terse pack --rom rom.bin --title hello --ram-pages 2 \
+<span class=k>terse</span> pack --rom rom.bin --title hello --ram-pages 2 \
     --device 2:0 --device 3:0 -o hello.terse</pre>
 <p><code>crt0.S</code> is compiled only when there is C, and each source in its turn as <code>1.o</code>; <code>rom.bin</code> is the ELF file&#39;s loaded bytes (below). <code>$CFLAGS</code> is</p>
 <pre>--target=riscv32-unknown-elf -march=rv32imc -mabi=ilp32

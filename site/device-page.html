@@ -115,34 +115,34 @@
 <p>Each call costs 4 units; an accepted <code>submit</code> 1 more per 4 bytes, rounded up. Layout is free.</p>
 <h2 id="example">Example</h2>
 <p>A heading, a paragraph with an anchored word and a table. The library has no builder for the table commands, so <code>op</code> appends their bytes: 09h, 2 columns, flags 1 (header), aligns start and end; 0Ah before each cell; 0Bh.</p>
-<pre>#include &quot;terse.h&quot;
-#define T(s) doc_text(s, sizeof(s) - 1)
-static uint8_t doc[1024];
-static void op(const uint8_t *p, uint32_t n) {
-    if (doc_ptr + n &lt;= doc_limit)
-        while (n--) *doc_ptr++ = *p++;
+<pre><span class=m>#include</span> <span class=s>&quot;terse.h&quot;</span>
+<span class=m>#define</span> T(s) doc_text(s, <span class=k>sizeof</span>(s) - <span class=n>1</span>)
+<span class=k>static</span> <span class=t>uint8_t</span> doc[<span class=n>1024</span>];
+<span class=k>static</span> <span class=t>void</span> op(<span class=k>const</span> <span class=t>uint8_t</span> *p, <span class=t>uint32_t</span> n) {
+    <span class=k>if</span> (doc_ptr + n &lt;= doc_limit)
+        <span class=k>while</span> (n--) *doc_ptr++ = *p++;
 }
-static const uint8_t table[] = {9, 2, 1, DOC_START, DOC_END};
-static const uint8_t cell = 0x0A, endt = 0x0B;
-int main(void) {
+<span class=k>static</span> <span class=k>const</span> <span class=t>uint8_t</span> table[] = {<span class=n>9</span>, <span class=n>2</span>, <span class=n>1</span>, DOC_START, DOC_END};
+<span class=k>static</span> <span class=k>const</span> <span class=t>uint8_t</span> cell = <span class=n>0x0A</span>, endt = <span class=n>0x0B</span>;
+<span class=t>int</span> main(<span class=t>void</span>) {
     terse_event e;
-    doc_begin(doc, sizeof doc);
-    doc_size(21); doc_font(DOC_SANS, DOC_BOLD); T(&quot;Hello&quot;);
-    doc_size(15); doc_font(DOC_SANS, 0);
-    doc_paragraph(DOC_START, 0, 10, 0); T(&quot;Press &quot;);
-    doc_anchor(1); doc_colour(120, 170, 255); T(&quot;here&quot;);
-    doc_anchor(0); doc_colour(229, 229, 229); T(&quot; to quit.&quot;);
-    op(table, 5);
-    op(&amp;cell, 1); T(&quot;Key&quot;);  op(&amp;cell, 1); T(&quot;Does&quot;);
-    op(&amp;cell, 1); T(&quot;Esc&quot;);  op(&amp;cell, 1); T(&quot;nothing&quot;);
-    op(&amp;endt, 1);
+    doc_begin(doc, <span class=k>sizeof</span> doc);
+    doc_size(<span class=n>21</span>); doc_font(DOC_SANS, DOC_BOLD); T(<span class=s>&quot;Hello&quot;</span>);
+    doc_size(<span class=n>15</span>); doc_font(DOC_SANS, <span class=n>0</span>);
+    doc_paragraph(DOC_START, <span class=n>0</span>, <span class=n>10</span>, <span class=n>0</span>); T(<span class=s>&quot;Press &quot;</span>);
+    doc_anchor(<span class=n>1</span>); doc_colour(<span class=n>120</span>, <span class=n>170</span>, <span class=n>255</span>); T(<span class=s>&quot;here&quot;</span>);
+    doc_anchor(<span class=n>0</span>); doc_colour(<span class=n>229</span>, <span class=n>229</span>, <span class=n>229</span>); T(<span class=s>&quot; to quit.&quot;</span>);
+    op(table, <span class=n>5</span>);
+    op(&amp;cell, <span class=n>1</span>); T(<span class=s>&quot;Key&quot;</span>);  op(&amp;cell, <span class=n>1</span>); T(<span class=s>&quot;Does&quot;</span>);
+    op(&amp;cell, <span class=n>1</span>); T(<span class=s>&quot;Esc&quot;</span>);  op(&amp;cell, <span class=n>1</span>); T(<span class=s>&quot;nothing&quot;</span>);
+    op(&amp;endt, <span class=n>1</span>);
     doc_end();
-    page_region(64, 0, 512, 480);
+    page_region(<span class=n>64</span>, <span class=n>0</span>, <span class=n>512</span>, <span class=n>480</span>);
     page_submit_doc(doc);
-    for (;;) {
-        while (terse_event_pop(&amp;e) != EV_NONE)
-            if (e.type==EV_PAGE_ANCHOR &amp;&amp; EV_ANCHOR_ID(e)==1)
-                return 0;
+    <span class=k>for</span> (;;) {
+        <span class=k>while</span> (terse_event_pop(&amp;e) != EV_NONE)
+            <span class=k>if</span> (e.type==EV_PAGE_ANCHOR &amp;&amp; EV_ANCHOR_ID(e)==<span class=n>1</span>)
+                <span class=k>return</span> <span class=n>0</span>;
         terse_wait_frame();
     }
 }</pre>

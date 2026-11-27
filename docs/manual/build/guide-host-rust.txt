@@ -14,7 +14,7 @@ A program file (`.terse`) is a 32-byte header, two bytes for each device the pro
 | 10 | 1 | the number of devices, at most 16 |
 | 32 | 2 each | each device: its slot and version (`80h`: optional) |
 
-Bytes 11 to 31 hold a title, which a host does not need. The rest is in [The Terse32 machine](terse:d5582dce5b933ab662643e810c537ba15a1888f126018b878cc7946ccdc9e258), "The image format".
+Bytes 11 to 31 hold a title, which a host does not need. The rest is in [The Terse32 machine](terse:0e51edb20b815c926fe623365bae2c282c9b8193930d50be70974083725df724), "The image format".
 
 ```rust from examples/host/rust/src/image.rs
 use crate::cpu::{Cpu, RAM_BASE, ROM_BASE, SP};
@@ -305,14 +305,14 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 Build all four steps at once:
 
-```
+```sh
 cd examples/host/rust
 cargo build --release
 ```
 
 A program that exits with code 7, `c.li a0, 7`, `addi a7, x0, 106h` and `ecall`, as a file:
 
-```
+```sh
 xxd -r -p > exit.terse <<EOF
 5445525300010a000001000000000000657869740000
 000000000000000000001d459308601073000000
@@ -323,7 +323,7 @@ echo $?
 
 prints `7`. This one adds 100 + 99 + ... + 1 and exits with the sum's low byte:
 
-```
+```sh
 xxd -r -p > sum.terse <<EOF
 544552530001160000010000000000007375
 6d0000000000000000000000000001459302
@@ -337,8 +337,8 @@ prints `186`. The reference gives the same: `terse run exit.terse --frames 1`, t
 
 ## What you have now
 
-A Terse32 processor that runs a program to its end: `cpu.rs` (219 lines), `decode.rs` (183), `image.rs` (54) and `bin/step1.rs` (25). Next, make it keep time: [Make a host in Rust, step 2: frames and the budget](terse:9a62cf9b446261211bf0c1ceaaba1319e5feb5c64e57bddf09b4581b0d93c593).
+A Terse32 processor that runs a program to its end: `cpu.rs` (219 lines), `decode.rs` (183), `image.rs` (54) and `bin/step1.rs` (25). Next, make it keep time: [Make a host in Rust, step 2: frames and the budget](terse:2fbd25ea3e9014c8d717bde4adb105d6178e11f54d46f81d15290d472927ac73).
 
 - The same step in Go: "Make a host in Go, step 1: run a program to its end", the page before this one.
 - Full implementations: `native/core-c/cpu.c` (C) and `crates/terse-core/src/cpu.rs` (the reference).
-- The rules: [The Terse32 machine](terse:d5582dce5b933ab662643e810c537ba15a1888f126018b878cc7946ccdc9e258), sections "CPU", "Memory map", "Reset state", "Stopping and faults", "The image format" and "Calls".
+- The rules: [The Terse32 machine](terse:0e51edb20b815c926fe623365bae2c282c9b8193930d50be70974083725df724), sections "CPU", "Memory map", "Reset state", "Stopping and faults", "The image format" and "Calls".

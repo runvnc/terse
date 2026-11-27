@@ -13,7 +13,7 @@
 <h1 id="running-and-publishing-a-program">Running and publishing a program</h1>
 <p>This article is the reference for what comes after building a program (see &quot;Building a program&quot;): running it headless with scripted input, its state hash, running it in a window, what its work costs, and publishing it in a feed. Below, <code>terse</code> stands for the <code>terse</code> command of this repository (<code>cargo run -p terse-cli --bin terse --</code>, or <code>target/debug/terse</code> after <code>cargo build --workspace</code>).</p>
 <h2 id="running-it-headless">Running it headless</h2>
-<pre>terse run prog.terse --frames 30 --dump</pre>
+<pre class="sh"><span class=k>terse</span> run prog.terse --frames 30 --dump</pre>
 <p>runs the image without a window for 30 frames (or until it stops; at most 36,000) and prints the 80 by 30 grid. Headless, the Unix time is 0, there are no random bytes (<code>random</code> gives zeros), and controllers exist only through the script. <code>--dump-vectors</code> and <code>--dump-page</code> add the vector display&#39;s list and the page as the reference layout lays it out. Content requests complete at the start of the next frame, so runs are reproducible. When the program exits, <code>terse run</code> exits with its code; after a fault it prints <code>terse: fault: &lt;kind&gt; at pc &lt;pc&gt;, address &lt;addr&gt;</code> on stderr and ends itself with SIGTERM.</p>
 <p><code>--events &lt;file&gt;</code> gives it input: one event per line, a frame number, a command and its arguments; blank lines and text after <code>#</code> are ignored (except in <code>text</code>). The events of a frame are delivered in the order written.</p>
 <div class="table"><table>
@@ -32,20 +32,20 @@
 <tr><td><code>pad</code></td><td>n, <code>off</code></td><td>controller n disconnected</td></tr>
 </tbody></table></div>
 <p>A key is a USB HID usage ID (<code>40</code> or <code>0x28</code>) or a name: <code>a</code>-<code>z</code>, <code>0</code>-<code>9</code>, <code>f1</code>-<code>f12</code>, <code>enter</code>, <code>esc</code>, <code>backspace</code>, <code>tab</code>, <code>space</code>, <code>up</code>, <code>down</code>, <code>left</code>, <code>right</code>, <code>home</code>, <code>end</code>, <code>pageup</code>, <code>pagedown</code>, <code>insert</code>, <code>delete</code>. Pad buttons are hexadecimal, the first button byte in bits 0-7 and the second in bits 8-15 (<code>1</code> up, <code>2</code> down, <code>4</code> left, <code>8</code> right, <code>10</code> A, <code>20</code> B, <code>2000</code> Start); sticks are -127 to 127. A cell (column, row) starts at screen unit (column times 8, row times 16).</p>
-<pre># type, press Enter, then quit
-10 text hi
-12 press enter
-20 press esc</pre>
+<pre><span class=c># type, press Enter, then quit</span>
+<span class=n>10</span> <span class=k>text</span> hi
+<span class=n>12</span> <span class=k>press</span> enter
+<span class=n>20</span> <span class=k>press</span> esc</pre>
 <h2 id="the-state-hash">The state hash</h2>
 <p><code>--hash</code> prints the machine&#39;s state hash after the last frame, 64 hex digits; <code>--hash-every N</code> prints <code>&lt;frame&gt; &lt;hash&gt;</code> after every frame whose counter is a multiple of N. The hash covers the machine&#39;s whole state (CPU, RAM, devices), and the machine is deterministic: the same image and the same recorded inputs give the same hashes on every conforming host. Tests record a script and the expected hashes; <code>--save-state</code> and <code>--load-state</code> save and resume a run. See <a href="state.html">The state hash</a>.</p>
 <h2 id="running-it-in-a-window">Running it in a window</h2>
-<pre>cargo run -p terse-host -- prog.terse</pre>
+<pre class="sh"><span class=k>cargo</span> run -p terse-host -- prog.terse</pre>
 <p>runs the image alone in a window at 60 frames a second, with every key (F12 included) going to it. The window closes when the program exits; after a fault it stays open with the fault on the bottom row and in the title. <code>--screenshot out.png --frames 30</code> (with <code>--events</code> if wanted) runs headless and writes a picture instead. <code>terse-host --drive</code> runs it in the window from a script and checks what it shows: <a href="testing.html">Testing a program</a>. <a href="using.html">Using the shell</a> shows the shell, where programs run side by side.</p>
 <h2 id="costs-to-keep-in-mind">Costs to keep in mind</h2>
 <p>An instruction from ROM costs 1 unit, one from RAM 4. A call costs 5 (the <code>ecall</code> and 4) plus 1 per 4 bytes it copies, or 65 if it is answered (it asks a device for its state: <code>get_cursor</code>, <code>get_colours</code>, <code>cells_read</code>, content <code>submit</code>, page <code>locate</code>); <code>write</code> costs 2 per byte, and a clear or scroll command 150. A frame has 125,000 units. Writing a whole row with one <code>write</code> or <code>term_cells_write</code> is far cheaper than a call per character, and building a display list or document once and submitting it costs 1 unit per 4 bytes. The full table is in <a href="charges.html">Charges and limits</a>.</p>
 <h2 id="publishing-it">Publishing it</h2>
 <p>A program published in your feed has an identity, your feed key and its name, that stays the same from version to version:</p>
-<pre>terse feed publish --program prog.terse --name &quot;Tiny tool&quot;</pre>
+<pre class="sh"><span class=k>terse</span> feed publish --program prog.terse --name <span class=s>&quot;Tiny tool&quot;</span></pre>
 <p>checks the image and publishes it as a program entry; it prints <code>seq N program &lt;name&gt; image &lt;id&gt;</code>. The name defaults to the image&#39;s title and must be a display name: 1 to 48 bytes of UTF-8, no control characters, no space at either end. Publishing another image under the same name makes it the current version (the entry with the highest <code>seq</code>). Named records belong to the identity, so a new version keeps the old one&#39;s records (see <a href="content-records.html">Named records</a>). <code>terse key new</code> creates your feed key if you have none.</p>
 <p>Others subscribe to your feed (in the reader: F, then S, paste your key, Enter, then Y). Once their host has caught up with your feed it downloads the current version of each of your programs (images up to 262,208 bytes), and the shell&#39;s launcher lists it under &quot;From your feeds&quot; with your name and short key, marked <code>↓</code> until the image is there. Enter starts it in a tile of its own. An article may also link to it as <code>terse:program/&lt;feed key&gt;/&lt;name&gt;</code>; following such a link asks the shell to open it, and the shell asks the user first. See <a href="content-feeds.html">Feeds</a> and <a href="device-machines.html">The machines device</a>.</p>
 <p>Next: <a href="machine.html">The machine</a>, then the devices, from <a href="device-system.html">The system device</a> and <a href="device-terminal.html">The terminal</a> to <a href="events.html">Events</a>.</p>

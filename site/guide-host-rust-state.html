@@ -14,55 +14,55 @@
 <p>Your host shows what the reference shows. This step proves that it agrees to the last bit, with a yes-or-no test: the state hash. It adds the module <code>state</code> to the crate.</p>
 <h2 id="the-state-serialization">The state serialization</h2>
 <p>Between frames, a machine&#39;s whole state is one string of bytes; its BLAKE3-256 hash is the state hash. Two hosts given the same program and input agree exactly when their hashes agree after every frame.</p>
-<pre>use crate::frames::{Machine, Status};
+<pre><span class=k>use</span> <span class=k>crate</span>::frames::{<span class=t>Machine</span>, <span class=t>Status</span>};
 
-const STATE_TAG: &amp;[u8] = b&quot;terse-state-1&quot;;
-const EMPTY_SYSTEM: usize = 37;
-const ABSENT: u8 = 0;
-const PRESENT: u8 = 1;
-const RUNNING: u8 = 0;
-const EXITED: u8 = 1;
-const FAULTED: u8 = 2;
+<span class=k>const</span> STATE_TAG: &amp;[<span class=t>u8</span>] = <span class=s>b&quot;terse-state-1&quot;</span>;
+<span class=k>const</span> EMPTY_SYSTEM: <span class=t>usize</span> = <span class=n>37</span>;
+<span class=k>const</span> ABSENT: <span class=t>u8</span> = <span class=n>0</span>;
+<span class=k>const</span> PRESENT: <span class=t>u8</span> = <span class=n>1</span>;
+<span class=k>const</span> RUNNING: <span class=t>u8</span> = <span class=n>0</span>;
+<span class=k>const</span> EXITED: <span class=t>u8</span> = <span class=n>1</span>;
+<span class=k>const</span> FAULTED: <span class=t>u8</span> = <span class=n>2</span>;
 
-impl Machine {
-    pub fn state(
-        &amp;self,
-        id: &amp;[u8; 32],
-        grants: &amp;[u8],
-        terminal: Option&lt;&amp;[u8]&gt;,
-    ) -&gt; Vec&lt;u8&gt; {
-        let mut state = STATE_TAG.to_vec();
+<span class=k>impl</span> <span class=t>Machine</span> {
+    <span class=k>pub</span> <span class=k>fn</span> state(
+        &amp;<span class=k>self</span>,
+        id: &amp;[<span class=t>u8</span>; <span class=n>32</span>],
+        grants: &amp;[<span class=t>u8</span>],
+        terminal: <span class=t>Option</span>&lt;&amp;[<span class=t>u8</span>]&gt;,
+    ) -&gt; <span class=t>Vec</span>&lt;<span class=t>u8</span>&gt; {
+        <span class=k>let</span> <span class=k>mut</span> state = STATE_TAG.to_vec();
         state.extend(id);
-        state.extend(self.cpu.pc.to_le_bytes());
-        for x in &amp;self.cpu.x[1..] {
+        state.extend(<span class=k>self</span>.cpu.pc.to_le_bytes());
+        <span class=k>for</span> x <span class=k>in</span> &amp;<span class=k>self</span>.cpu.x[<span class=n>1</span>..] {
             state.extend(x.to_le_bytes());
         }
-        state.extend(self.frame.to_le_bytes());
-        let (stopped, code, fault) = match self.status {
-            Status::Running =&gt; (RUNNING, 0, None),
-            Status::Exited(code) =&gt; (EXITED, code, None),
-            Status::Faulted(fault) =&gt; (FAULTED, 0, Some(fault)),
+        state.extend(<span class=k>self</span>.frame.to_le_bytes());
+        <span class=k>let</span> (stopped, code, fault) = <span class=k>match</span> <span class=k>self</span>.status {
+            <span class=t>Status</span>::<span class=t>Running</span> =&gt; (RUNNING, <span class=n>0</span>, <span class=t>None</span>),
+            <span class=t>Status</span>::<span class=t>Exited</span>(code) =&gt; (EXITED, code, <span class=t>None</span>),
+            <span class=t>Status</span>::<span class=t>Faulted</span>(fault) =&gt; (FAULTED, <span class=n>0</span>, <span class=t>Some</span>(fault)),
         };
-        let kind = fault.map_or(0, |f| f.kind as u8);
+        <span class=k>let</span> kind = fault.map_or(<span class=n>0</span>, |f| f.kind <span class=k>as</span> <span class=t>u8</span>);
         state.extend([stopped, code, kind]);
-        for value in [
-            fault.map_or(0, |f| f.encoding),
-            fault.map_or(0, |_| self.cpu.pc),
-            fault.map_or(0, |f| f.address),
-            self.budget as u32,
-            self.cpu.ram.len() as u32,
+        <span class=k>for</span> value <span class=k>in</span> [
+            fault.map_or(<span class=n>0</span>, |f| f.encoding),
+            fault.map_or(<span class=n>0</span>, |_| <span class=k>self</span>.cpu.pc),
+            fault.map_or(<span class=n>0</span>, |f| f.address),
+            <span class=k>self</span>.budget <span class=k>as</span> <span class=t>u32</span>,
+            <span class=k>self</span>.cpu.ram.len() <span class=k>as</span> <span class=t>u32</span>,
         ] {
             state.extend(value.to_le_bytes());
         }
-        state.extend(&amp;self.cpu.ram);
+        state.extend(&amp;<span class=k>self</span>.cpu.ram);
         state.extend(grants);
-        state.extend([0; EMPTY_SYSTEM]);
-        match terminal {
-            Some(section) =&gt; {
+        state.extend([<span class=n>0</span>; EMPTY_SYSTEM]);
+        <span class=k>match</span> terminal {
+            <span class=t>Some</span>(section) =&gt; {
                 state.push(PRESENT);
                 state.extend(section);
             }
-            None =&gt; state.push(ABSENT),
+            <span class=t>None</span> =&gt; state.push(ABSENT),
         }
         state.extend([ABSENT, ABSENT, ABSENT]);
         state
@@ -70,77 +70,77 @@ impl Machine {
 }</pre>
 <p>In order: <code>terse-state-1</code> and the image ID; <code>pc</code> and the registers <code>x1</code> to <code>x31</code>; the frame counter, how the machine stopped (0 running, 1 exited, 2 faulted), the exit code, and a fault&#39;s kind, encoding, <code>pc</code> and address; the budget carried into the next frame; the RAM; one byte per optional device, 1 if granted. Then the System device, <code>EMPTY_SYSTEM</code>: 37 zero bytes here (the time, 4 bytes, 0 in a test; an event count of 0, 1 byte; four controllers of 8 bytes, none connected). Then each device&#39;s section in a fixed order, from its driver&#39;s STATE: the terminal&#39;s after <code>PRESENT</code> (1), or <code>ABSENT</code> (0) for a machine without one; then a 0 each for the vector display, content and the page, which this host never has.</p>
 <h2 id="the-program">The program</h2>
-<pre>use host::bus::{Bus, TERMINAL};
-use host::cpu::UNKNOWN_CALL;
-use host::frames::{BASE_CHARGE, Machine, Status};
-use host::image::load;
-use std::error::Error;
-use std::process::exit;
+<pre><span class=k>use</span> host::bus::{<span class=t>Bus</span>, TERMINAL};
+<span class=k>use</span> host::cpu::UNKNOWN_CALL;
+<span class=k>use</span> host::frames::{BASE_CHARGE, <span class=t>Machine</span>, <span class=t>Status</span>};
+<span class=k>use</span> host::image::load;
+<span class=k>use</span> std::error::<span class=t>Error</span>;
+<span class=k>use</span> std::process::exit;
 
-fn main() -&gt; Result&lt;(), Box&lt;dyn Error&gt;&gt; {
-    let args: Vec&lt;String&gt; = std::env::args().collect();
-    let file = std::fs::read(&amp;args[1])?;
-    let frames: u32 = args[2].parse()?;
-    let (cpu, devices) = load(&amp;file)?;
-    let mut bus = (!devices.is_empty())
-        .then(|| Bus::start(&amp;args[3], &amp;cpu, &amp;file, &amp;devices));
-    let mut m = Machine::new(cpu);
-    while m.running() &amp;&amp; m.frame &lt; frames {
-        if let Some(bus) = &amp;mut bus {
+<span class=k>fn</span> main() -&gt; <span class=t>Result</span>&lt;(), <span class=t>Box</span>&lt;<span class=k>dyn</span> <span class=t>Error</span>&gt;&gt; {
+    <span class=k>let</span> args: <span class=t>Vec</span>&lt;<span class=t>String</span>&gt; = std::env::args().collect();
+    <span class=k>let</span> file = std::fs::read(&amp;args[<span class=n>1</span>])?;
+    <span class=k>let</span> frames: <span class=t>u32</span> = args[<span class=n>2</span>].parse()?;
+    <span class=k>let</span> (cpu, devices) = load(&amp;file)?;
+    <span class=k>let</span> <span class=k>mut</span> bus = (!devices.is_empty())
+        .then(|| <span class=t>Bus</span>::start(&amp;args[<span class=n>3</span>], &amp;cpu, &amp;file, &amp;devices));
+    <span class=k>let</span> <span class=k>mut</span> m = <span class=t>Machine</span>::new(cpu);
+    <span class=k>while</span> m.running() &amp;&amp; m.frame &lt; frames {
+        <span class=k>if</span> <span class=k>let</span> <span class=t>Some</span>(bus) = &amp;<span class=k>mut</span> bus {
             m.budget -= bus.begin(m.frame);
         }
         m.run_frame(|cpu, budget, slot, function| {
-            let Some(bus) = &amp;mut bus else {
-                return (UNKNOWN_CALL, BASE_CHARGE);
+            <span class=k>let</span> <span class=t>Some</span>(bus) = &amp;<span class=k>mut</span> bus <span class=k>else</span> {
+                <span class=k>return</span> (UNKNOWN_CALL, BASE_CHARGE);
             };
             bus.call(cpu, budget, slot, function)
         });
-        if let Some(bus) = &amp;mut bus {
+        <span class=k>if</span> <span class=k>let</span> <span class=t>Some</span>(bus) = &amp;<span class=k>mut</span> bus {
             bus.end(m.frame, !m.running());
         }
     }
-    let (grants, terminal) = match bus {
-        Some(mut bus) =&gt; {
-            let terminal = bus.state(TERMINAL);
-            let grants = std::mem::take(&amp;mut bus.grants);
+    <span class=k>let</span> (grants, terminal) = <span class=k>match</span> bus {
+        <span class=t>Some</span>(<span class=k>mut</span> bus) =&gt; {
+            <span class=k>let</span> terminal = bus.state(TERMINAL);
+            <span class=k>let</span> grants = std::mem::take(&amp;<span class=k>mut</span> bus.grants);
             bus.close();
-            (grants, Some(terminal))
+            (grants, <span class=t>Some</span>(terminal))
         }
-        None =&gt; (Vec::new(), None),
+        <span class=t>None</span> =&gt; (<span class=t>Vec</span>::new(), <span class=t>None</span>),
     };
-    let id = blake3::hash(&amp;file);
-    let terminal = terminal.as_deref();
-    let state = m.state(id.as_bytes(), &amp;grants, terminal);
-    println!(&quot;{}&quot;, blake3::hash(&amp;state));
-    match m.status {
-        Status::Faulted(fault) =&gt; {
-            eprintln!(&quot;{fault}&quot;);
-            exit(1)
+    <span class=k>let</span> id = blake3::hash(&amp;file);
+    <span class=k>let</span> terminal = terminal.as_deref();
+    <span class=k>let</span> state = m.state(id.as_bytes(), &amp;grants, terminal);
+    <span class=m>println!</span>(<span class=s>&quot;{}&quot;</span>, blake3::hash(&amp;state));
+    <span class=k>match</span> m.status {
+        <span class=t>Status</span>::<span class=t>Faulted</span>(fault) =&gt; {
+            <span class=m>eprintln!</span>(<span class=s>&quot;{fault}&quot;</span>);
+            exit(<span class=n>1</span>)
         }
-        Status::Exited(code) =&gt; exit(code as i32),
-        Status::Running =&gt; Ok(()),
+        <span class=t>Status</span>::<span class=t>Exited</span>(code) =&gt; exit(code <span class=k>as</span> <span class=t>i32</span>),
+        <span class=t>Status</span>::<span class=t>Running</span> =&gt; <span class=t>Ok</span>(()),
     }
 }</pre>
 <p>It starts the driver only for a program that lists devices, and prints the hash after the last frame.</p>
 <h2 id="check-it">Check it</h2>
 <p>From <code>examples/host/rust</code>, after <code>cargo build --release</code>, with step 1&#39;s <code>exit.terse</code>:</p>
-<pre>target/release/step4 exit.terse 0
-target/release/step4 exit.terse 1</pre>
+<pre class="sh"><span class=k>target/release/step4</span> exit.terse 0
+<span class=k>target/release/step4</span> exit.terse 1</pre>
 <p>prints the hash at reset, then after the frame in which it exits:</p>
 <pre>9cbfa0da982561dd1c5dbaf1d5fde2121dee78c097d754aa0c2a350584bbeb5a
 3272a879392d8179997dc398726430bf92bbd413b89653be8c9af4472656fe9b</pre>
 <p>the two STATE.md section 3 gives. And <code>hello</code> after 30 frames:</p>
-<pre>target/release/step4 ../../../programs/hello/hello.terse 30 \
+<pre class="sh"><span class=k>target/release/step4</span> ../../../programs/hello/hello.terse 30 \
     ../../../target/release/terse-dev-terminal</pre>
 <pre>819432152b38626f8fc54b43f50d5d4c501dc99e6904315b61dc78b796c611e2</pre>
 <p>which is what <code>terse run programs/hello/hello.terse --frames 30 --hash</code> prints. A program that faults must agree too: <code>native/core-c/tests</code> has one for each kind of fault, and the sources&#39; tests compare their hashes with the reference&#39;s.</p>
 <p>Random programs find what the tests do not. <code>native/core-c/tests/fuzz.py</code> writes them: random 16-bit and 32-bit encodings, many of them faulting. This prints the name of any whose hash after 3 frames is not the reference&#39;s, and with this host prints nothing:</p>
-<pre>python3 ../../../native/core-c/tests/fuzz.py fuzz 200
-for f in fuzz/*.terse; do
-    a=$(target/release/step4 $f 3 2&gt;/dev/null)
-    b=$(terse run $f --frames 3 --hash 2&gt;/dev/null)
-    [ &quot;$a&quot; = &quot;$b&quot; ] || echo $f
-done</pre>
+<pre class="sh"><span class=k>python3</span> ../../../native/core-c/tests/fuzz.py fuzz 200
+<span class=k>for</span> f <span class=k>in</span> fuzz/*.terse; <span class=k>do</span>
+    <span class=m>a</span>=<span class=m>$(</span><span class=k>target/release/step4</span> <span class=m>$f</span> 3 2&gt;/dev/null)
+    <span class=m>b</span>=<span class=m>$(</span><span class=k>terse</span> run <span class=m>$f</span> --frames 3 --hash 2&gt;/dev/null)
+    <span class=k>[</span> <span class=s>&quot;$a&quot;</span> = <span class=s>&quot;$b&quot;</span> ] || <span class=k>echo</span> <span class=m>$f</span>
+<span class=k>done</span></pre>
 <h2 id="what-is-left-out">What is left out</h2>
 <p>This host runs <code>hello</code> and proves it, nothing more. The rest of a complete host, in the order to add it:</p>
 <ul>

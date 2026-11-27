@@ -16,10 +16,10 @@
 <p>A report covers one host build over a period of days (30 by default). It names the host and each device build it used, and says how many runs and frames there were, how many frames were late and why (blamed on a part, the computer busy, memory, or spread), which parts were warned about or halted, the start-up times, memory, and the hardware check. It describes the computer coarsely: operating system, architecture, number of cores, memory in whole GiB, the renderer and the CPU model. It holds no names, paths, network addresses or serial numbers, and no program IDs unless you ask for them, since they would say what you run. If you made a <code>terse perf</code> run, its results are added.</p>
 <p>It is a document of the <code>reports</code> format, plain text after a short header, at most 8,192 bytes (usually about one).</p>
 <h2 id="making-and-checking-one">Making and checking one</h2>
-<pre>terse perf report              # prints the report
-terse perf report --run        # also runs terse perf
-terse perf report --out r.doc  # and writes it to a file
-terse perf report --check r.doc</pre>
+<pre class="sh"><span class=k>terse</span> perf report              <span class=c># prints the report</span>
+<span class=k>terse</span> perf report --run        <span class=c># also runs terse perf</span>
+<span class=k>terse</span> perf report --out r.doc  <span class=c># and writes it to a file</span>
+<span class=k>terse</span> perf report --check r.doc</pre>
 <p>The report is printed in full: what you see is exactly what would be published. <code>--days</code> and <code>--to</code> set the period, <code>--host</code> the host build, <code>--programs 3</code> adds the three programs most often running when a frame was blamed.</p>
 <h2 id="publishing-one">Publishing one</h2>
 <p><code>terse perf report --publish</code> prints the report, then asks. Before you answer, know that:</p>

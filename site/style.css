@@ -3,11 +3,14 @@
   color-scheme: light dark;
   --bg: #fbfaf7; --fg: #1f1f1d; --mute: #6b6a66; --link: #1d5aa6;
   --rule: #dcdad3; --box: #f1efe9; --head: #e9e6de;
+  /* Code colours: each at least 4.5:1 against --box. */
+  --hc: #6b6a66; --hs: #3a6b1f; --hn: #9a4800; --hk: #7b3294; --ht: #1c6b70; --hm: #a3303d;
 }
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #18191b; --fg: #e3e1db; --mute: #9b9993; --link: #8dbbf2;
     --rule: #3b3c40; --box: #222326; --head: #2b2c30;
+    --hc: #9b9993; --hs: #a8cc8c; --hn: #e6b07a; --hk: #cfa2ee; --ht: #7cc7c4; --hm: #f0919b;
   }
 }
 html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
@@ -34,6 +37,15 @@ code { background: var(--box); padding: .05em .3em; border-radius: 3px; }
 code.addr { overflow-wrap: anywhere; }
 pre { background: var(--box); padding: .75em 1em; border-radius: 4px; overflow-x: auto; line-height: 1.45; }
 pre code { background: none; padding: 0; }
+/* Code colouring (by the fence's language word): comments are also
+   italic, and command lines have a rule at their start. */
+pre .c { color: var(--hc); font-style: italic; }
+pre .s { color: var(--hs); }
+pre .n { color: var(--hn); }
+pre .k { color: var(--hk); }
+pre .t { color: var(--ht); }
+pre .m { color: var(--hm); }
+pre.sh { border-left: 3px solid var(--mute); padding-left: calc(1em - 3px); }
 figure { text-align: center; }
 figure svg { max-width: 100%; height: auto; vertical-align: top; }
 .table { overflow-x: auto; }

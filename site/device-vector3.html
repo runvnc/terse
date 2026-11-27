@@ -88,34 +88,34 @@
 <p>Where lines are cut at the near plane, how much one list may draw, how the display is shown and what it charges and keeps in the machine&#39;s state are in <a href="device-vector3-caps.html">caps, presentation and state</a>.</p>
 <h2 id="example">Example</h2>
 <p>A square that turns about its vertical axis, in front of a circle it partly hides:</p>
-<pre>#include &quot;terse.h&quot;
+<pre><span class=m>#include</span> <span class=s>&quot;terse.h&quot;</span>
 
-#define U V3_UNIT
-static uint8_t list[256];
-static const int16_t sq[4][3] = {
-    {-60 * U, -60 * U, 0}, {60 * U, -60 * U, 0},
-    {60 * U, 60 * U, 0}, {-60 * U, 60 * U, 0},
+<span class=m>#define</span> U V3_UNIT
+<span class=k>static</span> <span class=t>uint8_t</span> list[<span class=n>256</span>];
+<span class=k>static</span> <span class=k>const</span> <span class=t>int16_t</span> sq[<span class=n>4</span>][<span class=n>3</span>] = {
+    {-<span class=n>60</span> * U, -<span class=n>60</span> * U, <span class=n>0</span>}, {<span class=n>60</span> * U, -<span class=n>60</span> * U, <span class=n>0</span>},
+    {<span class=n>60</span> * U, <span class=n>60</span> * U, <span class=n>0</span>}, {-<span class=n>60</span> * U, <span class=n>60</span> * U, <span class=n>0</span>},
 };
 
-int main(void)
+<span class=t>int</span> main(<span class=t>void</span>)
 {
-    for (uint16_t a = 0;; a += 256) {
+    <span class=k>for</span> (<span class=t>uint16_t</span> a = <span class=n>0</span>;; a += <span class=n>256</span>) {
         v3_begin(list);
         v3_push();
-        v3_translate(320 * U, 240 * U, 0);
-        v3_move(0, 0, 200 * U);         /* behind the glass */
-        v3_colour(255, 120, 0, 255);
-        v3_circle(100 * U);
+        v3_translate(<span class=n>320</span> * U, <span class=n>240</span> * U, <span class=n>0</span>);
+        v3_move(<span class=n>0</span>, <span class=n>0</span>, <span class=n>200</span> * U);         <span class=c>/* behind the glass */</span>
+        v3_colour(<span class=n>255</span>, <span class=n>120</span>, <span class=n>0</span>, <span class=n>255</span>);
+        v3_circle(<span class=n>100</span> * U);
         v3_rotate(V3_AXIS_Y, a);
-        v3_face4(sq[0], sq[1], sq[2], sq[3]);
-        v3_colour(80, 220, 255, 255);
-        v3_width(24);
-        v3_move(sq[3][0], sq[3][1], sq[3][2]);
-        for (int i = 0; i &lt; 4; i++)
-            v3_line(sq[i][0], sq[i][1], sq[i][2]);
+        v3_face4(sq[<span class=n>0</span>], sq[<span class=n>1</span>], sq[<span class=n>2</span>], sq[<span class=n>3</span>]);
+        v3_colour(<span class=n>80</span>, <span class=n>220</span>, <span class=n>255</span>, <span class=n>255</span>);
+        v3_width(<span class=n>24</span>);
+        v3_move(sq[<span class=n>3</span>][<span class=n>0</span>], sq[<span class=n>3</span>][<span class=n>1</span>], sq[<span class=n>3</span>][<span class=n>2</span>]);
+        <span class=k>for</span> (<span class=t>int</span> i = <span class=n>0</span>; i &lt; <span class=n>4</span>; i++)
+            v3_line(sq[i][<span class=n>0</span>], sq[i][<span class=n>1</span>], sq[i][<span class=n>2</span>]);
         v3_pop();
         v3_end();
-        v3_submit_list(list);           /* VEC_DONE */
+        v3_submit_list(list);           <span class=c>/* VEC_DONE */</span>
         terse_wait_frame();
     }
 }</pre>

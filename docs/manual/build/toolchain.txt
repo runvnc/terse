@@ -1,6 +1,6 @@
 # Building a program
 
-A Terse32 program is one image file, `.terse`: a 32-byte header (SPEC §image) and the ROM, RV32IMC machine code and constants loaded at `0001_0000h`. RAM starts at `0010_0000h`; devices are reached with `ecall`. `terse build` makes an image from C, assembly or Rust. This article is the reference for it: what you need, every option, what it runs and why each flag is there, and the devices an image lists. [The C library](terse:707989f5de01d06effb1abfc919fbaa485d7230b2bd3f886e4ed59ec89953974) describes the library and the hello program, [Rust programs](terse:3efa338181143c256c79b66dc9493a9c4e6a67372c326eaf7501bdf70415f5ff) the Rust runtime, and [Building by hand, and other languages](terse:5ea75653cd08b09f87f6bcb108e6db99b3d770f910fb5cd6a1847464f43cfa91) the same build without `terse build` and what any other compiler must do.
+A Terse32 program is one image file, `.terse`: a 32-byte header (SPEC §image) and the ROM, RV32IMC machine code and constants loaded at `0001_0000h`. RAM starts at `0010_0000h`; devices are reached with `ecall`. `terse build` makes an image from C, assembly or Rust. This article is the reference for it: what you need, every option, what it runs and why each flag is there, and the devices an image lists. [The C library](terse:1b19c2ce0a040cc5cb6f7a0e95f0468cc3ab3112d70f461957f874880bbd6b97) describes the library and the hello program, [Rust programs](terse:2f9625c44ad014264f7202aeb100e736789282efcf6e66f7d39432da0b99070c) the Rust runtime, and [Building by hand, and other languages](terse:5d46fbe262d42befe2fc8f62c8abcec66ff1a385bc0b23a60ca96dc2b7b6d4c0) the same build without `terse build` and what any other compiler must do.
 
 ## What you need
 
@@ -11,7 +11,7 @@ Nothing else. The C library, the start-up code, the linker script and the Rust r
 
 ## The commands
 
-```
+```sh
 terse new <file.c|file.rs|file.S>
 terse build <source>... [-o <out.terse>] [--title <t>]
     [--ram-pages <n>] [--device <slot:version>]...
@@ -35,7 +35,7 @@ terse build --write-lib <dir>
 
 `terse build` prints the image's size, its RAM and its ID on standard error:
 
-```
+```text
 hello.terse: 386 bytes (ROM 350), RAM 2 pages
     (4 bytes of data, the rest stack), id 54c6bd79...
 ```
@@ -44,7 +44,7 @@ hello.terse: 386 bytes (ROM 350), RAM 2 pages
 
 ## What it runs for C and assembly
 
-```
+```sh
 clang $CFLAGS -I <lib> -c <lib>/crt0.S -o 0.o
 clang $CFLAGS -I <lib> -c hello.c -o 1.o
 clang $CFLAGS -I <lib> -c <lib>/terse.c -o 2.o
@@ -56,7 +56,7 @@ terse pack --rom rom.bin --title hello --ram-pages 2 \
 
 `crt0.S` is compiled only when there is C, and each source in its turn as `1.o`; `rom.bin` is the ELF file's loaded bytes (below). `$CFLAGS` is
 
-```
+```text
 --target=riscv32-unknown-elf -march=rv32imc -mabi=ilp32
 -Os -ffreestanding -nostdlib -fno-builtin
 -ffunction-sections -fdata-sections
@@ -82,7 +82,7 @@ crt0.S comes first and terse.c last. `crt0.S` holds `_start`, in the section `.t
 
 ## The linker script, terse.ld
 
-```
+```text
 ROM (rx) : ORIGIN = 0x00010000, LENGTH = 256K
 RAM (rw) : ORIGIN = 0x00100000, LENGTH = 768K
 .text   : KEEP(*(.text.start)), then *(.text .text.*)  > ROM
@@ -120,4 +120,4 @@ A device the image does not list is absent: its calls return `FFFF_FFFFh`. A hos
 
 A program that prints characters outside the basic repertoire (ASCII, Latin-1, dashes, quotes, `•`, `…`, `−`, box drawing and blocks) lists device 10, full text: `--optional 10:0` if a placeholder box will do on a host without it, `--device 10:0` if not (see the terminal's article). Full text promises the full repertoire (Latin, Greek, Cyrillic, punctuation and common symbols); other scripts show only where the user added a font. A program meant to run on every host requires only the program profile, devices 2 and 3 (`terse run --profile program` runs it with exactly those), and lists the rest as optional. `terse info` shows both lists.
 
-Next: [The C library](terse:707989f5de01d06effb1abfc919fbaa485d7230b2bd3f886e4ed59ec89953974).
+Next: [The C library](terse:1b19c2ce0a040cc5cb6f7a0e95f0468cc3ab3112d70f461957f874880bbd6b97).

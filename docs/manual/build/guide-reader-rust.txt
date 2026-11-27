@@ -8,7 +8,7 @@ The program is in the Tersenet sources, in `examples/reader/rust`, so you can ru
 
 This is `examples/reader/hello.txt`:
 
-```
+```article
 # Hello
 
 My first article. It has a heading, and this paragraph,
@@ -27,14 +27,14 @@ A line that starts with `# ` is a heading, and one that starts with `## ` a subh
 
 `src/lib.rs` lists the library's modules, this step's and the next:
 
-```
+```rust
 pub mod article;
 pub mod relay;
 ```
 
 `src/article.rs` shows an article:
 
-```
+```rust
 const WIDTH: usize = 68;
 
 pub fn show(text: &[u8]) {
@@ -101,7 +101,7 @@ pub fn visible(text: &str) -> String {
 
 `src/bin/show.rs` is the program:
 
-```
+```rust
 // Step 1: show an article from a file.
 fn main() -> std::io::Result<()> {
     let args: Vec<String> = std::env::args().collect();
@@ -126,14 +126,14 @@ Then it reads the article a line at a time, with an empty line added at the end 
 
 Run it:
 
-```
+```sh
 cd examples/reader/rust
 cargo run -q --bin show ../hello.txt
 ```
 
 The first time, Cargo also downloads and builds the libraries that steps 2 and 3 use. It prints:
 
-```
+```text
 Hello
 =====
 
@@ -152,10 +152,10 @@ be the lines written.
 
 Everything else in the article format is shown as plain text: a list item, a table row, a preformatted line or a fence becomes part of a paragraph as written, and links and code spans appear as the text they are made of.
 
-For an article of headings and paragraphs it is correct: the test `crates/terse-cli/tests/reader_examples.rs` runs it on every article of `vectors/articles` made only of those, and compares with what the reference reader finds in each. The rest of the format is in [Writing an article](terse:2c34635be0d3910e4131c8f41559778e0e4beea2e3e0e8dd2a5a20f080752eda). In the reference implementation, `crates/terse-net/src/article_parse.rs` reads every construct, and the reference reader, `programs/reader`, shows them all.
+For an article of headings and paragraphs it is correct: the test `crates/terse-cli/tests/reader_examples.rs` runs it on every article of `vectors/articles` made only of those, and compares with what the reference reader finds in each. The rest of the format is in [Writing an article](terse:50a1ba3a4f8c7ad968942e25597419478e8fd33e6fe39a1696fbee4fcf37fe8c). In the reference implementation, `crates/terse-net/src/article_parse.rs` reads every construct, and the reference reader, `programs/reader`, shows them all.
 
 ## What you have now
 
 A Rust program of 70 lines that shows the headings and paragraphs of any Tersenet article file.
 
-Next: [Make a reader in Rust, step 2: fetch an article](terse:8abb9aa09e8ab137bfdb870b987aba9799ea53ec6ad9577413986473819fc5a4).
+Next: [Make a reader in Rust, step 2: fetch an article](terse:ad6a41ccc23976dd1831bce5eaca99d738849f1e12896ec158cb045f6c1dfad6).

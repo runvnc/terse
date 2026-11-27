@@ -15,12 +15,12 @@
 <p>The program is in the Tersenet sources, in <code>examples/reader/go</code>, so you can run it before you read it. You need Go 1.24 or later.</p>
 <h2 id="an-article">An article</h2>
 <p>This is <code>examples/reader/hello.txt</code>:</p>
-<pre># Hello
+<pre><span class=k># Hello</span>
 
 My first article. It has a heading, and this paragraph,
 which is written on two lines.
 
-## A subheading
+<span class=k>## A subheading</span>
 
 A reader joins the lines of a paragraph into one,
 then wraps it again to the width of its own column,
@@ -28,97 +28,97 @@ so the lines you see may not be the lines written.</pre>
 <p>A line that starts with <code># </code> is a heading, and one that starts with <code>## </code> a subheading. The other lines are paragraphs: blank lines separate them, and the lines of one paragraph are joined with spaces, then wrapped to the reader&#39;s width. That is all this step shows.</p>
 <h2 id="the-code">The code</h2>
 <p><code>article/article.go</code> shows an article:</p>
-<pre>package article
+<pre><span class=k>package</span> article
 
-import (
-    &quot;fmt&quot;
-    &quot;strings&quot;
-    &quot;unicode&quot;
-    &quot;unicode/utf8&quot;
+<span class=k>import</span> (
+    <span class=s>&quot;fmt&quot;</span>
+    <span class=s>&quot;strings&quot;</span>
+    <span class=s>&quot;unicode&quot;</span>
+    <span class=s>&quot;unicode/utf8&quot;</span>
 )
 
-const width = 68
+<span class=k>const</span> width = <span class=n>68</span>
 
-func Show(text []byte) {
-    s := strings.ToValidUTF8(string(text), &quot;\uFFFD&quot;)
-    s = strings.TrimPrefix(s, &quot;\uFEFF&quot;)
-    var paragraph []string
-    end := func() {
-        if paragraph != nil {
-            block(strings.Join(paragraph, &quot; &quot;), &quot;&quot;)
-            paragraph = nil
+<span class=k>func</span> Show(text []<span class=t>byte</span>) {
+    s := strings.ToValidUTF8(<span class=t>string</span>(text), <span class=s>&quot;\uFFFD&quot;</span>)
+    s = strings.TrimPrefix(s, <span class=s>&quot;\uFEFF&quot;</span>)
+    <span class=k>var</span> paragraph []<span class=t>string</span>
+    end := <span class=k>func</span>() {
+        <span class=k>if</span> paragraph != <span class=k>nil</span> {
+            block(strings.Join(paragraph, <span class=s>&quot; &quot;</span>), <span class=s>&quot;&quot;</span>)
+            paragraph = <span class=k>nil</span>
         }
     }
-    for _, line := range strings.Split(s, &quot;\n&quot;) {
-        switch {
-        case strings.Trim(line, &quot; \t\r&quot;) == &quot;&quot;:
+    <span class=k>for</span> _, line := <span class=k>range</span> strings.Split(s, <span class=s>&quot;\n&quot;</span>) {
+        <span class=k>switch</span> {
+        <span class=k>case</span> strings.Trim(line, <span class=s>&quot; \t\r&quot;</span>) == <span class=s>&quot;&quot;</span>:
             end()
-        case strings.HasPrefix(line, &quot;# &quot;):
+        <span class=k>case</span> strings.HasPrefix(line, <span class=s>&quot;# &quot;</span>):
             end()
-            block(line[2:], &quot;=&quot;)
-        case strings.HasPrefix(line, &quot;## &quot;):
+            block(line[<span class=n>2</span>:], <span class=s>&quot;=&quot;</span>)
+        <span class=k>case</span> strings.HasPrefix(line, <span class=s>&quot;## &quot;</span>):
             end()
-            block(line[3:], &quot;-&quot;)
-        default:
+            block(line[<span class=n>3</span>:], <span class=s>&quot;-&quot;</span>)
+        <span class=k>default</span>:
             paragraph = append(paragraph, line)
         }
     }
     end()
 }
 
-func block(text, rule string) {
+<span class=k>func</span> block(text, rule <span class=t>string</span>) {
     lines := wrap(text)
-    if rule != &quot;&quot; {
-        n := utf8.RuneCountInString(strings.Join(lines, &quot; &quot;))
+    <span class=k>if</span> rule != <span class=s>&quot;&quot;</span> {
+        n := utf8.RuneCountInString(strings.Join(lines, <span class=s>&quot; &quot;</span>))
         underline := strings.Repeat(rule, min(n, width))
         lines = append(lines, underline)
     }
-    fmt.Printf(&quot;%s\n\n&quot;, strings.Join(lines, &quot;\n&quot;))
+    fmt.Printf(<span class=s>&quot;%s\n\n&quot;</span>, strings.Join(lines, <span class=s>&quot;\n&quot;</span>))
 }
 
-func wrap(text string) []string {
-    var lines []string
-    line := &quot;&quot;
-    for _, word := range strings.Split(Visible(text), &quot; &quot;) {
-        switch {
-        case word == &quot;&quot;:
-        case line == &quot;&quot;:
+<span class=k>func</span> wrap(text <span class=t>string</span>) []<span class=t>string</span> {
+    <span class=k>var</span> lines []<span class=t>string</span>
+    line := <span class=s>&quot;&quot;</span>
+    <span class=k>for</span> _, word := <span class=k>range</span> strings.Split(Visible(text), <span class=s>&quot; &quot;</span>) {
+        <span class=k>switch</span> {
+        <span class=k>case</span> word == <span class=s>&quot;&quot;</span>:
+        <span class=k>case</span> line == <span class=s>&quot;&quot;</span>:
             line = word
-        case utf8.RuneCountInString(line+&quot; &quot;+word) &gt; width:
+        <span class=k>case</span> utf8.RuneCountInString(line+<span class=s>&quot; &quot;</span>+word) &gt; width:
             lines = append(lines, line)
             line = word
-        default:
-            line += &quot; &quot; + word
+        <span class=k>default</span>:
+            line += <span class=s>&quot; &quot;</span> + word
         }
     }
-    return append(lines, line)
+    <span class=k>return</span> append(lines, line)
 }
 
-func Visible(text string) string {
-    return strings.Map(func(r rune) rune {
-        switch {
-        case r == &#39;\t&#39; || r == &#39;\r&#39;:
-            return &#39; &#39;
-        case unicode.IsControl(r):
-            return -1
+<span class=k>func</span> Visible(text <span class=t>string</span>) <span class=t>string</span> {
+    <span class=k>return</span> strings.Map(<span class=k>func</span>(r <span class=t>rune</span>) <span class=t>rune</span> {
+        <span class=k>switch</span> {
+        <span class=k>case</span> r == <span class=s>&#39;\t&#39;</span> || r == <span class=s>&#39;\r&#39;</span>:
+            <span class=k>return</span> <span class=s>&#39; &#39;</span>
+        <span class=k>case</span> unicode.IsControl(r):
+            <span class=k>return</span> -<span class=n>1</span>
         }
-        return r
+        <span class=k>return</span> r
     }, text)
 }</pre>
 <p><code>show/main.go</code> is the program:</p>
-<pre>// Step 1: show an article from a file.
-package main
+<pre><span class=c>// Step 1: show an article from a file.</span>
+<span class=k>package</span> main
 
-import (
-    &quot;log&quot;
-    &quot;os&quot;
+<span class=k>import</span> (
+    <span class=s>&quot;log&quot;</span>
+    <span class=s>&quot;os&quot;</span>
 
-    &quot;reader/article&quot;
+    <span class=s>&quot;reader/article&quot;</span>
 )
 
-func main() {
-    text, err := os.ReadFile(os.Args[1])
-    if err != nil {
+<span class=k>func</span> main() {
+    text, err := os.ReadFile(os.Args[<span class=n>1</span>])
+    <span class=k>if</span> err != <span class=k>nil</span> {
         log.Fatal(err)
     }
     article.Show(text)
@@ -131,8 +131,8 @@ func main() {
 <p><code>wrap</code> cuts the text into words at spaces and fills lines of up to 68 characters, the column the format recommends for a monospaced reader. A run of spaces becomes one, which the format allows.</p>
 <p><code>Visible</code> is how text is shown: a tab or a carriage return as a space, other control characters not at all.</p>
 <p>Run it:</p>
-<pre>cd examples/reader/go
-go run ./show ../hello.txt</pre>
+<pre class="sh"><span class=k>cd</span> examples/reader/go
+<span class=k>go</span> run ./show ../hello.txt</pre>
 <p>It prints:</p>
 <pre>Hello
 =====

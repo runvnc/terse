@@ -101,13 +101,13 @@ A Screen is in effect only in the list of the shell of a system (the machine wit
 
 ## Caps, presentation and state
 
-Where lines are cut at the near plane, how much one list may draw, how the display is shown and what it charges and keeps in the machine's state are in [caps, presentation and state](terse:00d3c4128fc78fce6dbe7ad99ff7b459b604b2772137b7db6b80620667b09aee).
+Where lines are cut at the near plane, how much one list may draw, how the display is shown and what it charges and keeps in the machine's state are in [caps, presentation and state](terse:25061af8e98a373137fc696e33c663e68420975a1be8ea98a6f3a51b07269916).
 
 ## Example
 
 A square that turns about its vertical axis, in front of a circle it partly hides:
 
-```
+```c
 #include "terse.h"
 
 #define U V3_UNIT

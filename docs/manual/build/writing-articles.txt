@@ -59,7 +59,7 @@ Lists have one level. Ordinary lines after an item continue it, joined as in a p
 
 A line indented by four spaces or a tab starts a preformatted block, which holds it and the indented lines after it. They are shown as written, leading blanks included, in a monospaced face, and never wrapped: the reader's column holds about 64 monospaced characters, and longer lines are cut off.
 
-```
+```text
     for (i = 0; i < 10; i++)
         draw(i);
 ```
@@ -111,7 +111,7 @@ Articles do not link to the web. A web address such as https://example.org is or
 
 Written for real, a bare link to an article (the manual's page on figures), a feed, a feed with a hint, the built-in sketch program, and a link with text to another part of this manual:
 
-terse:fb28ee78da846865555acd99adaf1029514df8eec41928c64f1e4e66c46c5454
+terse:e52720cb0004b8646460878d0fbd4a45b4c7292b15c73e4f1490b76c23dec7a5
 
 terse:feed/0000000000000000000000000000000000000000000000000000000000000000
 
@@ -119,7 +119,7 @@ terse:feed/0000000000000000000000000000000000000000000000000000000000000000@rela
 
 terse:program/0000000000000000000000000000000000000000000000000000000000000000/sketch
 
-Read [the page device](terse:6506e640938fe694f8167c2112510bb3637ab3ca45874d292d0f29b468ec23b1) next.
+Read [the page device](terse:de1a5c4c631e150f29e91006ef5d6d4ee2b93c038ecdd62d0453ea9cb1450487) next.
 
 The source of the last one is:
 
@@ -178,7 +178,7 @@ The panel, a green triangle with a light outline, and a yellow curve. In brief:
 - A command letter may follow a number directly (`L5 5L6 6`), but `fill` and `stroke` must start the path or follow a blank or comma: `L5 5fill #f00` is malformed.
 - A figure has no text: explain it in the prose or a table after it.
 
-Paths are filled with the non-zero rule, then stroked with round joins and ends, later ones over earlier ones. Anything malformed, or a missing closing line, shows the figure as its source text, which is why a figure still reads as text where it cannot be drawn. This reader's column is 512 units, so a unit is one screen unit; it shrinks a figure wider than the column to fit, uniformly. A reader with a narrower column scales figures down in proportion to it, and no reader draws them larger than that unless it enlarges its text the same way. The full rules are in ARTICLE.md; how the reader hands figures to the page device is in [figures on the page](terse:fb28ee78da846865555acd99adaf1029514df8eec41928c64f1e4e66c46c5454).
+Paths are filled with the non-zero rule, then stroked with round joins and ends, later ones over earlier ones. Anything malformed, or a missing closing line, shows the figure as its source text, which is why a figure still reads as text where it cannot be drawn. This reader's column is 512 units, so a unit is one screen unit; it shrinks a figure wider than the column to fit, uniformly. A reader with a narrower column scales figures down in proportion to it, and no reader draws them larger than that unless it enlarges its text the same way. The full rules are in ARTICLE.md; how the reader hands figures to the page device is in [figures on the page](terse:e52720cb0004b8646460878d0fbd4a45b4c7292b15c73e4f1490b76c23dec7a5).
 
 ## Compared with Markdown
 
@@ -208,6 +208,6 @@ Each article gets a page, drawn like this manual's web pages; an index lists the
 
 ## How the reader shows it
 
-In a column 512 units wide: paragraphs in 15-unit sans (about 68 characters a line), headings 21 bold, subheadings 17 bold, list items indented 10 behind a bullet, preformatted lines and fences 13-unit monospace, figures centred. The first 512 links get the link colour; Tab moves between them and Enter follows one. The reader builds a page document from the article; how such a document is laid out is in [the page device](terse:6506e640938fe694f8167c2112510bb3637ab3ca45874d292d0f29b468ec23b1).
+In a column 512 units wide: paragraphs in 15-unit sans (about 68 characters a line), headings 21 bold, subheadings 17 bold, list items indented 10 behind a bullet, preformatted lines and fences 13-unit monospace, figures centred. The first 512 links get the link colour; Tab moves between them and Enter follows one. The reader builds a page document from the article; how such a document is laid out is in [the page device](terse:de1a5c4c631e150f29e91006ef5d6d4ee2b93c038ecdd62d0453ea9cb1450487).
 
 Other readers may look different: ARTICLE.md fixes what each construct means, not fonts, sizes or spacing, and a reader may show tables as paragraphs and figures as their text. Write so the article reads well either way.

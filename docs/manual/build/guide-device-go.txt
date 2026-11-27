@@ -359,14 +359,14 @@ HELLO answers for the slots asked: 2 with its table, 10 (full text) with none. O
 
 Build it, then run `hello` under the reference core with it, from the top folder of the sources (`cargo build --release -p terse-bus -p terse-devices` builds the core and the reference drivers):
 
-```
+```sh
 go build -C examples/device/go
 target/release/terse-bus programs/hello/hello.terse \
     --frames 30 --hash \
     --driver 2=$PWD/examples/device/go/terminal
 ```
 
-```
+```text
 819432152b38626f8fc54b43f50d5d4c501dc99e6904315b61dc78b796c611e2
 ```
 
@@ -374,12 +374,12 @@ target/release/terse-bus programs/hello/hello.terse \
 
 The hosts of "Make a host" take it too, the Rust one as well as the Go one: this is a Rust core with a Go driver, from `examples/host/rust` after `cargo build --release`:
 
-```
+```sh
 target/release/step4 ../../../programs/hello/hello.terse 30 \
     ../../device/go/terminal
 ```
 
-```
+```text
 819432152b38626f8fc54b43f50d5d4c501dc99e6904315b61dc78b796c611e2
 ```
 
@@ -391,6 +391,6 @@ All of that is in `native/driver-example/terminal.c`, 583 lines of C. The refere
 
 ## What you have now
 
-A device of your own, running under the reference core with the reference's hashes. Next, the same driver in Rust: [Make a device in Rust](terse:66e4cb92b7c491b3213dfd8941bcb1503d09c832c9e8d822bcc287dbaa230309). Or mix your parts with the reference's: [Swap in your own part](terse:f5aae45d258c64ecfb20fac11d98feecf9f7fdb4419da7161dbac97cc9c8a89f).
+A device of your own, running under the reference core with the reference's hashes. Next, the same driver in Rust: [Make a device in Rust](terse:75b038ad3f454ca794130cff1a60bec49634fee586488d8f635282e8570500b7). Or mix your parts with the reference's: [Swap in your own part](terse:7b474c25772e3bcd27ac55c008b020f12871957e97dafc221e6454c5d046801a).
 
-The rules: [The terminal (device 2)](terse:2320c61ee19368dc03275f54529d1e0a6d5886d3fc4654b275bfc321cb23db09); DEVICES.md sections 1, 5, 6 (batching) and 13 (a minimal driver).
+The rules: [The terminal (device 2)](terse:efa4fedc95f0b89f2003f8056d57ea8339ecf479eec1d9af97234ae8e6f6bfc7); DEVICES.md sections 1, 5, 6 (batching) and 13 (a minimal driver).

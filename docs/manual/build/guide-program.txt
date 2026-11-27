@@ -2,7 +2,7 @@
 
 Besides articles, Tersenet can carry small programs. Each runs on its own Terse32 machine, a tiny virtual computer: at most 1 MiB of memory, a fixed amount of work per frame at 60 frames a second, and a few devices to talk to, such as an 80 by 30 grid of text and a display for lines. A program cannot see your files. Programs are optional: nothing in the reader depends on them.
 
-The program pages come in pairs, C and then Rust, the two languages with a runtime library for Terse32; Go, used on other pages of this guide, has no compiler for the machine's 32-bit RISC-V processor. This one is in C; [the same in Rust](terse:394e3b9b0f9e6ead679490a39a54739cd9c63e30ee4dcca75161de34922fa922) comes next.
+The program pages come in pairs, C and then Rust, the two languages with a runtime library for Terse32; Go, used on other pages of this guide, has no compiler for the machine's 32-bit RISC-V processor. This one is in C; [the same in Rust](terse:ca2fd12b4c70739970e680aa570ad58800f086b4718818610162d4c68e80df15) comes next.
 
 ## The program
 
@@ -35,7 +35,7 @@ There are no threads and no interrupts. A program that does too much in one fram
 
 ## Build it and run it
 
-```
+```sh
 terse new hello.c
 terse build hello.c
 terse-host hello.terse
@@ -45,13 +45,13 @@ terse-host hello.terse
 
 ## Test it without a window
 
-```
+```sh
 terse run hello.terse --frames 60 --dump
 ```
 
 runs it for 60 frames with no window and prints the text grid:
 
-```
+```text
  Hello from hello!
 
 Press Esc to exit.
@@ -59,7 +59,7 @@ Press Esc to exit.
 
 and then the grid's empty rows. Now give it a key. Save the line `5 press esc` as `esc.txt` (a frame number, then what happens) and run
 
-```
+```sh
 terse run hello.terse --frames 60 --events esc.txt \
     --hash-every 1
 ```
@@ -68,6 +68,6 @@ It prints one line per frame, the frame's number and the machine's state hash, a
 
 ## What you have now
 
-A program that you build, run in a window and test without one. It is `examples/program/c/hello.c` in the Tersenet sources; `programs/hello/hello.c` is a fuller one, the built-in hello, with typed text and Unicode. Next: [the same in Rust](terse:394e3b9b0f9e6ead679490a39a54739cd9c63e30ee4dcca75161de34922fa922), or, staying with C, [Draw a line and read a key](terse:6e0a375f166625322520a3045c150872a0909164a411acf8124d52e1271f6194).
+A program that you build, run in a window and test without one. It is `examples/program/c/hello.c` in the Tersenet sources; `programs/hello/hello.c` is a fuller one, the built-in hello, with typed text and Unicode. Next: [the same in Rust](terse:ca2fd12b4c70739970e680aa570ad58800f086b4718818610162d4c68e80df15), or, staying with C, [Draw a line and read a key](terse:e3ee735dea8e64466ce3d6fcad54fd42aeedc26104a5f1a1ff3d77bd0476661e).
 
-Every option of `terse build` is in [Building a program](terse:895f8f900c8603665db8d3098ac55c21345128d112bce11b2fb66619de5ee4c4), the library in [The C library](terse:707989f5de01d06effb1abfc919fbaa485d7230b2bd3f886e4ed59ec89953974), and running, testing and publishing a program in [Running and publishing a program](terse:9a328af50c54c58cb2d80999997f444346976b4382a820c0f4a0532c7ae17de3).
+Every option of `terse build` is in [Building a program](terse:0dbe1bef020585d065efabe06b7a16546ed1bb2605098ad6b2a8ae3156f5ab0f), the library in [The C library](terse:1b19c2ce0a040cc5cb6f7a0e95f0468cc3ab3112d70f461957f874880bbd6b97), and running, testing and publishing a program in [Running and publishing a program](terse:a0f5bc015757bc468af9a48c7023b7649493e79c60761004a5e2bd05b0b471f9).

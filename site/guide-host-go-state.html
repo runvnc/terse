@@ -14,117 +14,117 @@
 <p>Your host shows what the reference shows. This step proves that it agrees to the last bit, with a yes-or-no test: the state hash. It adds <code>state.go</code> to the package.</p>
 <h2 id="the-state-serialization">The state serialization</h2>
 <p>Between frames, a machine&#39;s whole state is one string of bytes; its BLAKE3-256 hash is the state hash. Two hosts given the same program and input agree exactly when their hashes agree after every frame.</p>
-<pre>package machine
+<pre><span class=k>package</span> machine
 
-const (
-    stateTag    = &quot;terse-state-1&quot;
-    emptySystem = 37
-    absent      = 0
-    present     = 1
+<span class=k>const</span> (
+    stateTag    = <span class=s>&quot;terse-state-1&quot;</span>
+    emptySystem = <span class=n>37</span>
+    absent      = <span class=n>0</span>
+    present     = <span class=n>1</span>
 )
 
-func (m *Machine) State(id [32]byte,
-    grants, terminal []byte) []byte {
-    state := append([]byte(stateTag), id[:]...)
+<span class=k>func</span> (m *Machine) State(id [<span class=n>32</span>]<span class=t>byte</span>,
+    grants, terminal []<span class=t>byte</span>) []<span class=t>byte</span> {
+    state := append([]<span class=t>byte</span>(stateTag), id[:]...)
     state = le.AppendUint32(state, m.PC)
-    for _, x := range m.X[1:] {
+    <span class=k>for</span> _, x := <span class=k>range</span> m.X[<span class=n>1</span>:] {
         state = le.AppendUint32(state, x)
     }
     state = le.AppendUint32(state, m.Frame)
-    fault, faultPC := Fault{}, uint32(0)
-    if m.Fault != nil {
+    fault, faultPC := Fault{}, <span class=t>uint32</span>(<span class=n>0</span>)
+    <span class=k>if</span> m.Fault != <span class=k>nil</span> {
         fault, faultPC = *m.Fault, m.PC
     }
     state = append(state, m.Stopped, m.ExitCode, fault.Kind)
     state = le.AppendUint32(state, fault.Encoding)
     state = le.AppendUint32(state, faultPC)
     state = le.AppendUint32(state, fault.Address)
-    state = le.AppendUint32(state, uint32(m.Budget))
-    state = le.AppendUint32(state, uint32(len(m.RAM)))
+    state = le.AppendUint32(state, <span class=t>uint32</span>(m.Budget))
+    state = le.AppendUint32(state, <span class=t>uint32</span>(len(m.RAM)))
     state = append(append(state, m.RAM...), grants...)
-    state = append(state, make([]byte, emptySystem)...)
-    if terminal == nil {
+    state = append(state, make([]<span class=t>byte</span>, emptySystem)...)
+    <span class=k>if</span> terminal == <span class=k>nil</span> {
         state = append(state, absent)
-    } else {
+    } <span class=k>else</span> {
         state = append(append(state, present), terminal...)
     }
-    return append(state, absent, absent, absent)
+    <span class=k>return</span> append(state, absent, absent, absent)
 }</pre>
 <p>In order: <code>terse-state-1</code> and the image ID; <code>pc</code> and the registers <code>x1</code> to <code>x31</code>; the frame counter, how the machine stopped (0 running, 1 exited, 2 faulted), the exit code, and a fault&#39;s kind, encoding, <code>pc</code> and address; the budget carried into the next frame; the RAM; one byte per optional device, 1 if granted. Then the System device, <code>emptySystem</code>: 37 zero bytes here (the time, 4 bytes, 0 in a test; an event count of 0, 1 byte; four controllers of 8 bytes, none connected). Then each device&#39;s section in a fixed order, from its driver&#39;s STATE: the terminal&#39;s after <code>present</code> (1), or <code>absent</code> (0) for a machine without one; then a 0 each for the vector display, content and the page, which this host never has.</p>
 <h2 id="the-program">The program</h2>
-<pre>package main
+<pre><span class=k>package</span> main
 
-import (
-    &quot;fmt&quot;
-    &quot;os&quot;
-    &quot;strconv&quot;
+<span class=k>import</span> (
+    <span class=s>&quot;fmt&quot;</span>
+    <span class=s>&quot;os&quot;</span>
+    <span class=s>&quot;strconv&quot;</span>
 
-    &quot;host/machine&quot;
+    <span class=s>&quot;host/machine&quot;</span>
 
-    &quot;lukechampine.com/blake3&quot;
+    <span class=s>&quot;lukechampine.com/blake3&quot;</span>
 )
 
-func main() {
-    file, err := os.ReadFile(os.Args[1])
-    if err != nil {
+<span class=k>func</span> main() {
+    file, err := os.ReadFile(os.Args[<span class=n>1</span>])
+    <span class=k>if</span> err != <span class=k>nil</span> {
         fmt.Fprintln(os.Stderr, err)
-        os.Exit(2)
+        os.Exit(<span class=n>2</span>)
     }
-    frames, _ := strconv.Atoi(os.Args[2])
+    frames, _ := strconv.Atoi(os.Args[<span class=n>2</span>])
     cpu, devices, err := machine.Load(file)
-    if err != nil {
+    <span class=k>if</span> err != <span class=k>nil</span> {
         fmt.Fprintln(os.Stderr, err)
-        os.Exit(2)
+        os.Exit(<span class=n>2</span>)
     }
     m := &amp;machine.Machine{CPU: cpu}
-    var bus *machine.Bus
-    if len(devices) &gt; 0 {
-        bus = machine.Start(os.Args[3], m, file, devices)
+    <span class=k>var</span> bus *machine.Bus
+    <span class=k>if</span> len(devices) &gt; <span class=n>0</span> {
+        bus = machine.Start(os.Args[<span class=n>3</span>], m, file, devices)
         m.Devices = bus.Call
     }
-    for m.Stopped == machine.Running &amp;&amp; int(m.Frame) &lt; frames {
-        if bus != nil {
+    <span class=k>for</span> m.Stopped == machine.Running &amp;&amp; <span class=t>int</span>(m.Frame) &lt; frames {
+        <span class=k>if</span> bus != <span class=k>nil</span> {
             m.Budget -= bus.Begin(m.Frame)
         }
         m.RunFrame()
-        if bus != nil {
+        <span class=k>if</span> bus != <span class=k>nil</span> {
             bus.End()
         }
     }
-    var grants, terminal []byte
-    if bus != nil {
+    <span class=k>var</span> grants, terminal []<span class=t>byte</span>
+    <span class=k>if</span> bus != <span class=k>nil</span> {
         grants = bus.Grants
         terminal = bus.State(machine.Terminal)
         bus.Close()
     }
     state := m.State(blake3.Sum256(file), grants, terminal)
-    fmt.Printf(&quot;%x\n&quot;, blake3.Sum256(state))
-    if m.Fault != nil {
+    fmt.Printf(<span class=s>&quot;%x\n&quot;</span>, blake3.Sum256(state))
+    <span class=k>if</span> m.Fault != <span class=k>nil</span> {
         fmt.Fprintln(os.Stderr, m.Fault)
-        os.Exit(1)
+        os.Exit(<span class=n>1</span>)
     }
-    os.Exit(int(m.ExitCode))
+    os.Exit(<span class=t>int</span>(m.ExitCode))
 }</pre>
 <p>It starts the driver only for a program that lists devices, and prints the hash after the last frame.</p>
 <h2 id="check-it">Check it</h2>
 <p>From <code>examples/host/go</code>, after <code>go build -o bin/ ./...</code>, with step 1&#39;s <code>exit.terse</code>:</p>
-<pre>bin/step4 exit.terse 0
-bin/step4 exit.terse 1</pre>
+<pre class="sh"><span class=k>bin/step4</span> exit.terse 0
+<span class=k>bin/step4</span> exit.terse 1</pre>
 <p>prints the hash at reset, then after the frame in which it exits:</p>
 <pre>9cbfa0da982561dd1c5dbaf1d5fde2121dee78c097d754aa0c2a350584bbeb5a
 3272a879392d8179997dc398726430bf92bbd413b89653be8c9af4472656fe9b</pre>
 <p>the two STATE.md section 3 gives. And <code>hello</code> after 30 frames:</p>
-<pre>bin/step4 ../../../programs/hello/hello.terse 30 \
+<pre class="sh"><span class=k>bin/step4</span> ../../../programs/hello/hello.terse 30 \
     ../../../target/release/terse-dev-terminal</pre>
 <pre>819432152b38626f8fc54b43f50d5d4c501dc99e6904315b61dc78b796c611e2</pre>
 <p>which is what <code>terse run programs/hello/hello.terse --frames 30 --hash</code> prints. A program that faults must agree too: <code>native/core-c/tests</code> has one for each kind of fault, and the sources&#39; tests compare their hashes with the reference&#39;s.</p>
 <p>Random programs find what the tests do not. <code>native/core-c/tests/fuzz.py</code> writes them: random 16-bit and 32-bit encodings, many of them faulting. This prints the name of any whose hash after 3 frames is not the reference&#39;s, and with this host prints nothing:</p>
-<pre>python3 ../../../native/core-c/tests/fuzz.py fuzz 200
-for f in fuzz/*.terse; do
-    a=$(bin/step4 $f 3 2&gt;/dev/null)
-    b=$(terse run $f --frames 3 --hash 2&gt;/dev/null)
-    [ &quot;$a&quot; = &quot;$b&quot; ] || echo $f
-done</pre>
+<pre class="sh"><span class=k>python3</span> ../../../native/core-c/tests/fuzz.py fuzz 200
+<span class=k>for</span> f <span class=k>in</span> fuzz/*.terse; <span class=k>do</span>
+    <span class=m>a</span>=<span class=m>$(</span><span class=k>bin/step4</span> <span class=m>$f</span> 3 2&gt;/dev/null)
+    <span class=m>b</span>=<span class=m>$(</span><span class=k>terse</span> run <span class=m>$f</span> --frames 3 --hash 2&gt;/dev/null)
+    <span class=k>[</span> <span class=s>&quot;$a&quot;</span> = <span class=s>&quot;$b&quot;</span> ] || <span class=k>echo</span> <span class=m>$f</span>
+<span class=k>done</span></pre>
 <h2 id="what-is-left-out">What is left out</h2>
 <p>This host runs <code>hello</code> and proves it, nothing more. The rest of a complete host, in the order to add it:</p>
 <ul>

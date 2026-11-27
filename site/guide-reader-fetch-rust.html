@@ -14,18 +14,18 @@
 <p>Articles travel through relays: servers that keep blobs (any bytes, up to 1 MiB) and hand them to whoever asks. A blob&#39;s ID is its BLAKE3 hash, so whatever a relay sends, you can check that it is the blob you asked for. In this step your reader asks a relay for an article by its ID, checks it, and shows it with step 1&#39;s code. (Make a reader in Go, step 2, is the same program in Go.)</p>
 <h2 id="the-libraries">The libraries</h2>
 <p><code>Cargo.toml</code> names the package and the libraries steps 2 and 3 use:</p>
-<pre>[package]
-name = &quot;reader&quot;
-version = &quot;0.1.0&quot;
-edition = &quot;2024&quot;
+<pre><span class=k>[package]</span>
+name = <span class=s>&quot;reader&quot;</span>
+version = <span class=s>&quot;0.1.0&quot;</span>
+edition = <span class=s>&quot;2024&quot;</span>
 publish = false
 
-[dependencies]
-blake3 = &quot;1.8&quot;
-tersenet = &quot;0.1&quot;
-tungstenite = &quot;0.30&quot;
+<span class=k>[dependencies]</span>
+blake3 = <span class=s>&quot;1.8&quot;</span>
+tersenet = <span class=s>&quot;0.1&quot;</span>
+tungstenite = <span class=s>&quot;0.30&quot;</span>
 
-[workspace]</pre>
+<span class=k>[workspace]</span></pre>
 <ul>
 <li><code>tungstenite</code> is the most widely used WebSocket crate that needs no async runtime: connect, send a message, read a message. It answers pings and joins fragmented messages by itself, as a Tersenet client must. As listed it speaks plain <code>ws&#58;//</code>, which the local relay of these steps uses; for a <code>wss&#58;//</code> relay (over TLS, as public relays are), write <code>tungstenite = { version = &quot;0.30&quot;, features = [&quot;rustls-tls-webpki-roots&quot;] }</code> and add <code>rustls = { version = &quot;0.23&quot;, default-features = false, features = [&quot;ring&quot;, &quot;std&quot;, &quot;tls12&quot;] }</code>, which picks the crypto that builds with nothing but a C compiler.</li>
 <li><code>blake3</code> is BLAKE3 by its authors; <code>blake3::hash</code> gives the 32-byte hash that is a blob&#39;s ID.</li>
@@ -34,71 +34,71 @@ tungstenite = &quot;0.30&quot;
 <p>The empty <code>[workspace]</code> keeps the package apart from the Tersenet sources around it. <code>Cargo.lock</code>, beside it, pins the versions the Tersenet sources themselves use.</p>
 <h2 id="the-code">The code</h2>
 <p><code>src/relay.rs</code> gets a blob from a relay:</p>
-<pre>use std::error::Error;
-use std::io::{Read, Write};
-use tungstenite::{Message, WebSocket};
+<pre><span class=k>use</span> std::error::<span class=t>Error</span>;
+<span class=k>use</span> std::io::{<span class=t>Read</span>, <span class=t>Write</span>};
+<span class=k>use</span> tungstenite::{<span class=t>Message</span>, <span class=t>WebSocket</span>};
 
-pub const ID_SIZE: usize = 32;
-pub type Id = [u8; ID_SIZE];
+<span class=k>pub</span> <span class=k>const</span> ID_SIZE: <span class=t>usize</span> = <span class=n>32</span>;
+<span class=k>pub</span> <span class=k>type</span> <span class=t>Id</span> = [<span class=t>u8</span>; ID_SIZE];
 
-const TYPE_GET: u8 = 0x01;
-const TYPE_GET_REPLY: u8 = 0x81;
-const REQUEST_NUMBER: u32 = 1;
-const STATUS_AT: usize = 5;
-const BLOB_AT: usize = 6;
-const STATUS_FOUND: u8 = 1;
-const STATUS_NOT_FOUND: u8 = 2;
+<span class=k>const</span> TYPE_GET: <span class=t>u8</span> = <span class=n>0x01</span>;
+<span class=k>const</span> TYPE_GET_REPLY: <span class=t>u8</span> = <span class=n>0x81</span>;
+<span class=k>const</span> REQUEST_NUMBER: <span class=t>u32</span> = <span class=n>1</span>;
+<span class=k>const</span> STATUS_AT: <span class=t>usize</span> = <span class=n>5</span>;
+<span class=k>const</span> BLOB_AT: <span class=t>usize</span> = <span class=n>6</span>;
+<span class=k>const</span> STATUS_FOUND: <span class=t>u8</span> = <span class=n>1</span>;
+<span class=k>const</span> STATUS_NOT_FOUND: <span class=t>u8</span> = <span class=n>2</span>;
 
-pub fn get(
-    relay: &amp;mut WebSocket&lt;impl Read + Write&gt;,
-    id: Id,
-) -&gt; Result&lt;Vec&lt;u8&gt;, Box&lt;dyn Error&gt;&gt; {
-    let number = REQUEST_NUMBER.to_le_bytes();
-    let request = [&amp;[TYPE_GET][..], &amp;number, &amp;id].concat();
-    relay.send(Message::binary(request))?;
-    loop {
-        let reply = relay.read()?.into_data();
-        if reply.len() &lt; BLOB_AT || reply[0] != TYPE_GET_REPLY {
-            continue;
+<span class=k>pub</span> <span class=k>fn</span> get(
+    relay: &amp;<span class=k>mut</span> <span class=t>WebSocket</span>&lt;<span class=k>impl</span> <span class=t>Read</span> + <span class=t>Write</span>&gt;,
+    id: <span class=t>Id</span>,
+) -&gt; <span class=t>Result</span>&lt;<span class=t>Vec</span>&lt;<span class=t>u8</span>&gt;, <span class=t>Box</span>&lt;<span class=k>dyn</span> <span class=t>Error</span>&gt;&gt; {
+    <span class=k>let</span> number = REQUEST_NUMBER.to_le_bytes();
+    <span class=k>let</span> request = [&amp;[TYPE_GET][..], &amp;number, &amp;id].concat();
+    relay.send(<span class=t>Message</span>::binary(request))?;
+    <span class=k>loop</span> {
+        <span class=k>let</span> reply = relay.read()?.into_data();
+        <span class=k>if</span> reply.len() &lt; BLOB_AT || reply[<span class=n>0</span>] != TYPE_GET_REPLY {
+            <span class=k>continue</span>;
         }
-        match reply[STATUS_AT] {
+        <span class=k>match</span> reply[STATUS_AT] {
             STATUS_FOUND =&gt; {}
             STATUS_NOT_FOUND =&gt; {
-                return Err(&quot;the relay does not have it&quot;.into());
+                <span class=k>return</span> <span class=t>Err</span>(<span class=s>&quot;the relay does not have it&quot;</span>.into());
             }
-            _ =&gt; return Err(&quot;the relay refused it&quot;.into()),
+            _ =&gt; <span class=k>return</span> <span class=t>Err</span>(<span class=s>&quot;the relay refused it&quot;</span>.into()),
         }
-        if blake3::hash(&amp;reply[BLOB_AT..]) != id {
-            return Err(&quot;hash check failed&quot;.into());
+        <span class=k>if</span> blake3::hash(&amp;reply[BLOB_AT..]) != id {
+            <span class=k>return</span> <span class=t>Err</span>(<span class=s>&quot;hash check failed&quot;</span>.into());
         }
-        return Ok(reply[BLOB_AT..].to_vec());
+        <span class=k>return</span> <span class=t>Ok</span>(reply[BLOB_AT..].to_vec());
     }
 }
 
-pub fn hex32(hex: &amp;str) -&gt; Result&lt;Id, Box&lt;dyn Error&gt;&gt; {
-    if hex.len() != 2 * ID_SIZE || !hex.is_ascii() {
-        return Err(&quot;not 64 hexadecimal digits&quot;.into());
+<span class=k>pub</span> <span class=k>fn</span> hex32(hex: &amp;<span class=t>str</span>) -&gt; <span class=t>Result</span>&lt;<span class=t>Id</span>, <span class=t>Box</span>&lt;<span class=k>dyn</span> <span class=t>Error</span>&gt;&gt; {
+    <span class=k>if</span> hex.len() != <span class=n>2</span> * ID_SIZE || !hex.is_ascii() {
+        <span class=k>return</span> <span class=t>Err</span>(<span class=s>&quot;not 64 hexadecimal digits&quot;</span>.into());
     }
-    let mut bytes = [0; ID_SIZE];
-    for (i, byte) in bytes.iter_mut().enumerate() {
-        *byte = u8::from_str_radix(&amp;hex[2 * i..2 * i + 2], 16)?;
+    <span class=k>let</span> <span class=k>mut</span> bytes = [<span class=n>0</span>; ID_SIZE];
+    <span class=k>for</span> (i, byte) <span class=k>in</span> bytes.iter_mut().enumerate() {
+        *byte = <span class=t>u8</span>::from_str_radix(&amp;hex[<span class=n>2</span> * i..<span class=n>2</span> * i + <span class=n>2</span>], <span class=n>16</span>)?;
     }
-    Ok(bytes)
+    <span class=t>Ok</span>(bytes)
 }</pre>
 <p><code>src/bin/fetch.rs</code> is the program:</p>
-<pre>// Step 2: fetch an article from a relay by its ID.
-use reader::{article, relay};
+<pre><span class=c>// Step 2: fetch an article from a relay by its ID.</span>
+<span class=k>use</span> reader::{article, relay};
 
-fn main() -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
-    let args: Vec&lt;String&gt; = std::env::args().collect();
-    let id = relay::hex32(&amp;args[2])?;
-    let (mut socket, _) = tungstenite::connect(&amp;args[1])?;
-    let blob = relay::get(&amp;mut socket, id)?;
-    if blob.starts_with(b&quot;TERS&quot;) || blob.starts_with(b&quot;TDOC&quot;) {
-        return Err(&quot;not an article&quot;.into());
+<span class=k>fn</span> main() -&gt; <span class=t>Result</span>&lt;(), <span class=t>Box</span>&lt;<span class=k>dyn</span> std::error::<span class=t>Error</span>&gt;&gt; {
+    <span class=k>let</span> args: <span class=t>Vec</span>&lt;<span class=t>String</span>&gt; = std::env::args().collect();
+    <span class=k>let</span> id = relay::hex32(&amp;args[<span class=n>2</span>])?;
+    <span class=k>let</span> (<span class=k>mut</span> socket, _) = tungstenite::connect(&amp;args[<span class=n>1</span>])?;
+    <span class=k>let</span> blob = relay::get(&amp;<span class=k>mut</span> socket, id)?;
+    <span class=k>if</span> blob.starts_with(<span class=s>b&quot;TERS&quot;</span>) || blob.starts_with(<span class=s>b&quot;TDOC&quot;</span>) {
+        <span class=k>return</span> <span class=t>Err</span>(<span class=s>&quot;not an article&quot;</span>.into());
     }
     article::show(&amp;blob);
-    Ok(())
+    <span class=t>Ok</span>(())
 }</pre>
 <p>They are 51 and 14 lines; the whole program, with step 1&#39;s <code>lib.rs</code> and <code>article.rs</code>, is 129.</p>
 <h2 id="how-it-works">How it works</h2>
@@ -125,17 +125,17 @@ fn main() -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
 <p><code>main</code> reads the relay&#39;s address and the ID, connects, and gets the blob. A blob that starts with <code>TERS</code> is a program and one that starts with <code>TDOC</code> a document: neither is an article, so neither is shown as text. Anything else it shows with <code>article::show</code>.</p>
 <h2 id="run-it">Run it</h2>
 <p>You need a relay. <code>terse-relay</code> comes with every Tersenet download. In another terminal, start one of your own on port 7979, apart from the one a running Tersenet host keeps on 7878:</p>
-<pre>terse-relay --listen 127.0.0.1:7979 --store try-relay</pre>
+<pre class="sh"><span class=k>terse-relay</span> --listen 127.0.0.1:7979 --store try-relay</pre>
 <p>It prints <code>listening on ws&#58;//127.0.0.1:7979</code> and keeps what it is given in the folder <code>try-relay</code>. Put the article on it, from <code>examples/reader/rust</code>:</p>
-<pre>terse put ../hello.txt --relay ws&#58;//127.0.0.1:7979</pre>
+<pre class="sh"><span class=k>terse</span> put ../hello.txt --relay ws&#58;//127.0.0.1:7979</pre>
 <pre>terse: taken by 1 of 1 relays: ws&#58;//127.0.0.1:7979
 e01027372f56996fa53fde7ae45aed656e196ccb4e7d79d3b66a51d9590be3a8</pre>
 <p>The last line is the article&#39;s ID. <code>terse hash</code> prints the same ID without asking a relay, which saves typing it:</p>
-<pre>cargo run -q --bin fetch ws&#58;//127.0.0.1:7979 \
-  $(terse hash ../hello.txt)</pre>
+<pre class="sh"><span class=k>cargo</span> run -q --bin fetch ws&#58;//127.0.0.1:7979 \
+  <span class=m>$(</span><span class=k>terse</span> hash ../hello.txt)</pre>
 <p>It prints the article exactly as step 1 did. Ask for a blob the relay does not hold, such as <code>Cargo.toml</code>, and it says so:</p>
-<pre>cargo run -q --bin fetch ws&#58;//127.0.0.1:7979 \
-  $(terse hash Cargo.toml)</pre>
+<pre class="sh"><span class=k>cargo</span> run -q --bin fetch ws&#58;//127.0.0.1:7979 \
+  <span class=m>$(</span><span class=k>terse</span> hash Cargo.toml)</pre>
 <pre>Error: &quot;the relay does not have it&quot;</pre>
 <h2 id="what-it-leaves-out">What it leaves out</h2>
 <p>The program asks one relay and keeps nothing. A complete reader keeps every blob it fetched, so that an article opens at once the next time with no network at all, asks several relays, and matches replies to requests by their numbers. In the reference implementation that is <code>crates/terse-net/src/node.rs</code>, with the relay client in <code>relay.rs</code>, the messages in <code>protocol.rs</code> and the store in <code>store.rs</code>. A reader may also leave all of the network to a node, a separate program it asks over a local socket; <a href="native-reader.html">Writing a reader without the machine</a> says how.</p>

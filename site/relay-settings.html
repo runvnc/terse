@@ -24,18 +24,18 @@
 <li>options for one relay, after it on its line of <code>&lt;config&gt;/relays</code> or in a <code>--relay</code> value: <code>authority=&lt;file&gt;</code> trusts an authority for that host too; <code>only-authority=&lt;file&gt;</code> trusts only that authority; <code>pin=sha256:&lt;64 hex digits&gt;</code> accepts only the certificate, or the public key, with that fingerprint (<code>terse relay fingerprint &lt;cert.pem&gt;</code> prints both).</li>
 </ul>
 <p>With <code>only-authority</code> or <code>pin</code>, nothing else is accepted for that host, a certificate from a public authority included. An option applies only to the host it is written with. A plain relay takes no options.</p>
-<pre># &lt;config&gt;/relays
-wss&#58;//relay.tersenet.org
-wss&#58;//relay.corp.example only-authority=corp-ca.pem
-wss&#58;//203.0.113.7:7443 pin=sha256:3b0c…
-ws&#58;//192.168.1.20:7878</pre>
+<pre><span class=c># &lt;config&gt;/relays</span>
+wss&#58;<span class=c>//relay.tersenet.org</span>
+wss&#58;<span class=c>//relay.corp.example only-authority=corp-ca.pem</span>
+wss&#58;<span class=c>//203.0.113.7:7443 pin=sha256:3b0c…</span>
+ws&#58;<span class=c>//192.168.1.20:7878</span></pre>
 <p>Nothing received from the network (a hint, a profile, a link, an entry) can add an authority, a pin or a plain connection: those come only from the user.</p>
 <h2 id="a-relay-on-a-home-or-office-network">A relay on a home or office network</h2>
 <p>The simple way is plain: <code>terse-relay --listen 0.0.0.0:7878</code>, and <code>ws&#58;//192.168.1.20:7878</code> in each client&#39;s relay list. The recommended way is encrypted, with a self-signed certificate that each client pins:</p>
-<pre>openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 3650 -subj /CN=relay.home -keyout relay.key -out relay.pem
-terse-relay --listen 0.0.0.0:7443 --store relay-store --tls-cert relay.pem --tls-key relay.key
-terse relay fingerprint relay.pem
-terse relay add wss&#58;//192.168.1.20:7443 pin=sha256:…</pre>
+<pre class="sh"><span class=k>openssl</span> req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 3650 -subj /CN=relay.home -keyout relay.key -out relay.pem
+<span class=k>terse-relay</span> --listen 0.0.0.0:7443 --store relay-store --tls-cert relay.pem --tls-key relay.key
+<span class=k>terse</span> relay fingerprint relay.pem
+<span class=k>terse</span> relay add wss&#58;//192.168.1.20:7443 pin=sha256:…</pre>
 <p>The pin stands for an authority and for the name check, so the certificate needs no particular name.</p>
 <p>When a relay cannot be used, the programs say why: &quot;the relay&#39;s certificate is not trusted&quot;, &quot;is for another name&quot;, &quot;does not match the key pinned for it&quot;, &quot;is not from the authority pinned for it&quot;, &quot;this relay requires TLS (try wss&#58;//)&quot;, &quot;this relay does not speak TLS (try ws&#58;//)&quot;.</p>
 </article>
