@@ -10,13 +10,13 @@ touch C to write or change a story.
     python3 story.py --check            check the story, print its sizes
     ./build.sh                          compile the story and build lowbell.terse
     terse-host lowbell.terse          play it
-    python3 story.py --draw jetty -o jetty.png          draw a place's picture
-    python3 story.py --draw boathouse --hidden --beam 260,96 -o b.svg
+    python3 story.py --draw quay -o quay.png            draw a place's picture
+    python3 story.py --draw bell_chamber --hidden --beam 110,196 -o b.svg
     python3 story.py --import-svg sketch.svg --layer roofs --colour grey
     python3 story.py --events transcripts/walkthrough.txt -o walk.events
 
-The story in `story/` now is a three-room placeholder that exercises
-every feature; the real story replaces it.
+The story in `story/` is Low Bell itself: 0-game (settings, hints, the
+clock, the endings), then the tower, the town, the lake and the far shore.
 
 ## The shape of a file
 
