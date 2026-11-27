@@ -200,15 +200,15 @@ compares two hosts.
 Devices present and transport; they do not compute for the program, and
 nothing a host draws can be read back. The screen is 640 × 480 units for
 every device that draws. Each device says what a host must
-draw; the rest of the look (fonts, smoothing, the phosphor style's
-glow and afterglow) is the host's, so a plain host and an elaborate
-one show the same picture.
+draw; the rest of the look (fonts, smoothing, how the phosphor
+style's real or simulated vector display looks) is the host's, so a
+plain host and an elaborate one show the same picture.
 
 ## When a part of the host is slow
 
 A program cannot make a frame late: its work is bounded by the budget and the caps. What can is the host's own: a device driver, the renderer. Every host and device states its name, version and build (`--version`), and the host keeps a record on your computer of which part made a frame late, never sent anywhere (`terse perf log` sums it up). A part that is only waiting because your computer is busy is not blamed. If you choose, you can publish a summary of it so that slow builds come to light (see Performance reports).
 
-A device that makes 3 frames late within a second gets a notice at the bottom of the screen, naming it; your work in the machines using it is saved at once. If it goes on (10 late frames within five seconds), those machines are saved again and stopped: halted, not faulted. `terse-host`, whose devices are built in, does the same for the one machine whose frames are late, and leaves the others running. A shell finds each saved machine in its automatic snapshot slot (16 to 23), a machine run alone in a file the host names. When the host's own drawing is too slow, it first draws the phosphor look more simply, then says once that it does not keep up on this computer; resizing the window briefly holds the machines and excuses the frames just after, within a bound.
+A device that makes 3 frames late within a second gets a notice at the bottom of the screen, naming it; your work in the machines using it is saved at once. If it goes on (10 late frames within five seconds), those machines are saved again and stopped: halted, not faulted. `terse-host`, whose devices are built in, does the same for the one machine whose frames are late, and leaves the others running. A shell finds each saved machine in its automatic snapshot slot (16 to 23), a machine run alone in a file the host names. When the host's own drawing is too slow, it first drops what it draws beyond what the devices require (in `terse-host`, the phosphor look is drawn more simply), then says once that it does not keep up on this computer; resizing the window briefly holds the machines and excuses the frames just after, within a bound.
 
 ## Determinism and replay
 

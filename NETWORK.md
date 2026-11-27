@@ -96,19 +96,64 @@ receipt.
 
 **The WebSocket itself** (RFC 6455):
 
-- A relay URL is `ws://` (plain) or `wss://` (over TLS), a host, an
-  optional port (80 and 443 by default, as for any WebSocket URL; a hint
-  names 7878 when it gives none, section 4.9) and an optional path. The
-  client opens the WebSocket with the URL's path and query as written,
-  or `/` when it has none. A relay accepts any path.
+- A relay URL is `wss://` (encrypted: WebSocket over TLS) or `ws://`
+  (plain), a host, an optional port (the scheme's default when left
+  out, as for any WebSocket URL) and an optional path. The client opens
+  the WebSocket with the URL's path and query as written, or `/` when it
+  has none. A relay accepts any path.
+- **Encrypted by default.** A relay address written without a scheme
+  (typed by a person, given on a command line, in a configuration, or a
+  hint, section 4.9) names an encrypted relay: `wss://` and the address,
+  on the default port of `wss://` when it gives none. A port, when
+  written, is only a port: it says nothing about encryption. A plain
+  relay is written with its scheme, `ws://host:port`; it is meant for
+  the local machine, private networks and tests. The one exception: an
+  address without a scheme whose host is `localhost` or a loopback IP
+  address (127.0.0.0/8, `::1`) names a plain relay (`ws://`) on that
+  host, since its traffic never leaves the machine; written `wss://`, it
+  is encrypted. A client never takes `localhost` or a loopback address
+  from the network (section 5.1), so the exception cannot turn a relay
+  named by someone else into a plain one.
+- **Plain relays are the user's own.** A client may talk to a relay
+  without encryption only when its own user wrote that relay so: as a
+  `ws://` relay, or as a loopback address without a scheme, in their
+  relay list, on their command line or in their settings. This is meant
+  for the local machine and private networks. Nothing that travels on
+  the network names a plain relay: a hint always names an encrypted
+  relay (section 4.9), a `relay` line of a profile that is plain is
+  invalid (section 4.6), and a client never gives out a plain relay (in
+  a hint, its own address or a profile). So a relay named by the
+  network is never reached without encryption, and a failed TLS
+  handshake is never retried without TLS.
 - Over `wss://` the client checks the relay's certificate as a web
   browser does for `https://`: it must chain to a certificate authority
   the client trusts and be for the URL's host (RFC 6125). A client does
-  not connect when the check fails, and offers no way to skip it; it may
-  let its user add a certificate authority to trust (for a relay with a
-  certificate from a private one). TLS hides from the network which
-  feeds and blobs a client asks for; it adds nothing to their integrity,
-  which the signatures and hashes ensure (sections 1, 4.2).
+  not connect when the check fails, and offers no way to skip it: no
+  setting, option or variable makes it accept any certificate. TLS hides
+  from the network which feeds and blobs a client asks for; it adds
+  nothing to their integrity, which the signatures and hashes ensure
+  (sections 1, 4.2).
+- **Overrides come only from the user.** So that a person or an
+  organisation can run relays that the public authorities do not vouch
+  for, a client may let its user:
+  - trust more certificate authorities, for every relay or for named
+    hosts only;
+  - pin a host to one authority, or to one certificate or public key
+    (by its fingerprint): then nothing else is accepted for that host, a
+    certificate from a public authority included, and a client that
+    refuses one says that it does not match what is pinned;
+  - write a relay as plain (`ws://`), as above.
+
+  An override names the host it applies to, or, for an added authority,
+  applies to every relay; none turns the check off, and none applies to a
+  host it does not name. Overrides come only from the user's own
+  settings and command line. Nothing received from the network (a hint,
+  a `relay` line of a profile, a link, an entry, an article) carries an
+  override, adds a trusted authority or a plain connection, or makes a
+  client use one; a relay named by the network is checked with whatever
+  the user set for its host, like any other. How a client keeps these
+  settings is its own (README "Private authorities and pins" has the
+  reference's).
 - No subprotocol is used: a client sends no `Sec-WebSocket-Protocol`
   header, and a relay chooses none.
 - Every message of this protocol is one binary WebSocket message. A
@@ -121,11 +166,12 @@ receipt.
   proxy that closes idle connections should, every 30 s or more often);
   a client need not send any.
 - A relay may refuse a connection at the handshake with HTTP status 429
-  (too many connections from the client's address) or 503 (too many
-  connections in all): the client treats it as a failed connection and
-  tries again as section 5.1 says.
-- A client should support both. One that supports only `ws://` treats a
-  `wss://` relay as a relay that cannot be reached (section 5.1).
+  (too many connections from the client's address), 503 (too many
+  connections in all) or 403 (it does not accept the client's address,
+  section 5.3): the client treats it as a failed connection and tries
+  again as section 5.1 says.
+- A client must support `wss://`. Supporting `ws://`, for the plain
+  relays its user names (above), is optional.
 
 ### 3.1 Refusals
 
@@ -190,7 +236,7 @@ author's client holds the secret key and never sends it anywhere.
 | 0 | 32 | Feed key |
 | 32 | 4 | `seq`: 1 for the first entry, then increasing by 1 |
 | 36 | 4 | Time: Unix seconds, as claimed by the author |
-| 40 | 1 | Kind: `1` = article, `2` = profile (section 4.6), `3` = program, `4` = document; `0` and `255` are reserved; `5` to `254` are not defined by this revision |
+| 40 | 1 | Kind: `1` = article, `2` = profile (section 4.6), `3` = program, `4` = document, `5` = attachment; `0` and `255` are reserved; `6` to `254` are not defined by this revision |
 | 41 | 3 | Size of the blob in bytes |
 | 44 | 32 | Blob ID |
 | 76 | 32 | Reply-to: the blob ID this entry responds to, or all zeros |
@@ -307,6 +353,21 @@ blob starts with a document header.
 Clients that do not run programs still handle program and document
 entries as the network requires (they are valid entries, stored and
 passed on like any other) and need not open their blobs (section 6).
+
+An **attachment** entry (kind 5) keeps a part of an earlier entry of the
+same feed: its blob is something that entry's article links to (another
+article, a document), and its reply-to is that earlier entry's blob ID.
+Its title is empty or a short label, any title as for an article. It
+exists so that relays keep the part as long as they keep the entry (a
+relay that drops blobs no entry names, section 5.3, would otherwise drop
+it): relays store it, pass it on and count it like any entry (sections
+4.3, 5.2, 5.3). Readers do not list attachments in timelines, searches or
+lists of articles, and do not download their blobs automatically: a link
+reaches the blob, as any link does (section 4.4). The entry is valid by
+the rules above whether or not its reply-to names an entry the client
+holds. A relay or client of an earlier revision takes kind 5 as a kind
+not defined (above): it stores and passes it on and does not show it, so
+both keep working.
 
 If two different valid entries have the same feed key and `seq`, the one
 received first is kept.
@@ -444,11 +505,14 @@ makes the document invalid. Fields in v0:
 | Field | Value |
 |---|---|
 | `listed` | `yes`: the name may be found by search (section 4.7). Any other value, or no `listed` line, means not listed. |
-| `relay` | A `ws://` or `wss://` URL of a relay where the author publishes. Zero to four lines; readers take the first four that are URLs and skip other values. A value is a URL here if it starts with `ws://` or `wss://` (lowercase), what follows is not empty and does not start with `/`, and it holds no control character (U+0000–U+001F, U+007F–U+009F) and no whitespace (the White_Space characters listed above). Whether its host may be used is section 5.1's question. |
+| `relay` | A `wss://` URL of a relay where the author publishes. Zero to four lines; readers take the first four that are URLs and skip other values. A value is a URL here if it starts with `wss://` (lowercase), what follows is not empty and does not start with `/`, and it holds no control character (U+0000–U+001F, U+007F–U+009F) and no whitespace (the White_Space characters listed above). A plain relay (`ws://`) cannot be listed: such a line is invalid, and a reader skips it (the rest of the profile stands). Whether its host may be used is section 5.1's question. |
 
 Unknown fields are ignored. A client that writes a profile for its user
-puts a `relay` line for each of its relays that is not a loopback
-address.
+puts a `relay` line for each of its relays that is encrypted (`wss://`)
+and not a loopback address; it writes no plain relay, and a tool that
+is asked to list one refuses with a message saying that a profile lists
+only encrypted relays and that `ws://` relays belong in the user's own
+relay list.
 
 Names are self-declared and **not unique**: anyone can declare any name.
 Anything shown to a user that names a feed shows the feed key (or a short
@@ -573,19 +637,28 @@ feed key with up to two **hints**, relays that should hold the feed:
     IPv6      = 8 groups of 1 to 4 hexadecimal digits (either case)
                 separated by ":", or fewer and one "::" standing for one
                 or more groups of zeros; no dotted IPv4 part, no zone
-    port      = 1 to 65535, decimal, without leading zeros; 7878 if left out
+    port      = 1 to 65535, decimal, without leading zeros
 
 For example `3fa9…c21e07@relay.example.org` or
 `3fa9…c21e07@relay.example.org:9000,[2001:db8::7]` (the key written in
 full). There are no blanks, no scheme and no path; a hint list is at
-most 161 bytes. A hint names the relay `ws://host:port` (plain
-WebSocket), except that a hint with port 443 names `wss://host`
-(WebSocket over TLS, on its default port): `relay.example.org:443` is
-`wss://relay.example.org`. A plain relay on port 443 cannot be named by
-a hint. (A reader of an earlier revision takes such a hint as
-`ws://host:443`, which fails to connect: for it the hint names a relay
-that cannot be reached.) Hint names compare without regard to case. The address of an article link is
-`terse:feed/<address>` (`ARTICLE.md` section 4.1).
+most 161 bytes. A hint names an encrypted relay, as an address without
+a scheme does (section 3): `relay.example.org` is
+`wss://relay.example.org` and `relay.example.org:9000` is
+`wss://relay.example.org:9000`. A hint always names an encrypted relay:
+no hint names a plain one (section 3), and a scheme in a hint (`ws://`,
+`ws:`) makes it malformed. Clients ignore hints whose host is
+`localhost` or a loopback, private or link-local address (section 5.1).
+Hint names compare without regard to case; two hints name the same relay
+when their hosts and ports (the default port of `wss://` when left out)
+are the same.
+The address of an article link is `terse:feed/<address>` (`ARTICLE.md`
+section 4.1).
+
+Earlier revisions read most hints as plain relays (on port 7878 when
+none was given). A reader of an earlier revision may take a hint of this
+revision as a plain relay, which fails to connect unless the host also
+serves one there; it never reaches a relay the hint does not name.
 
 **A malformed address.** A client refuses an address that does not match
 this grammar when it is typed or given to it (the whole address is
@@ -637,9 +710,9 @@ entry received through one is verified like any other (section 4.2).
 **A client's own address.** A client shows its user their feed address
 with hints taken, in order, from the `relay` lines of their profile in
 force, then from its configured relays: those that can be written as a
-hint (`ws://` on a port other than 443, given or 80 by default, or
-`wss://` on port 443; no path but `/`) and whose host is not refused by section
-5.1, without repeats, at most two. If none is left, the address is the
+hint (`wss://`, with no path but `/`; the port is left out when it is
+the default) and whose host is not refused by section 5.1, without
+repeats, at most two. Plain relays are not given as hints. If none is left, the address is the
 bare key, and the client says that only people who use one of the same
 relays will find the feed.
 
@@ -658,7 +731,10 @@ under `.localhost`, or an address that is loopback, unspecified, private
 (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, fc00::/7) or
 link-local (169.254.0.0/16, fe80::/10), and does not connect if a host
 name resolves to any such address; it connects only to the addresses it
-checked, without resolving the name again. A client connects to all its
+checked, without resolving the name again. A plain `relay` line is
+invalid (section 4.6) and a hint never names a plain relay (section
+4.9), so a relay named by the network is reached only over TLS. A
+client connects to all its
 relays and, when a connection fails or drops, tries again after 1 s,
 doubling the wait up to 30 s. A relay that is still connecting does not
 hold up requests: they go to the relays that are connected. Only while
@@ -777,7 +853,8 @@ users what happened (section 3.1).
   be named, in all or from the client's address, take up its allowance.
   So on such a relay, an article that is reached only by a link from
   another article (no entry names it) is not kept: a publisher who wants
-  it kept publishes an entry for it too.
+  it kept publishes an entry for it too, an attachment entry (section
+  4.2) if it is a part of that article.
 - **Rates per address.** A relay may limit, per client address, the
   puts and publishes, the bytes put, the entries of feeds it holds
   nothing of, the finds and lookups, and the connections (statuses `64`
@@ -803,6 +880,20 @@ users what happened (section 3.1).
   5.2), per connection and in all, and answer a get over the limit from
   its store only.
 - **The whole store** (status `5`), as section 3 says.
+- **Its own policy.** A relay's operator may refuse a feed, a blob or a
+  client's address, and remove what the relay held of them. A publish
+  of an entry of a refused feed, or of an entry naming a refused blob, is
+  refused with status `3`, and so is a subscribe to a refused feed (a
+  client already subscribed simply receives no more of it); a put of a
+  refused blob is refused with status `3` and a get of it is answered
+  "not found" (status `2`); finds and lookups leave the feed out; a
+  connection from a refused address is refused at the handshake (HTTP
+  403, section 3). A client must not take any of these as a sign that
+  the feed, the entry or the blob is invalid, nor tell its user so: it
+  is one relay's decision, and the client may find the same on its other
+  relays (section 5.1). Refusals are each relay's own: a relay does not
+  take them over from a relay it mirrors (section 5.2), and a mirror's
+  refusal of what a peer sent is not sent again.
 
 **The reference relay's bounds.** What `terse-relay` keeps grows with
 what it keeps (entries, blobs, feeds, connections), never with the
@@ -960,7 +1051,8 @@ This section concerns only clients that run the Terse machine
 
 - Verified range requests (so a range can be delivered without fetching the
   whole blob).
-- Finding replies to an article, ranking, moderation and spam limits.
+- Finding replies to an article, ranking, and moderation and spam
+  limits beyond a relay's own refusals (section 5.3).
 - Key rotation and several feeds per identity.
 - What `ARTICLE.md` section 10 lists for articles (more inline markup,
   images not drawn from paths, arcs in figure paths, numbered and nested
@@ -975,8 +1067,7 @@ This section concerns only clients that run the Terse machine
   of it.
 - Relay discovery beyond configuration, the local relay, the `relay`
   lines of profiles and the hints of feed addresses (section 4.9).
-- A hint for a relay reached over TLS on a port other than 443, or for a
-  plain relay on port 443.
 - Direct connections between clients.
 - Abuse limits beyond those of section 5.3; a list of writers that its
-  writers extend (vouching) instead of the relay's operator.
+  writers extend (vouching) instead of the relay's operator; lists of
+  refusals shared between operators.

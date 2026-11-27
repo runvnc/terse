@@ -142,7 +142,8 @@ The style and the persistence are also those device 9 sets (SPEC §vector3d.call
 they are held here once. For a machine that has device 9 and not device
 3 the fill mode is `00h` and m is 0 (nothing can set them).
 
-The afterglow (SPEC §vector.phosphor) is presentation and is not included.
+Any afterglow a host draws (SPEC §vector.phosphor) is presentation and is
+not included.
 
 Let `C` be the offset after this section.
 
@@ -371,7 +372,7 @@ for each experimental device (none for most machines) and 0 or 32
 - **Host bookkeeping**: counters that tell a host the display list changed,
   per-frame statistics (units used, events dropped), the decoded form of ROM,
   caches.
-- **Presentation**: fonts, pixels, blending, the afterglow (SPEC §terminal.presentation, §vector.layers,
+- **Presentation**: fonts, pixels, blending, any afterglow (SPEC §terminal.presentation, §vector.layers,
   §vector.phosphor), the eye the 3D display is seen from (SPEC §vector3d.space), the samples the
   sound device rendered and how a host plays or mixes them (SPEC §sound.presentation). The vector list
   bytes are included; how they are drawn is not.
@@ -461,7 +462,7 @@ is S's frame counter.
 
 Everything else a machine needs is in S. Host bookkeeping starts afresh:
 the content requests pending in S fail in the next frame (SPEC §content.submit), the
-page is laid out and its height reported as for a new document, and the
+page is laid out and its height reported as for a new document, and any
 afterglow is empty.
 
 A host keeps a snapshot (SPEC §machines.snapshots) in a file:

@@ -6,7 +6,7 @@
 //!
 //! ```text
 //! listed: yes
-//! relay: ws://relay.example:7878
+//! relay: wss://relay.example
 //!
 //! Free text, the description.
 //! ```
@@ -57,8 +57,8 @@ pub struct Document {
 impl Document {
     /// Parses a profile document; `None` if it is not one (not UTF-8, over
     /// 4,096 bytes, or a header line without `: `). Unknown fields are
-    /// ignored; `relay` values that are not `ws://` or `wss://` URLs are
-    /// skipped.
+    /// ignored; `relay` values that are not `wss://` URLs are skipped (a
+    /// plain `ws://` one is invalid, NETWORK 4.6).
     pub fn parse(bytes: &[u8]) -> Option<Self> {
         if bytes.len() > MAX_DOCUMENT {
             return None;
@@ -77,7 +77,9 @@ impl Document {
             let (field, value) = line.split_once(": ")?;
             match field {
                 "listed" => doc.listed = value == "yes",
-                "relay" if crate::local::valid_url(value) && doc.relays.len() < MAX_PROFILE_RELAYS => {
+                // NETWORK 4.6: only encrypted relays; a plain (ws://) line
+                // is invalid and skipped, the rest of the profile stands.
+                "relay" if valid_relay_line(value) && doc.relays.len() < MAX_PROFILE_RELAYS => {
                     doc.relays.push(value.to_string());
                 }
                 _ => {}
@@ -160,10 +162,16 @@ pub fn url_host(url: &str) -> Option<&str> {
     Some(authority.rsplit_once(':').map_or(authority, |(h, _)| h))
 }
 
-/// Whether a relay URL from a profile may be used: its host is not
+/// Whether a relay URL from the network (a profile's relay line, a hint)
+/// may be used: it is encrypted (`wss://`: a plain relay named by the
+/// network is used only when the user has it among their own relays,
+/// which serve every feed anyway, NETWORK 3), and its host is not
 /// `localhost` (or under `.localhost`) and, if an IP address, a public one.
 /// A host name is checked again once resolved ([`public_ip`]).
 pub fn usable_profile_relay(url: &str) -> bool {
+    if !url.starts_with("wss://") {
+        return false;
+    }
     let Some(host) = url_host(url) else { return false };
     let lower = host.to_ascii_lowercase();
     if host.is_empty() || lower == "localhost" || lower.ends_with(".localhost") {
@@ -174,6 +182,19 @@ pub fn usable_profile_relay(url: &str) -> bool {
         Err(_) => true,
     }
 }
+
+/// Whether a profile's `relay` value is valid (NETWORK 4.6): a URL as a
+/// relay list takes it ([`crate::local::valid_url`]) and encrypted
+/// (`wss://`). A plain relay is for the user's own machine and network,
+/// never advertised.
+pub fn valid_relay_line(value: &str) -> bool {
+    crate::local::valid_url(value) && value.starts_with("wss://")
+}
+
+/// What a profile says of a plain relay among the user's relays: it is not
+/// listed.
+pub const PLAIN_NOT_LISTED: &str =
+    "a profile can only list encrypted relays (wss://); ws:// relays are for your own machine and private networks, in your own relay list";
 
 /// Whether a URL names this machine (a loopback address or `localhost`):
 /// such relays are left out of the relay lines of a profile the host
@@ -294,10 +315,13 @@ mod tests {
 
     #[test]
     fn documents() {
-        let doc = Document::parse(b"listed: yes\nrelay: ws://a.example:1\nrelay: http://no\ncolour: blue\n\nHello.\n\nMore.").unwrap();
+        let doc =
+            Document::parse(b"listed: yes\nrelay: ws://plain.example:1\nrelay: wss://a.example:1\nrelay: http://no\ncolour: blue\n\nHello.\n\nMore.")
+                .unwrap();
+        // The plain line is invalid and skipped; the rest of the profile stands.
         assert_eq!(
             doc,
-            Document { listed: true, relays: vec!["ws://a.example:1".into()], description: "Hello.\n\nMore.".into() }
+            Document { listed: true, relays: vec!["wss://a.example:1".into()], description: "Hello.\n\nMore.".into() }
         );
         assert_eq!(Document::parse(&doc.build()), Some(Document { ..doc.clone() }));
         assert_eq!(Document::parse(b"listed: no\n").unwrap(), Document::default());
@@ -306,8 +330,11 @@ mod tests {
         assert_eq!(Document::parse(b"listed yes\n"), None, "a header line without `: `");
         assert_eq!(Document::parse(&[0xFF]), None);
         assert_eq!(Document::parse(&vec![b'\n'; 4097]), None);
-        let many: String = (0..6).map(|i| format!("relay: ws://r{i}.example\n")).collect();
+        let many: String = (0..6).map(|i| format!("relay: wss://r{i}.example\n")).collect();
         assert_eq!(Document::parse(many.as_bytes()).unwrap().relays.len(), 4);
+        // Plain lines do not count among the four.
+        let mixed: String = (0..4).map(|i| format!("relay: ws://p{i}.example\nrelay: wss://r{i}.example\n")).collect();
+        assert_eq!(Document::parse(mixed.as_bytes()).unwrap().relays.len(), 4);
         let long = Document { description: "ü".repeat(3000), ..Default::default() };
         let built = long.build();
         assert!(built.len() <= MAX_DOCUMENT && Document::parse(&built).is_some());
@@ -324,10 +351,16 @@ mod tests {
 
     #[test]
     fn addresses() {
-        for url in ["ws://relay.example:7878", "ws://8.8.8.8:1", "ws://[2001:db8::1]:7", "wss://x.example/path"] {
+        for url in ["wss://relay.example:7878", "wss://8.8.8.8:1", "wss://[2001:db8::1]:7", "wss://x.example/path"] {
             assert!(usable_profile_relay(url), "{url}");
         }
         for url in [
+            // A plain relay named by the network: never (no downgrade).
+            "ws://relay.example:7878",
+            "ws://8.8.8.8:1",
+            "wss://127.0.0.1:7878",
+            "wss://localhost",
+            "wss://10.1.2.3",
             "ws://127.0.0.1:7878",
             "ws://localhost:1",
             "ws://a.localhost",

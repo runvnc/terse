@@ -67,7 +67,9 @@ func ParseProfile(b []byte) (p Profile, ok bool) {
 		case "listed":
 			p.Listed = value == "yes"
 		case "relay":
-			if len(p.Relays) < 4 && isRelayURL(value) {
+			// NETWORK.md 4.6: encrypted relays only; a plain (ws://)
+			// line is invalid and skipped, the rest of the profile stands.
+			if len(p.Relays) < 4 && isRelayURL(value) && strings.HasPrefix(value, "wss://") {
 				p.Relays = append(p.Relays, value)
 			}
 		}
@@ -75,8 +77,13 @@ func ParseProfile(b []byte) (p Profile, ok bool) {
 	return p, true
 }
 
-// IsRelayURL is the test of NETWORK.md 4.6 for a relay URL (see isRelayURL).
+// IsRelayURL reports whether v is a ws:// or wss:// relay URL (see
+// isRelayURL): what a user's own relay list takes.
 func IsRelayURL(v string) bool { return isRelayURL(v) }
+
+// ProfileRelay reports whether a profile may list v (NETWORK.md 4.6): a
+// wss:// relay URL. A plain relay is the user's own, never advertised.
+func ProfileRelay(v string) bool { return isRelayURL(v) && strings.HasPrefix(v, "wss://") }
 
 // isRelayURL reports whether a relay line's value counts as a relay URL
 // (NETWORK.md 4.6): it starts with `ws://` or `wss://` (lowercase), what

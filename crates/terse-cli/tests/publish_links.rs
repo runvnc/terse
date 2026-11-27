@@ -3,8 +3,9 @@
 //! uploaded with the article, and whether a relay keeps it (an entry of the
 //! user's own feed names it), or it is link-only (another feed's, or
 //! unknown here). A link to a blob held here that no entry names is
-//! uploaded with a warning, since a relay that drops such blobs (NETWORK
-//! 5.3) drops it after a while; a link to a blob of the user's own feed
+//! uploaded, and an attachment entry (kind 5, NETWORK 4.2) published after
+//! the article names it, so a relay that drops blobs no entry names
+//! (NETWORK 5.3) keeps it; a link to a blob of the user's own feed
 //! that this host does not hold is refused unless `--force`; `--dry-run`
 //! lists and publishes nothing. On a
 //! scratch relay in this process, on an ephemeral port, whose clock the
@@ -108,7 +109,7 @@ fn publish_names_linked_articles() {
         vec![
             format!("link terse:{part_id}: held here, {part_up}; kept: your feed's entry #1 names it, and relays keep it while they keep that entry"),
             format!(
-                "link terse:{picture_id}: held here, {picture_up}; NOT KEPT: no entry names it, and a relay that drops blobs no entry names (NETWORK.md 5.3) drops it"
+                "link terse:{picture_id}: held here, {picture_up}; no entry names it yet: an attachment entry of your feed names it after the article, so relays keep it"
             ),
             format!("link terse:{theirs_id}: held here, not uploaded; link-only: {short}'s entry #1 names it; kept where that feed is kept"),
             format!(
@@ -121,19 +122,19 @@ fn publish_names_linked_articles() {
     };
     let highest = || relay.feeds().highest(&terse_net::parse_hex(&author.key).unwrap()).unwrap();
 
-    let warning = format!("terse: warning: terse:{picture_id} is named by no entry");
+    let warning = "is named by no entry";
     // A dry run lists and publishes nothing.
     let out = terse(&author.args(&["publish", &main_file, "--title", "Main", "--dry-run"], &url));
     assert!(out.status.success());
     let mut expected = list("would be uploaded", "would be uploaded");
     expected.push("dry run: nothing uploaded or published".into());
     assert_eq!(String::from_utf8(out.stdout).unwrap().lines().collect::<Vec<_>>(), expected);
-    assert!(String::from_utf8_lossy(&out.stderr).contains(&warning));
+    assert!(!String::from_utf8_lossy(&out.stderr).contains(warning));
     assert_eq!(highest(), 1);
     assert!(!relay.blobs().path(&blob_id(&picture)).exists());
 
     // Published: the author's own blobs, and the one no entry names, go up
-    // with it; the latter with a warning.
+    // with it; then an attachment entry names the latter.
     let up = "uploaded now (taken by 1 of 1 relays)";
     let out = terse(&author.args(&["publish", &main_file, "--title", "Main"], &url));
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
@@ -141,9 +142,20 @@ fn publish_names_linked_articles() {
     let lines: Vec<&str> = stdout.lines().collect();
     assert_eq!(lines[..6], list(up, up));
     assert!(lines[6].starts_with("seq 2 blob "), "{stdout}");
-    assert!(String::from_utf8_lossy(&out.stderr).contains(&warning));
-    assert_eq!(highest(), 2);
+    assert_eq!(lines[7], format!("seq 3 attachment terse:{picture_id}"));
+    assert_eq!(lines.len(), 8, "{stdout}");
+    assert!(!String::from_utf8_lossy(&out.stderr).contains(warning));
+    assert_eq!(highest(), 3);
     assert!(relay.blobs().path(&blob_id(&picture)).exists());
+    let key = terse_net::parse_hex(&author.key).unwrap();
+    let attachment = relay.feeds().entries(&key).unwrap().into_iter().find(|e| e.entry.seq == 3).unwrap().entry;
+    assert_eq!(
+        (attachment.kind, attachment.blob, attachment.reply_to, attachment.title.as_str()),
+        (terse_net::entry::KIND_ATTACHMENT, blob_id(&picture), blob_id(main.as_bytes()), "")
+    );
+    // Not listed as an article: the feed's list shows it as an attachment.
+    let listed = ok(&author.args(&["list"], &url));
+    assert!(listed.contains("[attachment of "), "{listed}");
 
     // A part of the author's own feed that this host no longer holds
     // cannot go up with an article: refused, unless --force.
@@ -154,7 +166,7 @@ fn publish_names_linked_articles() {
     let gone_id = to_hex(&blob_id(&gone));
     let more = author.file("more.txt", format!("# More\n\nSee terse:{gone_id}.\n").as_bytes());
     let line = |up: &str| {
-        format!("link terse:{gone_id}: not held here, {up}; kept: your feed's entry #3 names it, and relays keep it while they keep that entry")
+        format!("link terse:{gone_id}: not held here, {up}; kept: your feed's entry #4 names it, and relays keep it while they keep that entry")
     };
     let out = terse(&author.args(&["publish", &more, "--title", "More"], &url));
     assert!(!out.status.success());
@@ -167,21 +179,20 @@ fn publish_names_linked_articles() {
     assert!(stderr.contains("give --force"), "{stderr}");
     let dry = terse(&author.args(&["publish", &more, "--title", "More", "--dry-run"], &url));
     assert!(!dry.status.success(), "a dry run says it would be refused");
-    assert_eq!(highest(), 3);
+    assert_eq!(highest(), 4);
     let out = ok(&author.args(&["publish", &more, "--title", "More", "--force"], &url));
-    assert!(out.starts_with(&(line("not uploaded") + "\nseq 4 blob ")), "{out}");
+    assert!(out.starts_with(&(line("not uploaded") + "\nseq 5 blob ")), "{out}");
 
-    // An hour on, the relay has dropped the picture no entry names and
-    // kept what entries name.
+    // An hour on, the relay has kept what entries name: the picture too,
+    // which its attachment entry names.
     relay.advance_clock(Duration::from_secs(3601));
     relay.collect();
-    assert!(!relay.blobs().path(&blob_id(&picture)).exists(), "dropped");
-    for kept in [&part, &theirs, main.as_bytes()] {
+    for kept in [&part, &theirs, main.as_bytes(), &picture] {
         assert!(relay.blobs().path(&blob_id(kept)).exists());
     }
 
     // An article without links publishes as before, with nothing listed.
     let plain = author.file("plain.txt", b"No links here.\n");
     let out = ok(&author.args(&["publish", &plain, "--title", "Plain"], &url));
-    assert!(out.starts_with("seq 5 blob "), "{out}");
+    assert!(out.starts_with("seq 6 blob "), "{out}");
 }

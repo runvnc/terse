@@ -11,17 +11,37 @@ import (
 // Hint is one relay hint of a feed address (NETWORK.md 4.9).
 type Hint struct {
 	Host string // as a URL writes it: an IPv6 address in brackets, shortest form
-	Port int
+	Port int    // the default port of wss:// if the hint names none
 	Text string // as written
 }
 
-// URL is the relay the hint names: ws://host:port, or wss://host for
-// port 443 (NETWORK.md 4.9).
+// Encrypted reports whether the hint names a relay over TLS: always, but
+// on localhost or a loopback address, which clients ignore in hints
+// (NETWORK.md 4.9, 5.1) and the tests reach plainly, as a loopback address
+// typed without a scheme is (NETWORK.md 3).
+func (h Hint) Encrypted() bool { return !LoopbackHost(h.Host) }
+
+// URL is the relay the hint names: wss://host (with :port unless 443),
+// or ws://host:port for a plain one (NETWORK.md 4.9).
 func (h Hint) URL() string {
-	if h.Port == 443 {
+	switch {
+	case !h.Encrypted():
+		return fmt.Sprintf("ws://%s:%d", h.Host, h.Port)
+	case h.Port == 443:
 		return "wss://" + h.Host
 	}
-	return fmt.Sprintf("ws://%s:%d", h.Host, h.Port)
+	return fmt.Sprintf("wss://%s:%d", h.Host, h.Port)
+}
+
+// LoopbackHost reports whether a host as a URL writes it is localhost or
+// a loopback IP address: a relay there is plain when no scheme is written
+// (NETWORK.md 3). Names under .localhost are not.
+func LoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip, err := netip.ParseAddr(strings.TrimSuffix(strings.TrimPrefix(host, "["), "]"))
+	return err == nil && ip.Unmap().IsLoopback()
 }
 
 // Address is a parsed feed address.
@@ -113,7 +133,7 @@ func parseHint(s string) (Hint, error) {
 	if len(s) > 80 {
 		return Hint{}, AddressError("hint-too-long")
 	}
-	h := Hint{Port: 7878, Text: s}
+	h := Hint{Text: s}
 	var host, port string
 	hasPort := false
 	if s[0] == '[' {
@@ -151,6 +171,12 @@ func parseHint(s string) (Hint, error) {
 		h.Port = p
 	}
 	h.Host = host
+	if !hasPort {
+		h.Port = 80
+		if h.Encrypted() {
+			h.Port = 443
+		}
+	}
 	return h, nil
 }
 
@@ -287,4 +313,59 @@ func RefusedIP(ip netip.Addr) bool {
 		return true
 	}
 	return false
+}
+
+// TypedRelay is a relay as a person types it (NETWORK.md 3, "Encrypted by
+// default"): a ws:// or wss:// URL as it is, or a host and maybe a port
+// without a scheme, taken as wss:// (a port is only a port), except that
+// localhost or a loopback address is taken as ws:// (this machine).
+// Empty if it is neither.
+func TypedRelay(s string) string {
+	s = strings.TrimSpace(s)
+	if IsRelayURL(s) {
+		return s
+	}
+	if s == "" || strings.Contains(s, "://") || strings.ContainsAny(s, "/ \t") {
+		return ""
+	}
+	host := s
+	if strings.HasPrefix(s, "[") {
+		end := strings.IndexByte(s, ']')
+		if end < 0 {
+			return ""
+		}
+		host = s[:end+1]
+		if rest := s[end+1:]; rest != "" && rest[0] != ':' {
+			return ""
+		}
+	} else if h, _, ok := strings.Cut(s, ":"); ok {
+		host = h
+	}
+	if host == "" || host == "[]" {
+		return ""
+	}
+	if LoopbackHost(host) {
+		return "ws://" + s
+	}
+	return "wss://" + s
+}
+
+// SplitRelayLine splits a relay line (of the relay list, or a --relay
+// value) at blanks: the relay, then its options (authority=, pin=...).
+// ok is false for an empty line or a # comment.
+func SplitRelayLine(line string) (relay string, options []string, ok bool) {
+	w := strings.Fields(line)
+	if len(w) == 0 || strings.HasPrefix(w[0], "#") {
+		return "", nil, false
+	}
+	return w[0], w[1:], true
+}
+
+// NetworkRelayUsable reports whether a relay URL named by the network (a
+// profile's relay line, a hint) whose host is host may be used: it is
+// encrypted (a plain relay named by the network is not used unless it is
+// one of the user's own, which serve every feed anyway: NETWORK.md 3, no
+// downgrade) and its host is not refused (NETWORK.md 5.1).
+func NetworkRelayUsable(u, host string) bool {
+	return strings.HasPrefix(u, "wss://") && !RefusedHost(host)
 }

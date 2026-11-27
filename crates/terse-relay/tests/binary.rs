@@ -77,7 +77,7 @@ fn public_relay_and_graceful_stop() {
     for line in [
         "arrival-log 0 records, 0 bytes; bound 1024 records (2 x 0 entries kept + 1024)",
         "subscriptions 0 on 1 client connections, for 0 feeds; bound 1024 per connection",
-        "connections 1 (1 in all with peers and in-process); bound 1000",
+        "connections 1 (1 in all with peers and in-process); bound 150",
         "address-table 1 addresses; bound 8192 + 1",
         "store 0 bytes; bound 1073741824",
     ] {

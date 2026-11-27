@@ -818,7 +818,8 @@ fn help_shows_the_own_address() {
 /// A profile of carol's (the host's own feed, NETWORK 4.6) whose relay
 /// lines name public relays and a private one, stored as received.
 fn carol_profile_with_relays(f: &Fixture) {
-    let doc = b"listed: no\nrelay: ws://192.168.1.5:7878\nrelay: ws://relay.example:7878\nrelay: ws://[2001:db8::7]:9000/\n";
+    // Encrypted relays only are given as hints (NETWORK 4.9).
+    let doc = b"listed: no\nrelay: wss://192.168.1.5:7878\nrelay: ws://plain.example:7878\nrelay: wss://relay.example\nrelay: wss://[2001:db8::7]:9000/\n";
     BlobStore::open(f.store.path(), None).unwrap().put(doc).unwrap();
     let e = terse_net::Entry::profile(carol().feed_key(), 9, T0, doc, "Carol").sign(&carol()).unwrap();
     terse_net::FeedStore::beside_blobs(f.store.path()).insert(&e).unwrap();

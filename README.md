@@ -380,12 +380,15 @@ images were built with clang and LLD 23.1.4.
   `<config>/relays` (starting from an older `<config>/relay` file if there is no
   list); `relay set <url>` replaces the list with one URL; `relay list` (or `show`)
   prints it (exit status 1 if it is empty). A host given without `ws://` or
-  `wss://` is taken as `wss://host` (over TLS; README "Relays over TLS").
+  `wss://` is taken as `wss://host` (encrypted, whatever the port), and
+  `localhost` or a loopback address as `ws://` ("Encrypted unless written
+  otherwise").
 
 An `<id>` is 64 hex digits, looked up in the blob store and then on the relays;
 the bytes are verified against the ID. `--store` defaults to
-`$XDG_CACHE_HOME/terse/blobs` (else `~/.cache/terse/blobs`; `~/Library/Caches/terse/blobs` on macOS; `%LOCALAPPDATA%\terse\blobs` on Windows). Relays are `ws://` or
-`wss://` ("Relays over TLS"). `--relay` may be given several times, and every command that takes it
+`$XDG_CACHE_HOME/terse/blobs` (else `~/.cache/terse/blobs`; `~/Library/Caches/terse/blobs` on macOS; `%LOCALAPPDATA%\terse\blobs` on Windows). Relays are `wss://` or
+`ws://` URLs, or hosts without a scheme ("Relays over TLS", "Encrypted unless written
+otherwise"). `--relay` may be given several times, and every command that takes it
 also takes `--no-feed-relays`. The arrival order of entries (the timeline, SPEC §content.feeds) is kept in
 `<store>/feeds/arrivals`.
 
@@ -526,7 +529,7 @@ with these defaults (each can be given on its own, and changed):
 | Bytes put per address | 32 MiB an hour | `--upload-bytes-per-hour` |
 | Entries of feeds new to the relay, per address and in all | 3 and 60 an hour | `--new-feeds-per-hour`, `--new-feeds-per-hour-total` |
 | Finds and lookups per address (and 4 a second per connection) | 60 a minute | `--finds-per-minute` |
-| Connections per address, and in all | 32, 1000 | `--connections-per-address`, `--max-connections` |
+| Connections per address, and in all | 32, 150 | `--connections-per-address`, `--max-connections` (or `--memory`) |
 | Feeds one connection may subscribe to | 1024 | `--subscriptions-per-connection` |
 | A status line on stderr | every 10 minutes | `--status-every`, `--status-file` |
 
@@ -535,8 +538,10 @@ traffic it has seen (NETWORK.md section 5.3, "The reference relay's bounds"): th
 of when entries arrived is compacted to the entries still kept, the table of addresses
 has 8192 places, and so on. The status file (`--status-file`) has a line for each such
 table or log, with where it stands and its bound. Memory also grows with connections:
-each may hold a message of up to 1 MiB while it arrives, so on a small server give
-`--max-connections` a number that fits (200 for 1 GB of memory, say).
+each may hold the largest message (up to 2 MiB) while it arrives, with its queue and
+thread about 3 MiB at worst, so `--public` allows 150 (about 514 MiB at worst before the
+index); `--memory <size>` sets the number from the memory you give the relay, and the
+status line says the worst case ("memory at worst ... MiB").
 
 An address is an IPv4 address or an IPv6 /64. A refusal tells the client why, and for
 a rate when to try again (NETWORK.md section 3.1); `terse feed publish` and `terse put`
@@ -551,7 +556,56 @@ are taken from anyone into the room for blobs no entry names; an address that no
 the listed feeds has published from in the last day has 1 MiB of it (one article) and
 such addresses have half the room in all. Since those blobs are not served and go after
 an hour, the list leaves nothing to host for free. Entries a peer sends are held to the
-list too.
+list too. A list of writers closes publishing; to keep it open to everyone, use the
+limits above and a deny list instead.
+
+**Removing what does not belong.** `--deny <file>` is the operator's list of what this
+relay refuses (NETWORK.md 5.3, "Its own policy"), one item a line with a reason that
+stays on the server, `#` comments:
+
+    feed 3fa9…c21e07 spam, reported 2026-11-22
+    blob 8d01…5a2f   notice received 2026-11-23
+    address 198.51.100.0/24 flood
+
+A denied feed's entries are refused (status 3) and its subscriptions end (a client's
+next subscribe is refused); its stored entries, and the blobs only it names, are removed
+in batches of 64, with requests answered between batches. A denied blob is never
+stored or served (a get is "not found"), removed if present, and an entry naming it is
+refused. A connection from a denied address is refused at the handshake (HTTP 403;
+behind Cloudflare it is the client's address from `--trust-proxy`), and an open one is
+closed. The file is read again within 2 s of a change or at once on SIGHUP; a file with
+a bad line is not taken (the relay says so and keeps the list it has); the denial holds
+over a restart, and what was left on disk is removed at start. Peers do not pass
+denials on: each operator decides for their own relay, and a mirror's refusal of what a
+peer sends is not sent again.
+
+To look before deciding, and to deny, on the server (read-only views of the store's
+files: no network, safe while the relay runs):
+
+    terse-relay feeds /var/lib/terse-relay/store --by size --limit 20    # or --by arrival
+    terse-relay feed /var/lib/terse-relay/store <key>      # its entries: seq, time, kind, size, title
+    sudo -u terse-relay terse-relay deny /etc/terse-relay/deny feed <key> spam, reported by mail
+    sudo -u terse-relay terse-relay allow /etc/terse-relay/deny feed <key>
+    terse-relay deny /etc/terse-relay/deny                 # the list
+
+`deny` and `allow` check the file and write it through a new file renamed over the old,
+so a running relay never reads half a file; the relay applies it within 2 s. `allow`
+does not bring back what was removed. The status line counts the denied items, what
+was removed, and the refusals (`denied-feed`, `denied-blob`, `denied-address`).
+
+**What the limits do and do not protect against.** Cloudflare absorbs floods of
+connections and traffic before they reach the server, and hides its address. The
+relay's limits bound what one address can do: how much it stores, how fast it publishes
+and searches, how many feeds it starts, how many connections it holds; blobs no entry
+names are not served and go after an hour, so the relay is no free file host. What they
+do not do: keys cost nothing, so a person who wants to publish abuse makes new feeds;
+the per-address rate of new feeds (3 an hour) and the deny list by address (a range,
+for someone who changes addresses) are the tools against that, and an operator who sees
+it often can close publishing with `--writers`. Nothing reads what is published: the
+operator learns of abuse from the status line (feeds, entries, refusals), `terse-relay
+feeds --by arrival`, and reports. Many addresses together (a botnet) can still use up
+the totals (`--new-feeds-per-hour-total`, `--unreferenced-bytes`, `--max-connections`):
+the relay then refuses everyone for a while, but stays up and keeps what it holds.
 
 **Over TLS.** People reach a public relay with `wss://` (WebSocket over TLS), so that
 no one on the way can see which feeds and articles they read. (Nothing could be forged
@@ -573,12 +627,12 @@ Never trust a range anyone else can connect from: the header is easy to forge. T
 relay pings a silent connection every 30 s, inside Cloudflare's 100 s idle limit.
 
 For the first public relay, `wss://relay.tersenet.org` (Ubuntu, 1 CPU, 949 MB of
-memory, 16 GB of disk free), with a list of writers, the relay listens on loopback only
-and a [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/)
+memory, 16 GB of disk free), open to everyone with a deny list, the relay listens on
+loopback only and a [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/)
 (`cloudflared`) carries `wss://relay.tersenet.org` to it:
 
     terse-relay --public --listen 127.0.0.1:7878 --store /var/lib/terse-relay/store \
-        --max-store-bytes 12G --max-connections 256 --writers /etc/terse-relay/writers \
+        --max-store-bytes 12G --memory 512M --deny /etc/terse-relay/deny \
         --trust-proxy 127.0.0.1,::1 --status-file /run/terse-relay/status
 
 Why a tunnel: `cloudflared` connects out to Cloudflare, so the server opens no port at
@@ -594,11 +648,15 @@ current. `cloudflared` takes about 30–50 MB of memory.
 
 Why these numbers: 12 GB of blobs leaves the system, the logs, the entry files (one
 small file each) and a backup's staging room on a 16 GB disk. Memory is what bounds the
-connections: each is a thread, and while it receives a large put it holds up to about
-2 MiB, so 256 connections stay under 600 MB in the worst case (the unit's `MemoryMax`);
-idle ones cost far less. The relay's index of what it holds takes about 100 bytes per
-entry, and with a list of writers the entries are only the writers' (at most 1024 per
-feed), so it stays small; an open relay should watch the status line's entry count.
+connections: each is a thread, and while it receives the largest put it holds up to
+2 MiB, with its queue of entries to send and its stack about 3 MiB at worst; idle ones
+cost far less. `--memory 512M` allows (512 − 64) / 3 = 149 connections, so the
+connections and the program take at most about 511 MiB, under the unit's `MemoryMax`
+of 600 MB with room for the index of what the relay holds (about 200 bytes per entry:
+88 MiB is some 450,000 entries). The status line says the worst case with the index as
+it is ("memory at worst ... MiB"); an open relay should watch it and the entry count.
+`--public` alone allows 150 connections (about 514 MiB at worst before the index): safe
+on a 1 GB server; `--max-connections` or `--memory` changes it.
 Every connection comes through `cloudflared` on loopback, hence `--trust-proxy
 127.0.0.1,::1`: Cloudflare's edge sets `CF-Connecting-IP`, and only the tunnel can
 connect from there.
@@ -619,21 +677,22 @@ install it. Then:
      client is redirected (and told to use `wss://`) instead of talking in plain text;
      Network, WebSockets on (it is by default).
   5. Check from anywhere: `echo hello > /tmp/hello.txt; terse put /tmp/hello.txt --relay wss://relay.tersenet.org`
-     prints "taken by 1 of 1 relays" (a put needs no writer: it goes to the room for
-     blobs no entry names), or why the relay could not be connected.
+     prints "taken by 1 of 1 relays" (it goes to the room for blobs no entry names),
+     or why the relay could not be connected.
 - **Firewall**: no rule to add; the server keeps denying every incoming connection but
   SSH. `cloudflared` connects out on port 7844 (UDP, or TCP if UDP is blocked), which
   ufw's default (outgoing allowed) permits.
 - **What it is doing**: `journalctl -u terse-relay | grep status` (every 10 minutes) or
   `cat /run/terse-relay/status`: bytes stored, feeds, entries, blobs waiting for an
-  entry, connections, blobs collected, entries dropped, and refusals by reason. Logs
+  entry, connections, blobs collected, entries dropped, what is denied and was removed,
+  the memory at worst, and refusals by reason. Logs
   name a client by its /24 (IPv4) or /48 (IPv6) only. `systemctl status cloudflared`
   for the tunnel.
 - **Backups**: the store directory is all there is (`<store>/feeds` holds the entries).
   A blob or entry file is never changed once written, so copying it while the relay
   runs is safe: `rsync -a --exclude '.*.tmp' /var/lib/terse-relay/store/ backup:`. A
   restored relay rebuilds its index at start; blobs no entry names wait from their
-  file times. The writers file is in `/etc/terse-relay`.
+  file times. The deny list (and a writers file, if any) is in `/etc/terse-relay`.
 - **Stopping**: SIGTERM (`systemctl stop`) closes every connection with a close frame;
   what was acknowledged is on disk already.
 
@@ -644,21 +703,88 @@ it), then run the relay on port 443 with
 (the files readable by its user; `AmbientCapabilities=CAP_NET_BIND_SERVICE` in the
 unit for the port) and a renewal hook that reloads it:
 `--deploy-hook "systemctl reload terse-relay"`. People then use
-`wss://relay.example.org`, and the feed address hint `relay.example.org:443`.
+`wss://relay.example.org`, and the feed address hint `relay.example.org`.
 
 **Relays over TLS** (for everyone who uses one). A `wss://` relay's certificate is
 checked as a browser checks a web site's: it must come from a known certificate
 authority and be for the relay's name. `terse`, `terse-host` and `terse node` carry the
 usual authorities built in (Mozilla's list, the same on every system; a release
 updates it), and `tersereader` uses the system's. Nothing turns the check off. For a
-self-hosted relay with a certificate from a private CA, name the CA's PEM file in
-`TERSE_RELAY_CA` (all four programs read it, and `terse-relay` for its `--peer`s). When
-a relay cannot be used, the programs say why: "the relay's certificate is not trusted",
-"the relay's certificate is for another name", "has expired", "this relay requires TLS
-(try wss://)", "this relay does not speak TLS (try ws://)". `terse relay add
-relay.tersenet.org` (a name without `ws://` or `wss://`) adds `wss://relay.tersenet.org`.
-A feed address hint names a relay over TLS by port 443: `relay.tersenet.org:443` is
-`wss://relay.tersenet.org` (NETWORK.md 4.9).
+relay whose certificate comes from a private authority, see "Private authorities and
+pins" below. When a relay cannot be used, the programs say why: "the relay's certificate
+is not trusted", "the relay's certificate is for another name", "has expired", "does not
+match the key pinned for it", "is not from the authority pinned for it", "this relay
+requires TLS (try wss://)", "this relay does not speak TLS (try ws://)".
+
+**Private authorities and pins.** A person or an organisation can run relays that the
+public authorities do not vouch for, and tell the programs, in their own settings only
+(NETWORK.md 3: nothing received from the network can do it), what to trust:
+
+- **An authority for every relay**: put its certificate (PEM) in
+  `<config>/authorities/` (`<config>` is `terse`'s config folder, README "Feeds";
+  `tersereader`'s is its `--dir`). Every `*.pem` file there is trusted, besides the
+  public authorities. `TERSE_RELAY_CA=<file>` does the same for one run (all four
+  programs read it, and `terse-relay` for its `--peer`s), and so does
+  `--relay-authority <file>` (`terse`, `terse-host`, `terse node`, `tersereader`).
+- **For one relay only**, options after it on its line of the relay list
+  (`<config>/relays`), or in a `--relay` value (quoted, one argument):
+  - `authority=<file>`: trust this authority for this host too;
+  - `only-authority=<file>`: trust only this authority for this host;
+  - `pin=sha256:<64 hex digits>`: accept for this host only the certificate, or the
+    public key, with this fingerprint. `terse relay fingerprint <cert.pem>` prints
+    both; the key's stays the same when a certificate is renewed with the same key.
+
+  With `only-authority` or `pin`, nothing else is accepted for that host, a public
+  authority's certificate included; both may be given, and several pins (for a key
+  change). A file is relative to `<config>`; do not put a one-host authority in
+  `authorities/`, where it would be trusted for every relay. An option applies to the
+  host it is written with, whatever relay or hint later names that host, and to no
+  other. A plain relay (`ws://`) takes no options: it has no certificate.
+
+      # <config>/relays
+      wss://relay.tersenet.org
+      wss://relay.corp.example only-authority=corp-ca.pem
+      wss://203.0.113.7:7443 pin=sha256:3b0c…(64 digits)
+      ws://192.168.1.20:7878
+
+  `terse relay add wss://relay.corp.example only-authority=corp-ca.pem` writes such a
+  line (the options are checked first); `terse relay list` shows the lines. There is no
+  setting that accepts any certificate. `terse-relay --peer` takes the same options in
+  its value (`--peer "wss://b.example pin=sha256:..."`).
+
+**A relay on a home or office network.** The simple way is plain: run `terse-relay
+--listen 0.0.0.0:7878` and write `ws://192.168.1.20:7878` in each client's relay list
+(a plain relay is never advertised, so others reach it only if they write it too). The
+recommended way is encrypted, with a self-signed certificate pinned in each client:
+
+    # on the relay's machine: a certificate for ten years, and the relay over TLS
+    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 3650 \
+        -subj /CN=relay.home -keyout relay.key -out relay.pem
+    terse-relay --listen 0.0.0.0:7443 --store ~/terse-relay --tls-cert relay.pem --tls-key relay.key
+    # anywhere: the fingerprint to pin (copy relay.pem there, or read it out)
+    terse relay fingerprint relay.pem
+    # on each client: the relay, pinned (nothing else is accepted for that host)
+    terse relay add wss://192.168.1.20:7443 pin=sha256:<the key's fingerprint>
+
+The pin takes the place of an authority and of the name check, so the certificate
+needs no particular name. An organisation with its own authority gives clients
+`only-authority=` or a file in `authorities/` instead.
+
+**Encrypted unless written otherwise** (NETWORK.md 3). A relay written without
+`ws://` or `wss://`, on the command line (`--relay`), in the relay list or as a feed
+address hint, is encrypted: `relay.tersenet.org` is `wss://relay.tersenet.org`, and
+`relay.example.org:9000` is `wss://relay.example.org:9000` (a port is only a port). A
+plain relay is written `ws://host:port`, in your own relay list or on your command line;
+it is for this machine, a private network or tests. The one exception is this machine
+itself: `localhost:7878` or `127.0.0.1:7878` without a scheme is
+`ws://127.0.0.1:7878`, the local relay. Nothing that goes on the network names a plain
+relay: a hint has no scheme and always means `wss://`, a profile lists only `wss://`
+relays (a `ws://` line in someone's profile is skipped), and your own address and
+profile never give out a plain relay (`terse profile set` says which it left out). So
+the programs connect without encryption only to relays you wrote so yourself. On a
+home or office network, the recommended way is still encrypted: give the relay a
+self-signed certificate and pin it ("Private authorities and pins").
+
 
 ## Feeds
 
@@ -685,8 +811,10 @@ Commands:
   whether relays keep it (an entry of your feed names it) or it is link-only (another feed's,
   kept where that feed is kept, or unknown here). An entry names one blob (NETWORK.md 4.2),
   so a relay that drops blobs no entry names (NETWORK.md 5.3) keeps a linked article only
-  while an entry names it: a link to a blob held here that no entry names is uploaded with
-  a warning (publish that blob as an article of its own to keep it). An article linking to
+  while an entry names it: a link to a blob held here that no entry names is uploaded, and
+  after the article an attachment entry of your feed (kind 5, NETWORK.md 4.2: it names the
+  part, and the article in its reply-to; readers do not list it) names it, so relays keep
+  it with the article; publish prints `seq N attachment terse:<id>` for each. An article linking to
   a blob of your feed that this host does not hold is refused, unless `--force`.
   `--dry-run` lists the links and publishes nothing.
 - `feed publish --program <image.terse> [--name <n>]` checks the image and publishes
@@ -699,12 +827,14 @@ Commands:
 - `feed subscribe <address>`, `feed unsubscribe <address>`, `feed subscriptions` (each
   feed's key, then its name if known: your nickname, else the name its profile declares,
   then the hints it was subscribed with). An address is a key, optionally `@` and one or
-  two relays (`host` or `host:port`, NETWORK.md 4.9), also as a `terse:feed/` link; the
+  two relays (`host` or `host:port`, always encrypted; NETWORK.md 4.9),
+  also as a `terse:feed/` link; the
   hints are kept in `<config>/subscription-hints`. `feed sync` follows a feed on its
   hinted relays when your relays hold none of it (public addresses only; not with
   `--no-feed-relays`), and says which feeds no relay held. `feed address` prints your
-  own address: your key and up to two public relays from your profile, then your relay
-  list.
+  own address: your key and up to two public encrypted (`wss://`) relays from your
+  profile, then your relay list; a plain relay is never given out, so a user whose only
+  relay is plain (the local one, say) gets the bare key and a note.
 - `feed nickname <key> [<name>]` sets your own name for a feed, kept only in
   `<config>/nicknames`; without a name it removes it. It is shown instead of the
   declared name.
@@ -712,8 +842,11 @@ Commands:
   profile (NETWORK.md section 4.6): a display name (1 to 48 bytes, no control
   characters, no space at either end), whether search may find it (default: as your
   current profile says, else not), a description (default: the current one), and a
-  `relay` line for each of your relays (the `--relay` options, else your list) that is
-  not a loopback address. `profile show [<key>]` prints a profile held locally (yours
+  `relay` line for each of your encrypted (`wss://`) relays (the `--relay` options, else
+  your list) that is not a loopback address. A profile can only list encrypted relays:
+  a `ws://` relay is left out, with the note "a profile can only list encrypted relays
+  (wss://); ws:// relays are for your own machine and private networks, in your own
+  relay list", and the profile is published all the same. `profile show [<key>]` prints a profile held locally (yours
   by default). Names are self-declared and not unique: every listing shows the key
   beside the name.
 - `find <text>` asks your relays for listed feeds whose name contains the text
@@ -1564,11 +1697,12 @@ the rest.
 
 ### Phosphor style
 
-`vec_style(VEC_STYLE_PHOSPHOR)` (SPEC §vector.phosphor) asks for the look of a vector
-monitor tube. Every host must draw the background black (cell and page backgrounds
+`vec_style(VEC_STYLE_PHOSPHOR)` (SPEC §vector.phosphor) asks for a vector display,
+real or simulated. Every host must draw the background black (cell and page backgrounds
 are not drawn), shapes and the page's figures as outlines, and the text in its
-colours, legible; the look beyond that (light that adds up, glow, afterglow) is the
-host's choice, and a host that draws plain lines conforms. In `terse-host` the shapes
+colours, legible; how it looks beyond that is the host's choice, and a host that
+draws plain lines conforms. The rest of this section is the reference host's own
+look, not a requirement. In `terse-host` the shapes
 add light instead of covering, and the terminal's text is light on the same tube.
 What the program shows now is drawn at full brightness each frame; an afterglow of
 earlier frames fades behind it, fast at first and then with a dim tail multiplied by

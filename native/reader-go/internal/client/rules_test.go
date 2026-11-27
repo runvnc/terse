@@ -467,7 +467,9 @@ func TestHintsNotSuppressedByRefusedProfileRelay(t *testing.T) {
 		suppress bool
 	}{
 		{"relay: ws://127.0.0.1:1\nrelay: ws://localhost:2\n", false},
-		{"relay: ws://127.0.0.1:1\nrelay: ws://relay.example:7001\n", true},
+		{"relay: ws://127.0.0.1:1\nrelay: wss://relay.example:7001\n", true},
+		// A plain relay named by the network is never used (NETWORK.md 3).
+		{"relay: ws://relay.example:7001\n", false},
 	} {
 		st := openStore(t)
 		opt := testOptions()
@@ -492,6 +494,30 @@ func TestHintsNotSuppressedByRefusedProfileRelay(t *testing.T) {
 		if n != 0 {
 			t.Errorf("%q: %d connections made", tc.doc, n)
 		}
+	}
+}
+
+// Nothing from the network names a plain relay (NETWORK.md 3): an
+// address whose hint has a scheme is malformed, and a plain relay line of
+// a profile is invalid, so it is never used.
+func TestNoPlainRelayFromTheNetwork(t *testing.T) {
+	f := newFeed(t)
+	for _, hints := range []string{"ws:relay.example:7001", "ws://relay.example:7001", "relay.example,ws:203.0.113.9"} {
+		if _, err := terse.ParseAddress(terse.KeyHex(f.key[:]) + "@" + hints); err == nil {
+			t.Errorf("%s: taken as hints", hints)
+		}
+	}
+	st := openStore(t)
+	opt := testOptions()
+	opt.AllowPrivate = false
+	cl := New(st, opt)
+	defer cl.Stop()
+	addProfile(t, st, f, 1, "relay: ws://relay.example:7002\n")
+	if p, ok := st.Profile(f.key); !ok || len(p.Relays) != 0 {
+		t.Errorf("profile relays %v: want the plain line skipped", p.Relays)
+	}
+	if pr := cl.profileRelays(f.key); len(pr) != 0 {
+		t.Errorf("plain profile relays used: %v", pr)
 	}
 }
 
@@ -568,13 +594,16 @@ func TestFeedRelaysFollowProfileInForce(t *testing.T) {
 		}
 		return out
 	}
-	setProfile(1, "relay: "+p1.url+"\n")
-	if got := feedRelays(); len(got) != 1 || got[0] != p1.url {
-		t.Fatalf("feed relays %v, want [%s]", got, p1.url)
+	// A profile lists encrypted relays only (NETWORK.md 4.6): the relays
+	// are named wss:// (whether they answer does not matter here).
+	u1, u2 := "wss://"+strings.TrimPrefix(p1.url, "ws://"), "wss://"+strings.TrimPrefix(p2.url, "ws://")
+	setProfile(1, "relay: "+u1+"\n")
+	if got := feedRelays(); len(got) != 1 || got[0] != u1 {
+		t.Fatalf("feed relays %v, want [%s]", got, u1)
 	}
-	setProfile(2, "relay: "+p2.url+"\n")
-	if got := feedRelays(); len(got) != 1 || got[0] != p2.url {
-		t.Fatalf("feed relays %v, want [%s]", got, p2.url)
+	setProfile(2, "relay: "+u2+"\n")
+	if got := feedRelays(); len(got) != 1 || got[0] != u2 {
+		t.Fatalf("feed relays %v, want [%s]", got, u2)
 	}
 	// A profile in force whose document is not held names no relays.
 	mustAdd(t, st, f.entryFor(3, terse.KindProfile, []byte("listed: yes\n"), "Name"))
