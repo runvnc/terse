@@ -66,4 +66,4 @@ The reader also gets the first 8 article links of an article as you open it, so 
 
 ## Where to go next
 
-How articles are written: [Writing an article](terse:2c34635be0d3910e4131c8f41559778e0e4beea2e3e0e8dd2a5a20f080752eda). How the shell's devices work: [The machines device](terse:38b9bf3e50d09f10cd38c647ac8b0da8d5068a709ccab98eaf5114bec910d046). Feeds and consent from a program's side: [Feeds](terse:88a315078b2fe626b1e050d161a2207c7088138395f9ed229b92b08e6d01097e).
+How articles are written: [Writing an article](terse:2c34635be0d3910e4131c8f41559778e0e4beea2e3e0e8dd2a5a20f080752eda). How the shell's devices work: [The machines device](terse:b756d4178e2a831e38fc7a19ca7d43f169dffe1751bd18d6db3dda7803213d9f). Feeds and consent from a program's side: [Feeds](terse:0c0094ecc37408497dd40e0210b2ea42d0f62b13014ffe13a6e997b0f602d3a9).

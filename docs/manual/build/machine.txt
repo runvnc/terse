@@ -11,7 +11,7 @@ The machine is the optional third layer of Tersenet: the network and the
 article format are the core, and a reader can implement them without
 it. Which devices a host provides (the reading and the program profile)
 and how a program does without some is in
-[the system device](terse:aafdc7735f8bfca7ed199fa9da79cd52a4729fe5c2bc44cbbaacf5f4270db0f0).
+[the system device](terse:a21c203f96e190cf8e674e66b350b1909137412eacf5661857870728d7df295d).
 
 ## CPU
 
@@ -201,7 +201,7 @@ and the inline functions `terse_call`, `terse_call4`, `terse_call5` and
 
 ## Call table
 
-Every call of every device, with its number, arguments, result and class, is in [the call table](terse:f3d290eb1595bad71029eca23f375e415c1f51970844d67dee5adcc1e763480a).
+Every call of every device, with its number, arguments, result and class, is in [the call table](terse:c713c55c213a5299d8fdd07eb269849cf603c72c319de68117464da518765344).
 
 ## Screen units
 

@@ -6,7 +6,7 @@ Class sets the base charge: 4 for a deferred call (its result and charge
 follow from its arguments), 64 for an answered one (they depend on the
 device's state). System and Machines calls cost 4.
 
-[The system device](terse:aafdc7735f8bfca7ed199fa9da79cd52a4729fe5c2bc44cbbaacf5f4270db0f0), slot 1, always present:
+[The system device](terse:a21c203f96e190cf8e674e66b350b1909137412eacf5661857870728d7df295d), slot 1, always present:
 
 | `a7` | Call | Arguments | Result |
 |---|---|---|---|
@@ -20,8 +20,9 @@ device's state). System and Machines calls cost 4.
 | `107h` | `open` | `a0` = address of an open request (read) | 1 passed to the shell, 0 not |
 | `108h` | `argument` | `a0` = buffer (32 bytes, written) | 1, or 0 if the machine has none |
 | `109h` | `device` | `a0` = device slot | its version, or `FFFF_FFFFh` if absent |
+| `10Ah` | `copy` | `a0` = text (read), `a1` = length, at most 65,536 | 0 (the host takes it only for the user's copy key) |
 
-[The terminal](terse:f7166a47224712fd9257ef274f3efdf1406d59a9da629fde257ea92be7f5fadb), slot 2:
+[The terminal](terse:2320c61ee19368dc03275f54529d1e0a6d5886d3fc4654b275bfc321cb23db09), slot 2:
 
 | `a7` | Call | Arguments | Result | Class |
 |---|---|---|---|---|
@@ -36,7 +37,7 @@ device's state). System and Machines calls cost 4.
 | `208h` | `palette_set` | `a0` = first entry, `a1` = buffer (read), `a2` = count | the count | deferred |
 | `209h` | `size` | none | `a0` = 80 columns, `a1` = 30 rows | deferred |
 
-[The 2D vector display](terse:98ad814527090ebeec02685af50395bc1050416be1f138009233a9b3e813889b), slot 3:
+[The 2D vector display](terse:3f558b8d18d32657c7ccf91702ba5af38db49c1442bb8ba108386f38e86960c6), slot 3:
 
 | `a7` | Call | Arguments | Result | Class |
 |---|---|---|---|---|
@@ -46,7 +47,7 @@ device's state). System and Machines calls cost 4.
 | `303h` | `persistence` | `a0` = persistence | 0 done, 1 rejected | deferred |
 | `304h` | `fill` | `a0` = fill mode | 0 done, 1 rejected | deferred |
 
-The content device, slot 4 (see [blobs](terse:226a65d577235a6967dec9f65f2640363e15d088d0499a1de3c953726d19aec8), [feeds](terse:88a315078b2fe626b1e050d161a2207c7088138395f9ed229b92b08e6d01097e) and [named records](terse:9119ea50b1c9e156a3c6d891bf910d8f057471672bd3aa57c98f07a559c8680f)):
+The content device, slot 4 (see [blobs](terse:325094c30918dfaa2daf4b9e48027f6e49851f8cd74486c969bb23ae05d12f87), [feeds](terse:0c0094ecc37408497dd40e0210b2ea42d0f62b13014ffe13a6e997b0f602d3a9) and [named records](terse:bbd86d19c4c2cfb492bebe681c39505e4c76e01acf6b35c3836859462e4ba920)):
 
 | `a7` | Call | Arguments | Result | Class |
 |---|---|---|---|---|
@@ -63,7 +64,7 @@ The content device, slot 4 (see [blobs](terse:226a65d577235a6967dec9f65f2640363e
 | `704h` | `background` | `a0` = colour | 0 | deferred |
 | `705h` | `locate` | `a0` = anchor id | 0 done, 1 rejected | answered |
 
-[Machines](terse:38b9bf3e50d09f10cd38c647ac8b0da8d5068a709ccab98eaf5114bec910d046), slot 8, the shell only (buffer sizes in bytes):
+[Machines](terse:b756d4178e2a831e38fc7a19ca7d43f169dffe1751bd18d6db3dda7803213d9f), slot 8, the shell only (buffer sizes in bytes):
 
 | `a7` | Call | Arguments | Result |
 |---|---|---|---|
@@ -86,7 +87,7 @@ The content device, slot 4 (see [blobs](terse:226a65d577235a6967dec9f65f2640363e
 | `810h` | `unface` | `a0` = frames | 1, or 0 if refused |
 | `811h` | `experimental` | `a0` = handle, `a1` = index, `a2` = buffer (32, written) | 2 granted, 1 not, 0 none |
 
-[The 3D vector display](terse:6f0ccaff33809b8cb97d2f3048d15b2b31c539d13f4e3694018f6003466415fe), slot 9:
+[The 3D vector display](terse:9a2828b2cf3e32e74f69b523e6ebfac894b57600ea914bcc3dae568651fbffae), slot 9:
 
 | `a7` | Call | Arguments | Result | Class |
 |---|---|---|---|---|
