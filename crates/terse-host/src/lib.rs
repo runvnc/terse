@@ -177,7 +177,7 @@ const USAGE: &str = "usage:
   (at most 8) and, for feeds whose profile names relays, to up to two of those too, unless
   --no-feed-relays. --screenshot and --selftest use relays only with --relay. A relay without a
   scheme is wss:// (encrypted) whatever its port, but localhost or a loopback address is ws://;
-  relays others name (profile relay lines, hints) are used only over wss://. A --relay value may
+  hints and profiles never name a plain relay. A --relay value may
   carry options as a line of <config>/relays does (authority=, only-authority=, pin=), and
   --relay-authority <file> trusts a PEM file's authorities for every relay (README \"Private
   authorities and pins\").

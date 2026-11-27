@@ -92,8 +92,8 @@ Relays: info, put, get, feed publish, feed sync, feed read, profile set, find an
 <config>/relays (`terse relay add` and `set` write it; an older <config>/relay file is read
 if there is no list), else a relay running on this machine (ws://127.0.0.1:7878), else none
 (sync then fails). A relay written without a scheme is wss:// (encrypted) whatever its port, but
-localhost or a loopback address is ws://; relays others name (profile relay lines, hints) are used
-only over wss://. A wss:// relay's certificate must be trusted: the usual authorities are
+localhost or a loopback address is ws://; ws://host:port names a plain relay (yours only: hints, profiles
+and your own address never name one). A wss:// relay's certificate must be trusted: the usual authorities are
 built in; a private authority is trusted from <config>/authorities/*.pem, TERSE_RELAY_CA or
 --relay-authority <pem> (every relay), or by a relay's options in <config>/relays or in a --relay
 value (authority=, only-authority=, pin=; README \"Private authorities and pins\"). Puts and publishes go to every relay; gets ask them in turn. Feeds

@@ -6,9 +6,9 @@ Which relays a client reaches with encryption, and which certificates it accepts
 
 A relay written without a scheme is encrypted: `relay.example.org` means `wss://relay.example.org`, and `relay.example.org:9000` means `wss://relay.example.org:9000`. A port is only a port; it says nothing about encryption. This holds wherever a relay is written: on a command line (`--relay`), in the relay list, and in the hints of a feed address.
 
-A plain relay is written with its scheme, `ws://host:port` (in a hint, `ws:host:port`). Plain relays are for this machine, a private network and tests. The one exception: `localhost` or a loopback address without a scheme (`127.0.0.1:7878`, the local relay) is plain, since its traffic never leaves the machine. A client never takes such an address from the network.
+A plain relay is written with its scheme, `ws://host:port`, in your own relay list or on your command line. Plain relays are for this machine, a private network and tests. The one exception: `localhost` or a loopback address without a scheme (`127.0.0.1:7878`, the local relay) is plain, since its traffic never leaves the machine. A client never takes such an address from the network.
 
-No downgrade: a client connects without encryption only to relays its user wrote as plain. A plain relay named by someone else, in a profile's `relay` line or a hint in a link, is not used, and a failed encrypted connection is never tried again in plain.
+Nothing that goes on the network names a plain relay: a hint has no scheme and always means `wss://`, a profile lists only `wss://` relays (a `ws://` line is invalid and skipped), and a client never gives out a plain relay in its address or profile (`terse profile set` leaves it out and says so). So a client connects without encryption only to relays its user wrote as plain, and a failed encrypted connection is never tried again in plain.
 
 ## Certificates
 
@@ -30,5 +30,18 @@ ws://192.168.1.20:7878
 ```
 
 Nothing received from the network (a hint, a profile, a link, an entry) can add an authority, a pin or a plain connection: those come only from the user.
+
+## A relay on a home or office network
+
+The simple way is plain: `terse-relay --listen 0.0.0.0:7878`, and `ws://192.168.1.20:7878` in each client's relay list. The recommended way is encrypted, with a self-signed certificate that each client pins:
+
+```
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 3650 -subj /CN=relay.home -keyout relay.key -out relay.pem
+terse-relay --listen 0.0.0.0:7443 --store relay-store --tls-cert relay.pem --tls-key relay.key
+terse relay fingerprint relay.pem
+terse relay add wss://192.168.1.20:7443 pin=sha256:…
+```
+
+The pin stands for an authority and for the name check, so the certificate needs no particular name.
 
 When a relay cannot be used, the programs say why: "the relay's certificate is not trusted", "is for another name", "does not match the key pinned for it", "is not from the authority pinned for it", "this relay requires TLS (try wss://)", "this relay does not speak TLS (try ws://)".

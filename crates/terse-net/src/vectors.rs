@@ -807,24 +807,25 @@ fn profiles_file() -> String {
     }
     let docs: Vec<(&str, Vec<u8>, &str)> = vec![
         ("listed", b"listed: yes\n".to_vec(), ""),
-        ("full", b"listed: yes\nrelay: ws://relay.example:7878\nrelay: wss://relay.example/terse\n\nI write about bread.\nlisted: no\n".to_vec(), "after the empty line everything is description"),
+        ("full", b"listed: yes\nrelay: wss://relay.example:7878\nrelay: wss://relay.example/terse\n\nI write about bread.\nlisted: no\n".to_vec(), "after the empty line everything is description"),
         ("unlisted", b"listed: no\n".to_vec(), ""),
         ("listed-capital", b"listed: Yes\n".to_vec(), "only `yes` lists"),
-        ("no-listed-line", b"relay: ws://relay.example\n".to_vec(), ""),
+        ("no-listed-line", b"relay: wss://relay.example\n".to_vec(), ""),
+        ("plain-relay", b"listed: yes\nrelay: ws://relay.example:7878\nrelay: wss://relay.example\n".to_vec(), "a plain (ws://) relay line is invalid and skipped; the rest of the profile stands"),
         ("no-final-line-break", b"listed: yes".to_vec(), ""),
         ("crlf", b"listed: yes\r\n".to_vec(), "lines end at LF: the value is `yes` and a CR, which does not list"),
         ("unknown-field", b"colour: blue\nlisted: yes\n".to_vec(), "unknown fields are ignored"),
         (
             "relays",
-            b"relay: ws://a.example\nrelay: http://b.example\nrelay: wss://c.example\nrelay: ws://d.example\nrelay: ws://e.example\nrelay: ws://f.example\n".to_vec(),
-            "the first four that are ws:// or wss:// URLs",
+            b"relay: wss://a.example\nrelay: http://b.example\nrelay: ws://c.example\nrelay: wss://d.example\nrelay: wss://e.example\nrelay: wss://f.example\nrelay: wss://g.example\n".to_vec(),
+            "the first four that are wss:// URLs",
         ),
         (
             "relay-values",
-            "relay: ws:///x\nrelay: WS://a.example\nrelay: ws://a\u{a0}b.example\nrelay: ws://a\u{1}b.example\nrelay: ws://\nrelay: ws://b.example/terse\nrelay: wss://c.example:9000\n"
+            "relay: wss:///x\nrelay: WSS://a.example\nrelay: wss://a\u{a0}b.example\nrelay: wss://a\u{1}b.example\nrelay: wss://\nrelay: wss://b.example/terse\nrelay: wss://c.example:9000\n"
                 .as_bytes()
                 .to_vec(),
-            "a URL is ws:// or wss://, then something not starting with /, with no control or whitespace character",
+            "a URL is wss://, then something not starting with /, with no control or whitespace character",
         ),
         ("description-only", b"\nJust a description.\n".to_vec(), "no header lines"),
         ("no-space", b"listed:yes\n".to_vec(), "a header line without `: `"),
@@ -1124,13 +1125,6 @@ fn addresses_file() -> String {
         ("port-443-and-ipv6", k("@relay.example:443,[2001:db8::1]")),
         ("port-80", k("@relay.example:80")),
         ("port-7878", k("@relay.example:7878")),
-        ("plain", k("@ws:relay.example:7878")),
-        ("plain-no-port", k("@ws:relay.example")),
-        ("plain-ipv6", k("@ws:[2001:db8::1]:9000")),
-        ("encrypted-and-plain", k("@relay.example,ws:203.0.113.7:7878")),
-        ("loopback", k("@127.0.0.1:7878")),
-        ("localhost", k("@localhost:7878")),
-        ("loopback-ipv6", k("@[::1]:7878")),
         ("under-localhost", k("@a.localhost:7878")),
         ("ipv4", k("@203.0.113.7")),
         ("ipv6", k("@[2001:db8::1]:7878")),
@@ -1174,8 +1168,14 @@ fn addresses_file() -> String {
         ("scheme", k("@ws://a.example")),
         ("scheme-wss", k("@wss://a.example")),
         ("wss-prefix", k("@wss:a.example")),
-        ("plain-empty", k("@ws:")),
-        ("plain-twice", k("@ws:ws:a.example")),
+        // No hint names a plain relay (NETWORK 4.9): "ws:" is not read as
+        // a scheme, so these are malformed, not some relay.
+        ("ws-prefix", k("@ws:relay.example:7878")),
+        ("ws-prefix-no-port", k("@ws:relay.example")),
+        ("ws-prefix-ipv6", k("@ws:[2001:db8::1]:9000")),
+        ("ws-prefix-loopback", k("@ws:127.0.0.1:7878")),
+        ("ws-prefix-second", k("@relay.example,ws:203.0.113.7:7878")),
+        ("ws-prefix-empty", k("@ws:")),
         ("path", k("@a.example/x")),
         ("blank-before-at", k(" @a.example")),
     ];
@@ -1315,7 +1315,7 @@ display name) and maybe a `note`.
 Records `document <name>`: a profile document's bytes (`hex`, or for a
 long one `hex-then-x <hex> <n>`: those bytes, then n bytes `x`), maybe a
 `note`, and the result of parsing it: `valid no`, or `valid yes` with
-`listed` (`yes` or `no`), one `relay <url>` line per relay URL a reader
+`listed` (`yes` or `no`), one `relay <url>` line per `wss://` relay URL a reader
 takes (at most four, in order), and `description` (quoted; or
 `description-bytes <n>` for a long one): the text after the first empty
 line, empty if there is none.
@@ -1326,10 +1326,10 @@ Records `address <name>` with `text` (quoted: an address exactly as
 written, a key and maybe `@` and hints) and `valid`. A valid one gives
 its `key` and one line `hint <host> <port> <url>` per hint, in order:
 the host as a URL writes it (an IPv6 address in brackets, in its
-shortest form), the port (the default port of the scheme, 443 or 80, if
+shortest form), the port (443 if
 the hint names none) and the relay's URL: `wss://host` (with `:port`
-unless 443) for a hint without `ws:`, `ws://host:port` for a `ws:` hint
-and for one whose host is `localhost` or a loopback address. An invalid one gives the `reason`: `bad-key` (not 64 lowercase hex
+unless 443); a hint always names an encrypted relay, and one with a
+scheme (`ws://`, `ws:`) is malformed. An invalid one gives the `reason`: `bad-key` (not 64 lowercase hex
 digits), `invalid-key` (not a valid feed key, NETWORK.md 4.1: the case
 `key-not-canonical` is a point of large order written as y = p + 3, and
 `key-mixed-order`, which is valid, the test key plus a point of order 8),

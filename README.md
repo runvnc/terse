@@ -748,18 +748,42 @@ public authorities do not vouch for, and tell the programs, in their own setting
 
   `terse relay add wss://relay.corp.example only-authority=corp-ca.pem` writes such a
   line (the options are checked first); `terse relay list` shows the lines. There is no
-  setting that accepts any certificate.
+  setting that accepts any certificate. `terse-relay --peer` takes the same options in
+  its value (`--peer "wss://b.example pin=sha256:..."`).
+
+**A relay on a home or office network.** The simple way is plain: run `terse-relay
+--listen 0.0.0.0:7878` and write `ws://192.168.1.20:7878` in each client's relay list
+(a plain relay is never advertised, so others reach it only if they write it too). The
+recommended way is encrypted, with a self-signed certificate pinned in each client:
+
+    # on the relay's machine: a certificate for ten years, and the relay over TLS
+    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 3650 \
+        -subj /CN=relay.home -keyout relay.key -out relay.pem
+    terse-relay --listen 0.0.0.0:7443 --store ~/terse-relay --tls-cert relay.pem --tls-key relay.key
+    # anywhere: the fingerprint to pin (copy relay.pem there, or read it out)
+    terse relay fingerprint relay.pem
+    # on each client: the relay, pinned (nothing else is accepted for that host)
+    terse relay add wss://192.168.1.20:7443 pin=sha256:<the key's fingerprint>
+
+The pin takes the place of an authority and of the name check, so the certificate
+needs no particular name. An organisation with its own authority gives clients
+`only-authority=` or a file in `authorities/` instead.
 
 **Encrypted unless written otherwise** (NETWORK.md 3). A relay written without
 `ws://` or `wss://`, on the command line (`--relay`), in the relay list or as a feed
 address hint, is encrypted: `relay.tersenet.org` is `wss://relay.tersenet.org`, and
 `relay.example.org:9000` is `wss://relay.example.org:9000` (a port is only a port). A
-plain relay is written `ws://host:port` (a hint: `ws:host:port`); it is for this
-machine, a private network or tests. The one exception is this machine itself:
-`localhost:7878` or `127.0.0.1:7878` without a scheme is `ws://127.0.0.1:7878`, the
-local relay. A plain relay named by someone else (a `relay` line of a profile, a hint
-in a link) is never used: the programs connect without encryption only to relays you
-wrote so yourself.
+plain relay is written `ws://host:port`, in your own relay list or on your command line;
+it is for this machine, a private network or tests. The one exception is this machine
+itself: `localhost:7878` or `127.0.0.1:7878` without a scheme is
+`ws://127.0.0.1:7878`, the local relay. Nothing that goes on the network names a plain
+relay: a hint has no scheme and always means `wss://`, a profile lists only `wss://`
+relays (a `ws://` line in someone's profile is skipped), and your own address and
+profile never give out a plain relay (`terse profile set` says which it left out). So
+the programs connect without encryption only to relays you wrote so yourself. On a
+home or office network, the recommended way is still encrypted: give the relay a
+self-signed certificate and pin it ("Private authorities and pins").
+
 
 ## Feeds
 
@@ -802,13 +826,14 @@ Commands:
 - `feed subscribe <address>`, `feed unsubscribe <address>`, `feed subscriptions` (each
   feed's key, then its name if known: your nickname, else the name its profile declares,
   then the hints it was subscribed with). An address is a key, optionally `@` and one or
-  two relays (`host` or `host:port`, encrypted; `ws:host:port` plain; NETWORK.md 4.9),
+  two relays (`host` or `host:port`, always encrypted; NETWORK.md 4.9),
   also as a `terse:feed/` link; the
   hints are kept in `<config>/subscription-hints`. `feed sync` follows a feed on its
   hinted relays when your relays hold none of it (public addresses only; not with
   `--no-feed-relays`), and says which feeds no relay held. `feed address` prints your
-  own address: your key and up to two public relays from your profile, then your relay
-  list.
+  own address: your key and up to two public encrypted (`wss://`) relays from your
+  profile, then your relay list; a plain relay is never given out, so a user whose only
+  relay is plain (the local one, say) gets the bare key and a note.
 - `feed nickname <key> [<name>]` sets your own name for a feed, kept only in
   `<config>/nicknames`; without a name it removes it. It is shown instead of the
   declared name.
@@ -816,8 +841,11 @@ Commands:
   profile (NETWORK.md section 4.6): a display name (1 to 48 bytes, no control
   characters, no space at either end), whether search may find it (default: as your
   current profile says, else not), a description (default: the current one), and a
-  `relay` line for each of your relays (the `--relay` options, else your list) that is
-  not a loopback address. `profile show [<key>]` prints a profile held locally (yours
+  `relay` line for each of your encrypted (`wss://`) relays (the `--relay` options, else
+  your list) that is not a loopback address. A profile can only list encrypted relays:
+  a `ws://` relay is left out, with the note "a profile can only list encrypted relays
+  (wss://); ws:// relays are for your own machine and private networks, in your own
+  relay list", and the profile is published all the same. `profile show [<key>]` prints a profile held locally (yours
   by default). Names are self-declared and not unique: every listing shows the key
   beside the name.
 - `find <text>` asks your relays for listed feeds whose name contains the text

@@ -559,9 +559,7 @@ fn subscribe(args: &[String], add: bool) -> Result<ExitCode, String> {
         let shown: Vec<String> = hints.iter().map(|h| h.to_string()).collect();
         println!("if your relays do not hold it, it is looked for on {}", shown.join(" and "));
         for h in &hints {
-            if !h.encrypted() && !h.host.is_loopback() {
-                eprintln!("terse: {h} names a plain (unencrypted) relay: that hint will not be used unless the relay is in your own list (NETWORK 3)");
-            } else if !profile::usable_profile_relay(&h.url()) {
+            if !profile::usable_profile_relay(&h.url()) {
                 eprintln!("terse: {h} is a loopback, private or link-local address: that hint will not be used (NETWORK 5.1)");
             }
         }
@@ -592,7 +590,7 @@ fn address(args: &[String]) -> Result<ExitCode, String> {
     if hints.is_empty() {
         println!("{key}");
         eprintln!(
-            "terse: no public relay in your profile or relay list, so your address has no hints: only people who use the same relay as you will find your feed"
+            "terse: no public encrypted (wss://) relay in your profile or relay list, so your address has no hints (plain ws:// relays are never given out): only people who use the same relay as you will find your feed"
         );
     } else {
         println!("{key}@{hints}");
@@ -976,6 +974,13 @@ fn profile_set(args: &[String]) -> Result<ExitCode, String> {
     let current = node.profile(&identity.feed_key()).and_then(|(_, d)| d);
     let listed = args.has("--listed") || (!args.has("--unlisted") && current.as_ref().is_some_and(|d| d.listed));
     node.set_identity(identity);
+    // Plain relays are not listed (NETWORK 4.6); this machine's go
+    // without a word, others are named.
+    let plain: Vec<&String> = relays.iter().filter(|u| u.starts_with("ws://") && !profile::loopback_url(u)).collect();
+    if !plain.is_empty() {
+        let list: Vec<&str> = plain.iter().map(|u| u.as_str()).collect();
+        eprintln!("terse: not in the profile: {}: {}", list.join(", "), profile::PLAIN_NOT_LISTED);
+    }
     let done = node.publish_profile(name, listed, description, now());
     crate::say_delivery(&mut node);
     match done {

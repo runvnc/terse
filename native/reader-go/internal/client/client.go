@@ -1160,10 +1160,6 @@ func (c *Client) evaluateHints(key [32]byte) {
 		if own[normURL(u)] {
 			continue
 		}
-		if !c.opt.AllowPrivate && !h.Encrypted() && !terse.LoopbackHost(h.Host) {
-			c.opt.Logf("hint %s refused: a plain (unencrypted) relay named by the network", h.Text)
-			continue
-		}
 		if !c.opt.AllowPrivate && terse.RefusedHost(h.Host) {
 			c.opt.Logf("hint %s refused: a local or private address", h.Text)
 			continue

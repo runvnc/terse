@@ -844,7 +844,8 @@ impl Node {
         if !profile::valid_name(name) {
             return self.ready.push((token, Done::Failed));
         }
-        let relays = self.relay_urls().into_iter().filter(|u| !profile::loopback_url(u)).collect();
+        // Encrypted relays only (NETWORK 4.6), and not this machine's.
+        let relays = self.relay_urls().into_iter().filter(|u| profile::valid_relay_line(u) && !profile::loopback_url(u)).collect();
         let data = Document { listed, relays, description }.build();
         let entry = Entry::profile(identity.feed_key(), 0, time, &data, name);
         self.start_publish(token, &data, entry);
@@ -2781,12 +2782,12 @@ mod tests {
             let (b, sb) = fake_relay();
             let b = Arc::new(Mutex::new(Some(b)));
             node.set_feed_relays_unrestricted(Box::new(move |url| {
-                assert_eq!(url, "ws://feed-relay");
+                assert_eq!(url, "wss://feed-relay");
                 b.lock().unwrap().take().unwrap()
             }));
             node.set_feed_relays(on);
             let author = Identity::from_seed([30; 32]);
-            let doc = b"listed: no\nrelay: ws://feed-relay\n";
+            let doc = b"listed: no\nrelay: wss://feed-relay\n";
             {
                 let mut s = sa.lock().unwrap();
                 s.blobs.insert(blob_id(doc), doc.to_vec());
@@ -2798,7 +2799,7 @@ mod tests {
             let events = poll_n(&mut node, 50);
             let seqs = node.feed_store().seqs(&author.feed_key()).unwrap();
             if on {
-                assert_eq!(node.connected_relays(), ["relay", "ws://feed-relay"], "{events:?}");
+                assert_eq!(node.connected_relays(), ["relay", "wss://feed-relay"], "{events:?}");
                 assert_eq!(seqs, [1, 2]);
                 assert!(node.store().read(&blob_id(b"on b")).unwrap().is_some(), "downloaded from B");
             } else {
@@ -2809,17 +2810,18 @@ mod tests {
         }
     }
 
-    /// NETWORK 3, no downgrade: a plain relay named by the network (a
-    /// profile's relay line, a `ws:` hint) is never contacted; an
-    /// encrypted one is. The relays' hosts are public addresses, so the
+    /// NETWORK 3, 4.6, 4.9: nothing from the network names a plain relay:
+    /// a profile's `ws://` relay line is invalid and skipped, a `ws:` hint
+    /// is malformed; an encrypted relay named by the network is contacted. The relays' hosts are public addresses, so the
     /// rules of section 5.1 are the real ones here; the connector only
     /// records what would be contacted.
     #[test]
     fn plain_relays_from_the_network_are_never_contacted() {
         for (doc, hints, want) in [
-            (&b"listed: no\nrelay: ws://203.0.113.9:7878\n"[..], "ws:203.0.113.10:7878", None),
-            (&b"listed: no\nrelay: wss://203.0.113.9:7878\n"[..], "ws:203.0.113.10:7878", Some("wss://203.0.113.9:7878")),
-            (&b"listed: no\n"[..], "ws:203.0.113.10:7878,203.0.113.11:9000", Some("wss://203.0.113.11:9000")),
+            (&b"listed: no\nrelay: ws://203.0.113.9:7878\n"[..], "203.0.113.10:7878", None),
+            (&b"listed: no\nrelay: wss://203.0.113.9:7878\n"[..], "203.0.113.10:7878", Some("wss://203.0.113.9:7878")),
+            (&b"listed: no\n"[..], "203.0.113.11:9000", Some("wss://203.0.113.11:9000")),
+            (&b"listed: no\n"[..], "ws:203.0.113.10:7878", None),
         ] {
             let dir = tempfile::tempdir().unwrap();
             let (mut node, sa) = node_with_fake(dir.path());
@@ -2838,6 +2840,8 @@ mod tests {
             }
             node.set_subscriptions(Subscriptions::in_memory([]));
             node.subscribe_with_hints(author.feed_key(), Some(hints)).unwrap();
+            // A `ws:` hint is malformed: the subscription has none.
+            assert_eq!(node.subscriptions().hints(&author.feed_key()).is_some(), !hints.starts_with("ws:"));
             // The own relay holds the profile only; without a relay line
             // the hints are used once the own relay has answered.
             if doc == b"listed: no\n" {

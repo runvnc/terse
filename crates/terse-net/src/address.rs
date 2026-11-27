@@ -107,9 +107,10 @@ pub fn parse_address(text: &str) -> Result<FeedAddress, AddressError> {
 }
 
 /// The hint for a relay URL, if it can be written as one (NETWORK 4.9): a
-/// host a hint can name and no path but `/`. A `wss://` URL is a hint
-/// without a scheme, a `ws://` one a `ws:` hint (or one without a scheme,
-/// on a loopback host); a port left out is the URL's default (443 or 80).
+/// `wss://` URL with a host a hint can name and no path but `/` (a port
+/// left out is 443). A plain relay has no hint, but on a loopback host
+/// (which no hint given out names, NETWORK 5.1), where `ws://` is what a
+/// hint without a scheme means there.
 pub fn hint_of_url(url: &str) -> Option<Hint> {
     let (tls, rest) = match (url.strip_prefix("ws://"), url.strip_prefix("wss://")) {
         (Some(r), _) => (false, r),
@@ -117,17 +118,15 @@ pub fn hint_of_url(url: &str) -> Option<Hint> {
         _ => return None,
     };
     let rest = rest.strip_suffix('/').unwrap_or(rest);
-    if rest.is_empty() || rest.contains('/') || rest.starts_with(terse_core::hints::PLAIN_PREFIX) {
+    if rest.is_empty() || rest.contains('/') {
         return None;
     }
     let mut hint = parse_hint(rest.as_bytes()).ok()?;
-    hint.plain = !tls;
     let port_given = rest.rsplit_once(']').map_or(rest, |(_, p)| p).contains(':');
     if !port_given {
         hint.port = if tls { WSS_PORT } else { WS_PORT };
     }
-    // wss:// on a loopback host: a hint cannot say so (it would read as
-    // plain).
+    // A plain relay elsewhere, or wss:// on a loopback host: no hint says so.
     (hint.encrypted() == tls).then_some(hint)
 }
 
@@ -206,14 +205,10 @@ mod tests {
         assert_eq!(hint_of_url("wss://relay.example:443/").unwrap().url(), "wss://relay.example");
         assert_eq!(hint_of_url("wss://relay.example:8443").unwrap().to_string(), "relay.example:8443");
         assert_eq!(hint_of_url("wss://[2001:db8::1]").unwrap().to_string(), "[2001:db8::1]");
-        // Plain: "ws:", port 80 when the URL gives none.
-        assert_eq!(hint_of_url("ws://relay.example:7878/").unwrap().to_string(), "ws:relay.example:7878");
-        assert_eq!(hint_of_url("ws://relay.example").unwrap().to_string(), "ws:relay.example");
-        assert_eq!(hint_of_url("ws://relay.example").unwrap().port, 80);
-        assert_eq!(hint_of_url("ws://[2001:db8::1]:9").unwrap().to_string(), "ws:[2001:db8::1]:9");
         // Loopback: plain without a scheme.
         assert_eq!(hint_of_url("ws://127.0.0.1:7878").unwrap().to_string(), "127.0.0.1:7878");
-        let urls = ["wss://127.0.0.1:7878", "ws://relay.example/x", "wss://a/x", "ws://", "wss://", "ws://ws:a"];
+        // Plain relays elsewhere: no hint.
+        let urls = ["ws://relay.example:7878/", "ws://relay.example", "ws://[2001:db8::1]:9", "wss://127.0.0.1:7878", "ws://relay.example/x", "wss://a/x", "ws://", "wss://", "ws://ws:a"];
         for url in urls.into_iter().chain(["http://relay.example", "ws://a_b"]) {
             assert!(hint_of_url(url).is_none(), "{url}");
         }
@@ -229,9 +224,7 @@ mod tests {
         assert!(url_is_hint("wss://relay.tersenet.org", &parse_hint(b"relay.tersenet.org:443").unwrap()));
         assert!(url_is_hint("wss://relay.tersenet.org:443/", &parse_hint(b"RELAY.tersenet.org").unwrap()));
         assert!(own_hints(&[], &s(&["ws://127.0.0.1:7878", "wss://10.0.0.1"])).is_empty());
-        assert!(url_is_hint("ws://relay.example:7878", &parse_hint(b"ws:RELAY.example:7878").unwrap()));
-        // The same host and port, encrypted and plain: not the same relay.
+        // A plain relay is never the relay of a hint.
         assert!(!url_is_hint("ws://relay.example:7878", &parse_hint(b"relay.example:7878").unwrap()));
-        assert!(!url_is_hint("wss://relay.example:7878", &parse_hint(b"ws:relay.example:7878").unwrap()));
     }
 }

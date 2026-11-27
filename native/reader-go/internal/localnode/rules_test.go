@@ -501,7 +501,10 @@ func TestRuleRelaysFlags(t *testing.T) {
 	ln.Close() // nobody listens: the own relay fails at once
 	dir := t.TempDir()
 	withProfile, withHint := newAuthor(t), newAuthor(t)
-	doc := []byte("listed: yes\nrelay: " + named.url + "\n")
+	// A profile lists encrypted relays only (NETWORK.md 4.6): named as
+	// wss:// (whether it answers does not matter here).
+	namedURL := "wss://" + strings.TrimPrefix(named.url, "ws://")
+	doc := []byte("listed: yes\nrelay: " + namedURL + "\n")
 	fill(t, dir, func(st *store.Store) {
 		_, err := st.AddEntry(withProfile.entry(t, 1, terse.KindProfile, doc, "Named"))
 		must(t, err)
@@ -519,7 +522,7 @@ func TestRuleRelaysFlags(t *testing.T) {
 	x.hello()
 	// The own relay cannot be reached, so the hint comes into use (no own
 	// relay holds the feed).
-	want := map[string]byte{own.url: local.RelayConfigured, named.url: 0, hinted.url: local.RelayHint}
+	want := map[string]byte{own.url: local.RelayConfigured, namedURL: 0, hinted.url: local.RelayHint}
 	var got map[string]byte
 	waitUntil(t, "the three relays listed", func() bool {
 		st, in := x.call(local.New(local.Relays, 2).Bytes())

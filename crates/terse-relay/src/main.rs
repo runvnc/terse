@@ -18,7 +18,9 @@ const USAGE: &str = "usage: terse-relay [--listen <addr:port>] --store <dir> [op
   running relay reads the file again within 2 s. feeds, feed: what the store holds, read
   from its files: no network, safe beside a running relay. README \"Running a public relay\")
   --listen <addr:port>      default 127.0.0.1:7878 (loopback only)
-  --peer <ws(s)://host:port>  another relay to mirror (NETWORK.md section 5); repeatable
+  --peer <wss://host[:port]>  another relay to mirror (NETWORK.md section 5); repeatable;
+                            ws:// for a plain one; options may follow in the same argument: \"wss://h pin=sha256:...\" (authority=,
+                            only-authority=); TERSE_RELAY_CA is trusted too
   --tls-cert <pem> --tls-key <pem>
                             serve wss:// (TLS) with this certificate chain and key;
                             read again on SIGHUP (renewals). Without them: plain ws://
@@ -192,6 +194,7 @@ fn run(args: Vec<String>) -> Result<(), String> {
     let default_listen = terse_net::local::local_addr(terse_net::local::DEFAULT_PORT).to_string();
     let (mut listen, mut store, mut limit) = (default_listen, None, None);
     let mut peers = Vec::new();
+    let mut peer_lines = Vec::new();
     let mut memory = None;
     let (mut tls_cert, mut tls_key) = (None, None);
     // Options are applied in order over the base policy, so `--public`
@@ -213,10 +216,13 @@ fn run(args: Vec<String>) -> Result<(), String> {
             "--listen" => listen = value()?,
             "--store" => store = Some(value()?),
             "--peer" => {
-                let url = value()?;
-                if !terse_net::local::valid_url(&url) {
-                    return Err(format!("--peer {url}: not a ws:// or wss:// URL"));
-                }
+                // A relay line: wss://, or ws:// on this machine only
+                // (NETWORK 3), maybe with options (authority=, pin=).
+                let line = value()?;
+                let (url, _) = terse_net::local::relay_line(&line)
+                    .map_err(|e| format!("--peer {line}: {e}"))?
+                    .ok_or(format!("--peer {line}: not a relay"))?;
+                peer_lines.push(line);
                 peers.push(url);
             }
             "--tls-cert" => tls_cert = Some(std::path::PathBuf::from(value()?)),
@@ -359,6 +365,8 @@ fn run(args: Vec<String>) -> Result<(), String> {
     println!("listening on {scheme}://{addr}");
     eprintln!("terse-relay: store {dir}: {} (ready in {} ms)", relay.status(), started.elapsed().as_millis());
     signals::install();
+    // What a peer link trusts: TERSE_RELAY_CA and the --peer lines' options.
+    terse_net::local::apply_trust(&peer_lines, None)?;
     terse_relay::connect_peers(relay.clone(), peers);
     let served = relay.clone();
     let server = std::thread::spawn(move || terse_relay::serve(listener, served));

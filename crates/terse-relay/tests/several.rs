@@ -56,6 +56,17 @@ fn in_process(dir: &std::path::Path) -> (String, Arc<Relay>) {
     (url, relay)
 }
 
+/// A relay serving wss:// with the test certificate, trusted in this
+/// process through the test authority: a profile names only encrypted
+/// relays (NETWORK 4.6).
+fn in_process_tls(dir: &std::path::Path) -> (String, Arc<Relay>) {
+    let certs = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../terse-testkit/tls");
+    terse_net::tls::trust_ca_file(&certs.join("ca.pem")).unwrap();
+    let (url, relay) = in_process(dir);
+    relay.set_tls(Some(terse_net::tls::server_config(&certs.join("localhost.pem"), &certs.join("localhost.key")).unwrap()));
+    (url.replace("ws://", "wss://"), relay)
+}
+
 fn poll_until(node: &mut Node, what: &str, mut ok: impl FnMut(&Node) -> bool) {
     let deadline = Instant::now() + Duration::from_secs(20);
     while !ok(node) {
@@ -111,7 +122,7 @@ fn feed_relays_named_in_a_profile() {
     for on in [true, false] {
         let (da, db, dn) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
         let (url_a, a) = in_process(da.path());
-        let (url_b, b) = in_process(db.path());
+        let (url_b, b) = in_process_tls(db.path());
         // The author's profile (on A) names B; the article is only on B.
         let author = Identity::from_seed([51; 32]);
         let doc = format!("listed: no\nrelay: {url_b}\n").into_bytes();

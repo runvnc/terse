@@ -35,16 +35,14 @@ func TestTypedRelay(t *testing.T) {
 
 func TestHintSchemes(t *testing.T) {
 	for in, want := range map[string]string{
-		"relay.example":         "wss://relay.example",
-		"relay.example:443":     "wss://relay.example",
-		"relay.example:7878":    "wss://relay.example:7878",
-		"[2001:db8::1]":         "wss://[2001:db8::1]",
-		"ws:relay.example:7878": "ws://relay.example:7878",
-		"ws:relay.example":      "ws://relay.example:80",
-		"127.0.0.1:7878":        "ws://127.0.0.1:7878",
-		"localhost:7878":        "ws://localhost:7878",
-		"[::1]:9":               "ws://[::1]:9",
-		"a.localhost":           "wss://a.localhost",
+		"relay.example":      "wss://relay.example",
+		"relay.example:443":  "wss://relay.example",
+		"relay.example:7878": "wss://relay.example:7878",
+		"[2001:db8::1]":      "wss://[2001:db8::1]",
+		"127.0.0.1:7878":     "ws://127.0.0.1:7878",
+		"localhost:7878":     "ws://localhost:7878",
+		"[::1]:9":            "ws://[::1]:9",
+		"a.localhost":        "wss://a.localhost",
 	} {
 		hs, err := ParseHintList(in)
 		if err != nil {
@@ -56,10 +54,12 @@ func TestHintSchemes(t *testing.T) {
 		}
 	}
 	for in, reason := range map[string]string{
-		"ws:":             "bad-name",
-		"ws://a.example":  "bad-name",
-		"wss:a.example":   "bad-port",
-		"wss://a.example": "bad-port",
+		"ws:":                   "bad-port",
+		"ws://a.example":        "bad-port",
+		"ws:relay.example:7878": "bad-port",
+		"ws:127.0.0.1:7878":     "bad-port",
+		"wss:a.example":         "bad-port",
+		"wss://a.example":       "bad-port",
 	} {
 		if _, err := ParseHintList(in); err == nil || string(err.(AddressError)) != reason {
 			t.Errorf("hint %s: %v, want %s", in, err, reason)

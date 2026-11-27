@@ -10,18 +10,16 @@ import (
 
 // Hint is one relay hint of a feed address (NETWORK.md 4.9).
 type Hint struct {
-	Host  string // as a URL writes it: an IPv6 address in brackets, shortest form
-	Port  int    // the default port of the scheme (443 or 80) if the hint names none
-	Plain bool   // written with "ws:"
-	Text  string // as written
+	Host string // as a URL writes it: an IPv6 address in brackets, shortest form
+	Port int    // the default port of wss:// if the hint names none
+	Text string // as written
 }
 
-// PlainPrefix starts a hint that names a plain relay.
-const PlainPrefix = "ws:"
-
-// Encrypted reports whether the hint names a relay over TLS: not written
-// "ws:" and not on localhost or a loopback address (NETWORK.md 3, 4.9).
-func (h Hint) Encrypted() bool { return !h.Plain && !LoopbackHost(h.Host) }
+// Encrypted reports whether the hint names a relay over TLS: always, but
+// on localhost or a loopback address, which clients ignore in hints
+// (NETWORK.md 4.9, 5.1) and the tests reach plainly, as a loopback address
+// typed without a scheme is (NETWORK.md 3).
+func (h Hint) Encrypted() bool { return !LoopbackHost(h.Host) }
 
 // URL is the relay the hint names: wss://host (with :port unless 443),
 // or ws://host:port for a plain one (NETWORK.md 4.9).
@@ -136,13 +134,6 @@ func parseHint(s string) (Hint, error) {
 		return Hint{}, AddressError("hint-too-long")
 	}
 	h := Hint{Text: s}
-	if strings.HasPrefix(s, PlainPrefix) {
-		h.Plain = true
-		s = s[len(PlainPrefix):]
-		if s == "" {
-			return Hint{}, AddressError("bad-name")
-		}
-	}
 	var host, port string
 	hasPort := false
 	if s[0] == '[' {
