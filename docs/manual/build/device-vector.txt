@@ -23,7 +23,7 @@ Coordinates are signed 16-bit numbers, little-endian, in sixteenths of a screen 
 - `submit` copies `a1` bytes from address `a0` into the device, replacing the previous list, and returns 0. It is rejected, returning 1 and keeping the previous list, if the length is 0 or more than 16,384 (`VEC_MAX_LIST`) or any part of the range is outside RAM. A list in ROM is rejected this way too: `submit` never returns `FFFF_FFFEh`.
 - `clear` empties the list, so nothing is drawn.
 - `style` sets the display style: 0 clean (`VEC_STYLE_CLEAN`), 1 phosphor (`VEC_STYLE_PHOSPHOR`).
-- `persistence` sets the persistence, 0 to 255: how long the program would like the phosphor afterglow to last, a hint a host may ignore.
+- `persistence` sets the persistence, 0 to 255: how long the program would like what it draws in the phosphor style to linger, a hint a host may ignore.
 - `fill` sets the fill mode: 0 filled shapes are filled (`VEC_FILL_ON`), 1 they are drawn as outlines (`VEC_FILL_OFF`).
 
 `style`, `persistence` and `fill` return 1 and change nothing for a value out of range, else 0. The style and the persistence are one setting shared with the 3D display: whichever device sets them, both displays and the whole screen are shown that way.
@@ -77,7 +77,7 @@ Worked numbers: a rectangle over the whole screen counts 10240 x 7680 / 512 = 15
 In the clean style the host combines the displays in a fixed order, from the bottom:
 
 - 1. the terminal's cell backgrounds;
-- 2. [the page](terse:74792129fc2a9c3826f6bc3987551393ca92d3fc55b72e38cfd9a35ddf5b83d5): its background, then its text;
+- 2. [the page](terse:6506e640938fe694f8167c2112510bb3637ab3ca45874d292d0f29b468ec23b1): its background, then its text;
 - 3. the vector displays: device 3's shapes, then device 9's;
 - 4. the terminal's characters and cursor.
 
@@ -89,18 +89,14 @@ In either style a host must draw each command the list draws, and nothing after 
 
 ## The phosphor style
 
-The phosphor style asks for the look of a vector monitor or oscilloscope tube: light on a black screen. Part of it changes what is visible, and every host must do it:
+The phosphor style asks for a vector display, real or simulated: light on a black screen. How it looks is not specified. Part of it changes what is visible, and every host must do it:
 
 - The screen is black: cell background colours and the page's background are not drawn. A program in this style may leave any background colours in its cells.
 - Nothing is filled: shapes and the page's figures are outlines, which count against the ink cap.
 - The terminal's characters and cursor are drawn in their foreground colour, and the page's text and figures in their colours, on the black screen with the shapes.
-- Nothing added for the look may hide or blur what is shown: text stays as legible as in the clean style.
+- Nothing else the host draws may hide or blur what is shown: text stays as legible as in the clean style.
 
-Where light overlaps, a host may add it up, as a tube does (opacity then acts as brightness), or blend it in the clean style's order. The rest is the host's choice: whether light adds up, brightness, tone curve and tint, the beam's profile across its width, glow and halo, afterglow and trails and how the persistence shapes them, dots of light where lines end, flicker, curvature, vignette, and where an outline sits on a shape's edge. A host that draws plain lines in the given colours on black, with no glow and no afterglow, conforms. The persistence is a hint a host may ignore; it is still kept in the machine's state. None of the look is machine state, and the program cannot observe it. A host that draws an afterglow should let the user turn it off.
-
-Not a requirement, the reference hosts' look: in the phosphor style `terse-host` and `terse-bus` draw like an arcade vector monitor, with the renderer of MAME's vector monitors: a sharp beam about a pixel wide, light that adds up where lines cross or meet, a faint glow, and a phosphor that fades within a frame. The terminal's text is drawn by the beam in a vector font; an article's text is drawn as before. A program may be written with this look in mind, but its picture should not depend on it.
-
-`--font-strokes` chooses the terminal's font: `arcade` (the default, a vector monitor's character generator), `hershey` (Hershey Roman Simplex), `drafting`, or `off`. `--look classic` gives the earlier look: a softer beam on a wide glow, with an afterglow. Either can be kept as a line in the file `look` of Tersenet's settings folder (`look classic`, `font-strokes drafting`). The machine is the same, hash for hash, whatever the look; only the picture differs.
+Everything else is the host's choice: how the display looks, whether it is a real vector display or a simulated one, and whether light that overlaps adds up or is blended in the clean style's order. A host that draws plain lines in the given colours on black conforms. The persistence is a hint a host may ignore; it is still kept in the machine's state. None of the look is machine state, and the program cannot observe it, so a program's picture should not depend on any one host's look. A host that makes light linger should let the user turn that off. How the reference hosts draw the style, and its settings, are in [the reference host's look](terse:383514ea9c3a5272cad5337dd63046db6b66d7e5296276d194fb93c27239b4b2): that is a description of one host, not a requirement.
 
 ## Charges
 
@@ -113,7 +109,7 @@ A rejected submit copies nothing and costs only the 4. Drawing, decoding and the
 
 ## State
 
-The device sends no events and takes no input from the host. Its state is the style, the persistence, the fill mode and the copy of the list, held in this order: a present flag (1 byte: the machine has device 3 or device 9; if `00h` nothing follows), the style (`00h` clean, `01h` phosphor), the persistence, the fill mode (`00h` fill, `01h` outlines), the list's length m (4 bytes, 0 to 16,384) and the m bytes of the last accepted submit. For an image with device 9 and not device 3 the fill mode is `00h` and m is 0. The afterglow is not included.
+The device sends no events and takes no input from the host. Its state is the style, the persistence, the fill mode and the copy of the list, held in this order: a present flag (1 byte: the machine has device 3 or device 9; if `00h` nothing follows), the style (`00h` clean, `01h` phosphor), the persistence, the fill mode (`00h` fill, `01h` outlines), the list's length m (4 bytes, 0 to 16,384) and the m bytes of the last accepted submit. For an image with device 9 and not device 3 the fill mode is `00h` and m is 0. Any afterglow a host draws is not included.
 
 ## Example
 
@@ -142,4 +138,4 @@ int main(void)
 }
 ```
 
-The list is 41 bytes, so each submit costs 4 + 11 units. The list stays on the screen until the next submit; a program whose picture does not change need not submit again. The next article, [the 3D vector display](terse:9e84506e6417d9d5d78e4d0c00da386055aeb5a4fa111ab34d8bfbbbfedbcf2e), shares this display's style and layers.
+The list is 41 bytes, so each submit costs 4 + 11 units. The list stays on the screen until the next submit; a program whose picture does not change need not submit again. The next article, [the 3D vector display](terse:6f0ccaff33809b8cb97d2f3048d15b2b31c539d13f4e3694018f6003466415fe), shares this display's style and layers.

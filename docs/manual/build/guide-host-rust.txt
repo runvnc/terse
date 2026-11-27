@@ -14,7 +14,7 @@ A program file (`.terse`) is a 32-byte header, two bytes for each device the pro
 | 10 | 1 | the number of devices, at most 16 |
 | 32 | 2 each | each device: its slot and version (`80h`: optional) |
 
-Bytes 11 to 31 hold a title, which a host does not need. The rest is in [The Terse32 machine](terse:d3101301394f2408bdd43ab92cd647028c42addb78a525e0c9490852aa7e6a03), "The image format".
+Bytes 11 to 31 hold a title, which a host does not need. The rest is in [The Terse32 machine](terse:1152b72a5e0a484b8ad6b497d02c852f48429823f20176868c946f351a50b4aa), "The image format".
 
 ```rust from examples/host/rust/src/image.rs
 use crate::cpu::{Cpu, RAM_BASE, ROM_BASE, SP};
@@ -337,8 +337,8 @@ prints `186`. The reference gives the same: `terse run exit.terse --frames 1`, t
 
 ## What you have now
 
-A Terse32 processor that runs a program to its end: `cpu.rs` (219 lines), `decode.rs` (183), `image.rs` (54) and `bin/step1.rs` (25). Next, make it keep time: [Make a host in Rust, step 2: frames and the budget](terse:4c1d8ef0c70b176eea5c1ee2ec4a3c6469010ca2628d550d5a8b7758fa7b8e40).
+A Terse32 processor that runs a program to its end: `cpu.rs` (219 lines), `decode.rs` (183), `image.rs` (54) and `bin/step1.rs` (25). Next, make it keep time: [Make a host in Rust, step 2: frames and the budget](terse:42c8bc6051286a3f8e9d01a09f3ac821aeaecd259d1f9c326bf062b5d365b6b4).
 
 - The same step in Go: "Make a host in Go, step 1: run a program to its end", the page before this one.
 - Full implementations: `native/core-c/cpu.c` (C) and `crates/terse-core/src/cpu.rs` (the reference).
-- The rules: [The Terse32 machine](terse:d3101301394f2408bdd43ab92cd647028c42addb78a525e0c9490852aa7e6a03), sections "CPU", "Memory map", "Reset state", "Stopping and faults", "The image format" and "Calls".
+- The rules: [The Terse32 machine](terse:1152b72a5e0a484b8ad6b497d02c852f48429823f20176868c946f351a50b4aa), sections "CPU", "Memory map", "Reset state", "Stopping and faults", "The image format" and "Calls".

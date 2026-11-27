@@ -200,15 +200,15 @@ compares two hosts.
 Devices present and transport; they do not compute for the program, and
 nothing a host draws can be read back. The screen is 640 × 480 units for
 every device that draws. Each device says what a host must
-draw; the rest of the look (fonts, smoothing, the phosphor style's
-glow and afterglow) is the host's, so a plain host and an elaborate
-one show the same picture.
+draw; the rest of the look (fonts, smoothing, how the phosphor
+style's real or simulated vector display looks) is the host's, so a
+plain host and an elaborate one show the same picture.
 
 ## When a part of the host is slow
 
 A program cannot make a frame late: its work is bounded by the budget and the caps. What can is the host's own: a device driver, the renderer. Every host and device states its name, version and build (`--version`), and the host keeps a record on your computer of which part made a frame late, never sent anywhere (`terse perf log` sums it up). A part that is only waiting because your computer is busy is not blamed. If you choose, you can publish a summary of it so that slow builds come to light (see Performance reports).
 
-A device that makes 3 frames late within a second gets a notice at the bottom of the screen, naming it; your work in the machines using it is saved at once. If it goes on (10 late frames within five seconds), those machines are saved again and stopped: halted, not faulted. `terse-host`, whose devices are built in, does the same for the one machine whose frames are late, and leaves the others running. A shell finds each saved machine in its automatic snapshot slot (16 to 23), a machine run alone in a file the host names. When the host's own drawing is too slow, it first draws the phosphor look more simply, then says once that it does not keep up on this computer; resizing the window briefly holds the machines and excuses the frames just after, within a bound.
+A device that makes 3 frames late within a second gets a notice at the bottom of the screen, naming it; your work in the machines using it is saved at once. If it goes on (10 late frames within five seconds), those machines are saved again and stopped: halted, not faulted. `terse-host`, whose devices are built in, does the same for the one machine whose frames are late, and leaves the others running. A shell finds each saved machine in its automatic snapshot slot (16 to 23), a machine run alone in a file the host names. When the host's own drawing is too slow, it first drops what it draws beyond what the devices require (in `terse-host`, the phosphor look is drawn more simply), then says once that it does not keep up on this computer; resizing the window briefly holds the machines and excuses the frames just after, within a bound.
 
 ## Determinism and replay
 
@@ -243,12 +243,12 @@ in a tile of its own.
 
 ## Where to go next
 
-- [Building a program](terse:964c66b354198abc9df5aa34b1355f177be170764503291fbcee27d5b6e650b7): `terse build`, in C, assembly or Rust; [running and publishing a program](terse:457a6da2f2c31c4ac432796a5815c56044048efee8012673f8e5be6deef8be98).
-- [Using Tersenet](terse:9c129a2e161bf5a631bc0d977b66a452e9f596fd860657a1141431f7581d7974): the tools, the shell and the reader.
-- [Writing articles](terse:d114ee24a46f18a8e21bf8f96eb968f2b976e17b474cef33dc7f04d61337ca37): the article format, tables and figures.
-- [The machine](terse:d3101301394f2408bdd43ab92cd647028c42addb78a525e0c9490852aa7e6a03): the CPU, memory, frames, image format and the full call table.
-- [The system device](terse:308cccaea20fc9c26bd3dd508ba4935af0e6065c5d4c855356708b640e376420), [the terminal](terse:81e8145480d8b24589a04810270479fb1b6168efb7e11314d4ca5b5144506d06), [the 2D vector display](terse:0c51858179036c857957506bbc30f7867950de59d564c1a10be9340f727e5f32), [the 3D vector display](terse:9e84506e6417d9d5d78e4d0c00da386055aeb5a4fa111ab34d8bfbbbfedbcf2e), [the page](terse:74792129fc2a9c3826f6bc3987551393ca92d3fc55b72e38cfd9a35ddf5b83d5) and [machines](terse:90fe2f90b2cf0e4241e8e642ac485d82e04cd85b01721315ab238700a6877be8).
-- [Blobs](terse:f5ca53b100a2234cee09280d95cfc4e5f9c9c29f1bf72e20e6ef02a06636151d), [feeds](terse:ac5bfbb5d5602dc46b76f3130fa9ad4d1605d864ad7bfb967ae11b66a21d04a2) and [named records](terse:9119ea50b1c9e156a3c6d891bf910d8f057471672bd3aa57c98f07a559c8680f) on the content device.
-- [The network](terse:4495a8ee7f7807763b38f85228938ef76ec4fde95f3fb454e7d23cb2402316cd): relays and feeds as the host sees them.
-- [Machine state](terse:31a4fc1aebbf7cdef5d86ae39947513bfe9438eeb5f917d755984b81a0961eb2): the state serialization and the state hash.
+- [Building a program](terse:6d590fa99b0e29e21e468ae25e5c5ca2d06423df8579ce5396015ac8783be40b): `terse build`, in C, assembly or Rust; [running and publishing a program](terse:95f1acce60bf5e01fc0fba8ecdb5b0b7c07f943cc23e2f36bd0853dd22510235).
+- [Using Tersenet](terse:9b6966ee0d9d4fa5bcc5c0378daef0570e30e8ef273b03ae626e0c2e0950819e): the tools, the shell and the reader.
+- [Writing articles](terse:2c34635be0d3910e4131c8f41559778e0e4beea2e3e0e8dd2a5a20f080752eda): the article format, tables and figures.
+- [The machine](terse:1152b72a5e0a484b8ad6b497d02c852f48429823f20176868c946f351a50b4aa): the CPU, memory, frames, image format and the full call table.
+- [The system device](terse:aafdc7735f8bfca7ed199fa9da79cd52a4729fe5c2bc44cbbaacf5f4270db0f0), [the terminal](terse:f7166a47224712fd9257ef274f3efdf1406d59a9da629fde257ea92be7f5fadb), [the 2D vector display](terse:98ad814527090ebeec02685af50395bc1050416be1f138009233a9b3e813889b), [the 3D vector display](terse:6f0ccaff33809b8cb97d2f3048d15b2b31c539d13f4e3694018f6003466415fe), [the page](terse:6506e640938fe694f8167c2112510bb3637ab3ca45874d292d0f29b468ec23b1) and [machines](terse:38b9bf3e50d09f10cd38c647ac8b0da8d5068a709ccab98eaf5114bec910d046).
+- [Blobs](terse:226a65d577235a6967dec9f65f2640363e15d088d0499a1de3c953726d19aec8), [feeds](terse:88a315078b2fe626b1e050d161a2207c7088138395f9ed229b92b08e6d01097e) and [named records](terse:9119ea50b1c9e156a3c6d891bf910d8f057471672bd3aa57c98f07a559c8680f) on the content device.
+- [The network](terse:e5553952295341e79f8457988f1436f488832c6a4bb929acbf42401a9b2c1761): relays and feeds as the host sees them.
+- [Machine state](terse:8239606bf062b334e2448dcc6be4781d11ef5b04d094ecb14581b09e7d78095d): the state serialization and the state hash.
 - [Events and input](terse:654230b0ec65952b422aaa86ce7da9e80af625be02f4ad365c408ed291a15c1a) and [charges](terse:700aa265f5d0ae8141b841e6eeecb0b6146ac6935da3121441ee039db69ecf7c).

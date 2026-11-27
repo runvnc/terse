@@ -29,7 +29,7 @@ The host evaluates the caps after a floating-point projection, so hosts may diff
 - Screens in effect are drawn as panels in the shell's scene, not in the vector layer: the shell's lines, points and circles are drawn over the panels, and in the phosphor style how they are lit there is up to the host.
 - Surfaces (at most 4 in effect) put the program's own screen on panels: see [Surfaces](terse:3977dab63bc65a337e55f00eba3e3dee536c624ea3e9388ab1cc835a618d2d44).
 - Layers: device 9 is drawn in the vector layer after device 3's shapes: over the page and the 2D shapes, under the terminal's characters, so text on the glass labels the models.
-- A host must draw the lines, points and circles where the list and the eye put them, in their colours with the depth cue, within the caps and without what faces hide (hiding is part of the picture), on black in the phosphor style. The rest of the look (glow, afterglow, dwell) is the host's.
+- A host must draw the lines, points and circles where the list and the eye put them, in their colours with the depth cue, within the caps and without what faces hide (hiding is part of the picture), on black in the phosphor style. The rest of how it looks is the host's.
 - Hosts may differ in the last pixel of the projection; smoothing, blending and how the eye moves are theirs.
 
 ## Charges and state

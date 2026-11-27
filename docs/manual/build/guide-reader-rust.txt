@@ -152,10 +152,10 @@ be the lines written.
 
 Everything else in the article format is shown as plain text: a list item, a table row, a preformatted line or a fence becomes part of a paragraph as written, and links and code spans appear as the text they are made of.
 
-For an article of headings and paragraphs it is correct: the test `crates/terse-cli/tests/reader_examples.rs` runs it on every article of `vectors/articles` made only of those, and compares with what the reference reader finds in each. The rest of the format is in [Writing an article](terse:d114ee24a46f18a8e21bf8f96eb968f2b976e17b474cef33dc7f04d61337ca37). In the reference implementation, `crates/terse-net/src/article_parse.rs` reads every construct, and the reference reader, `programs/reader`, shows them all.
+For an article of headings and paragraphs it is correct: the test `crates/terse-cli/tests/reader_examples.rs` runs it on every article of `vectors/articles` made only of those, and compares with what the reference reader finds in each. The rest of the format is in [Writing an article](terse:2c34635be0d3910e4131c8f41559778e0e4beea2e3e0e8dd2a5a20f080752eda). In the reference implementation, `crates/terse-net/src/article_parse.rs` reads every construct, and the reference reader, `programs/reader`, shows them all.
 
 ## What you have now
 
 A Rust program of 70 lines that shows the headings and paragraphs of any Tersenet article file.
 
-Next: [Make a reader in Rust, step 2: fetch an article](terse:e04467bd411dc0a495872dd173406b8f70a2da83c938627773d66231ea2a0f98).
+Next: [Make a reader in Rust, step 2: fetch an article](terse:d731a1f774a8683ff5d1035e5a33e32f445d356cdf6ddd58ebe538f8339841a0).
