@@ -54,7 +54,8 @@ class Pose:
         return f"{n(FEET_X + x)} {n(FEET_Y + y + self.dy)}"
 
     def poly(self, colour, *polys, line=None):
-        """Filled polygons (lists of (x, y)), outlined in `line` if given."""
+        """Filled polygons (lists of (x, y)); `line` is kept for a painter who
+        wants outlines back (they cost the length cap double)."""
         d = " ".join("M" + " L".join(self.P(x, y) for x, y in pts) + " Z" for pts in polys)
         stroke = "stroke none"  # outlines would double the length cap's count (paint.py --costs)
         self.out.append(f"fill {colour} {stroke} {d}")

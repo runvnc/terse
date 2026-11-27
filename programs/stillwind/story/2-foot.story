@@ -170,9 +170,9 @@ on knock tower_door
 on open tower_door if locked tower_door
   say: You push. The door has the patient weight of a door that is locked and knows it. The keyhole could take a big key.
 
-after open tower_door if not door_done
+on open tower_door if unlocked tower_door and closed tower_door
   say: The great door swings inward without a sound. Lamplight, and the smell of old stone and older paper.
-  set door_done
+  make tower_door open
   achieve door
 
 on pull tower_door

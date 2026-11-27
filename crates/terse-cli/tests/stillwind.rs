@@ -87,7 +87,7 @@ fn room_index(name: &str) -> u8 {
 #[derive(Clone, Copy)]
 struct Setup {
     content: bool,
-    delay: u64,
+    delay: u32,
     leave_out: Option<&'static str>,
 }
 
@@ -111,12 +111,12 @@ struct Probe {
 struct Game {
     m: Machine,
     content: Option<ContentService>,
-    held: VecDeque<(u64, Completion)>,
-    delay: u64,
+    held: VecDeque<(u32, Completion)>,
+    delay: u32,
     _dir: tempfile::TempDir,
     used: Vec<u64>,
     spilled: usize,
-    submits: Vec<(usize, u64)>,
+    submits: Vec<(usize, u32)>,
     text_at: Option<usize>,
 }
 

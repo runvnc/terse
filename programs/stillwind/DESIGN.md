@@ -224,6 +224,28 @@ fetched says so, and the story goes on in words. The image stays small
 and ROM (256 KiB) does not limit the number of scenes: ten richly
 painted scenes would be 200-300 KB of documents.
 
+What the content device does not give, said plainly rather than worked
+round:
+
+- **No way for an image to name the blobs it needs.** A host fetches a
+  program's image from its feed (NETWORK.md 4.4) and nothing else; the
+  scenes are found only when the program asks for them by hash, so the
+  first time a player meets a scene its fetch waits on a relay, and a
+  host with no relay can show no scene it was not given by hand
+  (`terse put`). The engine preloads, which hides this inside a session
+  but not on first play. What would close it: a list of blob IDs
+  published with (or inside) the image that the host fetches with it, or
+  a "these blobs belong to this program" entry kind.
+- **No cancel.** A preload for a room she turned away from keeps its
+  request slot until it completes (§content.unspecified lists cancelling
+  as not yet specified). The engine fetches one scene at a time to keep
+  slots free for saving.
+- **No bound on a fetch that goes to the network.** Status 03h (failed)
+  comes when "the host decides"; the notice can say "fetching", not for
+  how long.
+- 16 KiB a get and 8 pending requests are enough: a 30 KB scene is two
+  requests.
+
 ## Tone and look
 
 Flat-colour vector painting under a long gold evening: deep blue sky
