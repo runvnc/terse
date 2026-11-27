@@ -16,7 +16,7 @@ use terse_core::SCREEN_WIDTH;
 
 use super::base::{IRect, mix, over, pack};
 use crate::figures::{self, FigureKey, Rasterizer};
-use crate::page::{FIGURE_MARGIN, FIGURE_PIXELS, HostLayout, PageView, next_scroll, render_glyph};
+use crate::page::{FIGURE_MARGIN, FIGURE_PIXELS, HostLayout, PageView, group_pixels, next_scroll, place_group, render_glyph};
 use crate::phosphor;
 
 /// Bytes of glyph images kept before the cache starts over.
@@ -35,11 +35,35 @@ pub struct GlyphImage {
     pub data: Vec<u8>,
 }
 
-/// A figure as rasterised: premultiplied RGBA.
+/// A figure (or a group of a layered figure) as rasterised: premultiplied
+/// RGBA.
 pub struct FigureImage {
     pub w: u32,
     pub h: u32,
     pub data: Vec<u8>,
+}
+
+/// The texels of an image over a quad: u0, v0, u1, v1 (u0 > u1 when it is
+/// mirrored); the whole image is [0, 0, w, h].
+pub type Texels = [f32; 4];
+
+impl FigureImage {
+    /// The whole image over a quad.
+    pub fn whole(&self) -> Texels {
+        [0.0, 0.0, self.w as f32, self.h as f32]
+    }
+
+    /// The texel row shown at target row `y` of quad `q` (nearest).
+    pub fn row(&self, q: &IRect, t: &Texels, y: i32) -> usize {
+        let f = ((y - q.y0) as f32 + 0.5) / q.height() as f32;
+        ((t[1] + (t[3] - t[1]) * f).floor().max(0.0) as usize).min(self.h as usize - 1)
+    }
+
+    /// The texel column shown at target column `x` of quad `q` (nearest).
+    pub fn col(&self, q: &IRect, t: &Texels, x: i32) -> usize {
+        let f = ((x - q.x0) as f32 + 0.5) / q.width() as f32;
+        ((t[0] + (t[2] - t[0]) * f).floor().max(0.0) as usize).min(self.w as usize - 1)
+    }
 }
 
 #[derive(Clone)]
@@ -47,7 +71,7 @@ pub enum Paint {
     Solid([u8; 4]),
     Mask(Arc<GlyphImage>, [u8; 3]),
     Colour(Arc<GlyphImage>),
-    Figure(Arc<FigureImage>),
+    Figure(Arc<FigureImage>, Texels),
 }
 
 #[derive(Clone)]
@@ -63,6 +87,8 @@ pub struct PageKey {
     layout: usize,
     scroll: Option<u32>,
     figures: usize,
+    /// The layers' state (SPEC §page.layers), as a number.
+    layers: u64,
     outlines: bool,
     screen: (u32, u32, u32, u32),
     phosphor: bool,
@@ -88,7 +114,7 @@ pub struct SoftPage {
     /// Figures that arrived (a count, to tell that the page changed).
     arrived: usize,
     /// Quads of figures not yet rasterised when they were prepared.
-    pending_quads: Vec<(usize, FigureKey)>,
+    pending_quads: Vec<(usize, FigureKey, Option<Texels>)>,
     /// The figure drawn at each index of the layout last prepared: while a
     /// changed figure is rasterised, the one shown before stays in its
     /// place (SPEC §page.layout: re-submitting never makes a figure blink).
@@ -135,7 +161,7 @@ impl SoftPage {
     /// Once per machine frame: the page's state and the layout to show;
     /// the shown scroll moves towards the program's.
     pub fn set(&mut self, page: Option<&Page>, layout: Option<Arc<HostLayout>>) {
-        self.view = page.map(|p| PageView { region: p.region(), background: p.background() });
+        self.view = page.map(PageView::of);
         self.layout = layout;
         let (Some(page), Some(layout)) = (page, &self.layout) else {
             self.shown_scroll = None;
@@ -168,6 +194,14 @@ impl SoftPage {
             layout: self.layout.as_ref().map_or(0, |l| Arc::as_ptr(l) as usize),
             scroll: self.shown_scroll.map(f32::to_bits),
             figures: self.arrived,
+            layers: self.view.map_or(0, |v| {
+                use std::hash::{Hash, Hasher};
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                for l in &v.layers {
+                    (l.shown, l.mirrored, l.x, l.y, l.scale).hash(&mut h);
+                }
+                h.finish()
+            }),
             outlines: self.outlines,
             screen: (screen.0.to_bits(), screen.1.to_bits(), screen.2.to_bits(), screen.3.to_bits()),
             phosphor,
@@ -300,44 +334,92 @@ impl SoftPage {
 
     /// The figures near the view: asks for those not yet rasterised (or
     /// rasterises them at once, for screenshots), drops the others, and
-    /// adds quads for those in view.
+    /// adds quads for those in view. A layered figure (SPEC §page.layers)
+    /// is an image per group, every group's rasterised (hidden ones too, so
+    /// that showing one is at once), the shown ones drawn where their
+    /// layers place them, clipped to the figure's box.
     fn figures(&mut self, layout: &HostLayout, (rx, ry, s, scroll, h): (f32, f32, f32, f32, f32), outline: bool) {
         let top = scroll - FIGURE_MARGIN * h;
         let bottom = scroll + (1.0 + FIGURE_MARGIN) * h;
         let mut wanted = HashSet::new();
         let mut jobs = Vec::new();
         let (mut keep, mut shown) = (HashSet::new(), HashMap::new());
+        let layers = self.view.map(|v| v.layers).unwrap_or([Default::default(); terse_core::page::LAYERS]);
         let first = layout.figures.partition_point(|f| f.top + f.height <= top);
         for (i, f) in layout.figures.iter().enumerate().skip(first).take_while(|(_, f)| f.top < bottom) {
             let (qw, qh) = ((f.width * s).ceil().max(1.0), (f.height * s).ceil().max(1.0));
             let mut scale = s.min((FIGURE_PIXELS / (qw * qh)).sqrt() * s);
-            scale = scale.min(FIGURE_SIDE as f32 / f.width.max(f.height));
+            scale = scale.min(FIGURE_SIDE as f32 / (if f.groups.is_empty() { f.width } else { f.full_width }).max(f.height));
+            let in_view = f.top < scroll + h && f.top + f.height > scroll;
+            let x = (rx + f.x * s).round() as i32;
+            let y = (ry + (f.top - scroll) * s).round() as i32;
+            if !f.groups.is_empty() {
+                let clip = [x as f32, y as f32, x as f32 + f.width * s, y as f32 + f.height * s];
+                for (gi, g) in f.groups.iter().enumerate() {
+                    let px = group_pixels(g.bounds, scale);
+                    if px.1.0 == 0 || px.1.1 == 0 {
+                        continue;
+                    }
+                    let px = (px.0, (px.1.0.min(FIGURE_SIDE), px.1.1.min(FIGURE_SIDE)));
+                    let key: FigureKey = (g.id, px.1, outline);
+                    wanted.insert(key);
+                    if !self.figure_images.contains_key(&key) && !self.figures_pending.contains(&key) {
+                        self.figures_pending.insert(key);
+                        jobs.push(figures::Job { key, paths: g.paths.clone(), scale, origin: px.0 });
+                    }
+                    let state = g.layer.map(|l| &layers[l as usize]);
+                    if !in_view || state.is_some_and(|l| !l.shown) {
+                        continue;
+                    }
+                    let Some((d, t)) = place_group(px, state, (x as f32, y as f32), s, scale, clip) else { continue };
+                    let r = IRect::new(d[0].round() as i32, d[1].round() as i32, d[2].round() as i32, d[3].round() as i32);
+                    if r.is_empty() {
+                        continue;
+                    }
+                    self.quads.quads.push(Quad { r, paint: Paint::Solid([0; 4]) });
+                    let at = self.quads.quads.len() - 1;
+                    let slot = i << 8 | (gi + 1);
+                    if let Some(img) = self.figure_images.get(&key) {
+                        self.quads.quads[at].paint = Paint::Figure(img.clone(), t);
+                        shown.insert(slot, key);
+                    } else {
+                        self.pending_quads.push((at, key, Some(t)));
+                        if let Some(&before) = self.figure_shown.get(&slot).filter(|k| k.1 == px.1)
+                            && let Some(img) = self.figure_images.get(&before)
+                        {
+                            self.quads.quads[at].paint = Paint::Figure(img.clone(), t);
+                            keep.insert(before);
+                            shown.insert(slot, before);
+                        }
+                    }
+                }
+                continue;
+            }
             let size = (((f.width * scale).ceil() as u32).clamp(1, FIGURE_SIDE), ((f.height * scale).ceil() as u32).clamp(1, FIGURE_SIDE));
             let key: FigureKey = (f.id, size, outline);
             wanted.insert(key);
             if !self.figure_images.contains_key(&key) && !self.figures_pending.contains(&key) {
                 self.figures_pending.insert(key);
-                jobs.push(figures::Job { key, paths: f.paths.clone(), scale });
+                jobs.push(figures::Job { key, paths: f.paths.clone(), scale, origin: (0, 0) });
             }
-            if f.top < scroll + h && f.top + f.height > scroll {
-                let x = (rx + f.x * s).round() as i32;
-                let y = (ry + (f.top - scroll) * s).round() as i32;
+            if in_view {
                 // Drawn once it has arrived (the key is looked up at draw time).
                 self.quads.quads.push(Quad { r: IRect::new(x, y, x + qw as i32, y + qh as i32), paint: Paint::Solid([0; 4]) });
                 let at = self.quads.quads.len() - 1;
+                let slot = i << 8;
                 if let Some(img) = self.figure_images.get(&key) {
-                    self.quads.quads[at].paint = Paint::Figure(img.clone());
-                    shown.insert(i, key);
+                    self.quads.quads[at].paint = Paint::Figure(img.clone(), img.whole());
+                    shown.insert(slot, key);
                 } else {
-                    self.pending_quads.push((at, key));
+                    self.pending_quads.push((at, key, None));
                     // Until it is rasterised, the figure shown here before
                     // (if of the same size).
-                    if let Some(&before) = self.figure_shown.get(&i).filter(|k| k.1 == size)
+                    if let Some(&before) = self.figure_shown.get(&slot).filter(|k| k.1 == size)
                         && let Some(img) = self.figure_images.get(&before)
                     {
-                        self.quads.quads[at].paint = Paint::Figure(img.clone());
+                        self.quads.quads[at].paint = Paint::Figure(img.clone(), img.whole());
                         keep.insert(before);
-                        shown.insert(i, before);
+                        shown.insert(slot, before);
                     }
                 }
             }
@@ -359,9 +441,10 @@ impl SoftPage {
             }
         }
         // Quads of figures that arrived just now.
-        for (at, key) in std::mem::take(&mut self.pending_quads) {
+        for (at, key, t) in std::mem::take(&mut self.pending_quads) {
             if let Some(img) = self.figure_images.get(&key) {
-                self.quads.quads[at].paint = Paint::Figure(img.clone());
+                let t = t.unwrap_or_else(|| img.whole());
+                self.quads.quads[at].paint = Paint::Figure(img.clone(), t);
             }
         }
     }
@@ -431,14 +514,13 @@ impl PageQuads {
                             }
                         }
                     }
-                    Paint::Figure(f) => {
-                        let (qw, qh) = (q.r.width() as f32, q.r.height() as f32);
-                        let v = (((y - q.r.y0) as f32 + 0.5) / qh * f.h as f32) as usize;
-                        let src = &f.data[v.min(f.h as usize - 1) * f.w as usize * 4..][..f.w as usize * 4];
+                    Paint::Figure(f, tx) => {
+                        let v = f.row(&q.r, tx, y);
+                        let src = &f.data[v * f.w as usize * 4..][..f.w as usize * 4];
                         for (i, p) in out.iter_mut().enumerate() {
                             let x = r.x0 + i as i32;
-                            let u = (((x - q.r.x0) as f32 + 0.5) / qw * f.w as f32) as usize;
-                            let t = &src[u.min(f.w as usize - 1) * 4..][..4];
+                            let u = f.col(&q.r, tx, x);
+                            let t = &src[u * 4..][..4];
                             if t[3] > 0 {
                                 // Premultiplied: back to straight colour, then over.
                                 let a = t[3] as f32 / 255.0;
@@ -504,14 +586,13 @@ impl PageQuads {
                             p[2] += lin[t[2] as usize] * a;
                         }
                     }
-                    Paint::Figure(f) => {
-                        let (qw, qh) = (q.r.width() as f32, q.r.height() as f32);
-                        let v = (((y - q.r.y0) as f32 + 0.5) / qh * f.h as f32) as usize;
-                        let src = &f.data[v.min(f.h as usize - 1) * f.w as usize * 4..][..f.w as usize * 4];
+                    Paint::Figure(f, tx) => {
+                        let v = f.row(&q.r, tx, y);
+                        let src = &f.data[v * f.w as usize * 4..][..f.w as usize * 4];
                         for (i, p) in out.chunks_exact_mut(3).enumerate() {
                             let x = r.x0 + i as i32;
-                            let u = (((x - q.r.x0) as f32 + 0.5) / qw * f.w as f32) as usize;
-                            let t = &src[u.min(f.w as usize - 1) * 4..][..4];
+                            let u = f.col(&q.r, tx, x);
+                            let t = &src[u * 4..][..4];
                             if t[3] > 0 {
                                 let a = t[3] as f32 / 255.0;
                                 let k = 255.0 / t[3] as f32;
