@@ -231,6 +231,12 @@ impl SoftPage {
     /// `screen` is the 640 × 480 screen in target pixels; `viewport` the
     /// target's size.
     pub fn prepare(&mut self, screen: (f32, f32, f32, f32), viewport: (u32, u32), phosphor: bool) {
+        // Figures that arrived are taken in before the quads are made, not
+        // only by `key`: the phosphor style keys its cached text light by
+        // `key` after preparing, so an arrival collected there alone was
+        // counted in the key while the quads still showed the figure from
+        // before (the filled one, after a switch to outlines), for good.
+        self.collect_figures();
         self.quads.quads.clear();
         self.quads.scissor = IRect::EMPTY;
         let Some(view) = self.view else { return };
