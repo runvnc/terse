@@ -396,7 +396,10 @@ def read_lines(paths):
     for p in paths:
         with open(p, encoding='utf-8') as f:
             for i, raw in enumerate(f, 1):
-                name = os.path.relpath(p)
+                try:
+                    name = os.path.relpath(p)
+                except ValueError:  # on another drive (Windows)
+                    name = '..'
                 lines.append(Line(p if name.startswith("..") else name, i, raw))
     return lines
 
@@ -2428,7 +2431,7 @@ def emit(out_path, check_only=False, stats=False):
                      events=len(events_c), flags=nflags, texts=len(TEXTS.items), tokens=len(table),
                      text_words=sum(len(re.findall(r"[A-Za-z']+", t.decode('latin-1'))) for t in TEXTS.items))
     if not check_only and out_path:
-        with open(out_path, 'w') as f:
+        with open(out_path, 'w', encoding='utf-8', newline='\n') as f:
             f.write(src)
     return src
 
@@ -2610,7 +2613,7 @@ def draw_svg(items, beam, path, dark):
             p = ' '.join(f'{x:g},{y:g}' for x, y in pts)
             s.append(f'<polyline points="{p}" fill="none" stroke="{c}" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"{dash}{clip}/>')
     s.append('</svg>')
-    with open(path, 'w') as f:
+    with open(path, 'w', encoding='utf-8', newline='\n') as f:
         f.write('\n'.join(s) + '\n')
 
 
@@ -2899,7 +2902,7 @@ def main(argv):
         if a.events:
             s = transcript_events(a.events)
             if a.output:
-                with open(a.output, 'w') as f:
+                with open(a.output, 'w', encoding='utf-8', newline='\n') as f:
                     f.write(s)
             else:
                 sys.stdout.write(s)
