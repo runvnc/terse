@@ -54,6 +54,6 @@ While the window is open it keeps up by itself. From a terminal, `terse feed syn
 
 ## What you have now
 
-Someone else's articles in your timeline, and yours in theirs once they subscribe to you. Next, the optional side of Tersenet: [Find and play a game](terse:bae07ffeb907ff407f0ed5f361876e683e8aa6d6b91ebc316709daea31892ff7).
+Someone else's articles in your timeline, and yours in theirs once they subscribe to you. Next, the optional side of Tersenet: [Find and play a game](terse:abf06042b9c64dd049bd8bda14923c0b7e8e9077b69e48607fad700e28a2122e).
 
-Relays, addresses and how feeds are kept in sync are in [The network](terse:e5553952295341e79f8457988f1436f488832c6a4bb929acbf42401a9b2c1761).
+Relays, addresses and how feeds are kept in sync are in [The network](terse:401c42853201f64f28c72d9acd2ae7dbf51a744e41003a2fa2280458107d139b).

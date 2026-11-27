@@ -181,8 +181,8 @@ prints `6`, as `terse run frames.terse --frames 10` does. Each pass of the loop 
 
 ## What you have now
 
-A machine that runs programs at exactly the reference's speed: `frames.go`, 80 lines, and `step2/main.go`, 32. Next, give it a screen: [Make a host in Go, step 3: a driver shows hello](terse:b636f6052d3bf233775b69fcc515b2750f58ec8a7b79370dc7b8b5d422558565).
+A machine that runs programs at exactly the reference's speed: `frames.go`, 80 lines, and `step2/main.go`, 32. Next, give it a screen: [Make a host in Go, step 3: a driver shows hello](terse:74d1e670b485498e6f85748899d74519a790ab4867c15887a4fa227ef195809e).
 
-- The same step in Rust: [Make a host in Rust, step 2: frames and the budget](terse:42c8bc6051286a3f8e9d01a09f3ac821aeaecd259d1f9c326bf062b5d365b6b4).
+- The same step in Rust: [Make a host in Rust, step 2: frames and the budget](terse:9a62cf9b446261211bf0c1ceaaba1319e5feb5c64e57bddf09b4581b0d93c593).
 - Full implementations: `native/core-c/main.c` (the frame loop) and `machine.c` (all ten System calls); the reference's `crates/terse-core/src/machine.rs` and `system.rs`.
-- The rules: [The Terse32 machine](terse:1152b72a5e0a484b8ad6b497d02c852f48429823f20176868c946f351a50b4aa), section "Frames and the budget"; [The system device (device 1)](terse:aafdc7735f8bfca7ed199fa9da79cd52a4729fe5c2bc44cbbaacf5f4270db0f0); [Charges and limits](terse:700aa265f5d0ae8141b841e6eeecb0b6146ac6935da3121441ee039db69ecf7c).
+- The rules: [The Terse32 machine](terse:d5582dce5b933ab662643e810c537ba15a1888f126018b878cc7946ccdc9e258), section "Frames and the budget"; [The system device (device 1)](terse:a21c203f96e190cf8e674e66b350b1909137412eacf5661857870728d7df295d); [Charges and limits](terse:700aa265f5d0ae8141b841e6eeecb0b6146ac6935da3121441ee039db69ecf7c).
