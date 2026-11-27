@@ -38,6 +38,7 @@ fn table() -> Vec<CallEntry> {
         e(3).batch(rule::CONSTANT, 0, 0, 0, 0),
         e(4).batch(rule::CONSTANT, 0, 0, 0, 0),
         e(5),
+        e(6).batch(rule::AT_MOST, 0, terse_core::page::LAYERS as u32 - 1, 0, 0),
     ]
 }
 
@@ -180,7 +181,7 @@ impl Device for PageDriver {
     fn call(&mut self, instance: u32, c: &CallIn, _: &mut dyn Mem) -> Reply {
         let Some(i) = self.inst.get_mut(&instance) else { return Reply { a0: ERR_UNKNOWN, ..Default::default() } };
         let page = &mut i.page;
-        let [a0, a1, a2, a3, ..] = c.args;
+        let [a0, a1, a2, a3, a4, ..] = c.args;
         let (r, charge) = match c.function {
             0 => {
                 let r = page.submit(c.buf);
@@ -203,6 +204,7 @@ impl Device for PageDriver {
                 (0, 0)
             }
             5 => (page.locate(a0), 0),
+            6 => (page.set_layer(a0, a1, a2, a3, a4), 0),
             _ => (ERR_UNKNOWN, 0),
         };
         Reply { a0: r, a1: None, charge }

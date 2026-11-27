@@ -113,6 +113,7 @@ pub mod call {
     pub const PAGE_SCROLL: u32 = 0x703;
     pub const PAGE_BACKGROUND: u32 = 0x704;
     pub const PAGE_LOCATE: u32 = 0x705;
+    pub const PAGE_LAYER: u32 = 0x706;
 
     pub const V3_SUBMIT: u32 = 0x900;
     pub const V3_CLEAR: u32 = 0x901;

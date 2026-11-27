@@ -419,6 +419,21 @@ The path string is SVG path data with two additions.
   width is a number from 0 to 2047 units; 0 draws no outline. A word
   ends the path so far (section 6.3): the numbers after a word belong to
   it or to a new command, never repeat the command before it.
+- **Layers.** The word `layer <n>`, where it may stand, puts the paths
+  after it, up to the next `layer` or the end, in layer `n`: 1 or 2
+  decimal digits (no sign, no point; leading zeros allowed) for a value
+  from 0 to 63. It ends the path so far and changes nothing else (the
+  fill, the stroke, the current point and a control point `S` or `T`
+  reflects stay as they were). In an article, layers do not change what
+  is drawn: every layer is drawn, in order, where its paths are, exactly
+  as if the word were not there (section 6.3). They are there so that
+  one figure text serves an article and a program alike: a machine
+  program may show, hide and move the layers of a figure it draws
+  (`spec/page.md` §page.layers), an article never. `layer` followed by
+  anything else (a sign, a point, a value above 63, no number) is
+  malformed. Readers written to the revision of this document before
+  layers find the word malformed and show the figure as its fence
+  (section 6.5); readers of both kinds show every other figure alike.
 - **Numbers**: an optional sign (`+` or `-`), then digits with an
   optional decimal point (`5`, `-0.5`, `.5`, `5.`), at most 32 characters
   with the sign; no exponents. Numbers and commands are separated by any
@@ -501,7 +516,10 @@ for every figure of an article.
   subpath counted as closed by a straight line back to its start), then
   stroked: an outline of the stroke width centred on its segments, with
   round joins and round ends; a subpath that is closed (`Z`) is stroked
-  all the way round. A path with no segment draws nothing.
+  all the way round. A path with no segment draws nothing. A `layer`
+  word (section 6.1) only ends a path: a reader may ignore nothing of a
+  figure with layers; what it draws must equal drawing every path, of
+  every layer, in order.
 - At the start of the path string the fill is `none` and the stroke is
   `fg`, 1 unit wide. A colour `none` (or any colour with opacity 0)
   draws nothing; a stroke width of 0 draws no outline.
@@ -628,7 +646,9 @@ A reader implementer can skip it.
   device (`spec/page.md` §page.layout: columns narrowed to no less than 48
   units, then cut off at the column's edge), at most 48 KiB of an
   article and 1,024 cells of a table, and the page device's figure caps
-  (`spec/page.md` §page.document).
+  (`spec/page.md` §page.document). It draws a `layer` word as the end of
+  a path, not as the page's Layer command, so the page's limits on
+  layers (`spec/page.md` §page.layers) never apply to an article.
 - One unit of section 6.2 is one screen unit of the machine (`SPEC.md` §screen), and the reader's `fg` is its body text colour.
 - Following a link to a program image or a document, or a program link,
   the reader asks the shell to open it (`SPEC.md` §system, `open`);

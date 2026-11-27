@@ -34,7 +34,10 @@ type Op struct {
 type Path struct {
 	Fill, Stroke Colour
 	Width        int64 // sixteenths of a unit
-	Ops          []Op
+	// Layer is the layer of the latest `layer` word before the path, -1
+	// before the first (ARTICLE.md 6.1). It changes nothing that is drawn.
+	Layer int
+	Ops   []Op
 }
 
 // Draws reports whether the path draws anything: a segment, and a fill or
@@ -84,7 +87,7 @@ type pathParser struct {
 // ParsePath parses a path string into a figure of W x H units.
 func ParsePath(s []byte, w, h int) (*Figure, error) {
 	p := &pathParser{s: s, fig: &Figure{W: w, H: h}}
-	p.cur = Path{Fill: Colour{None: true}, Stroke: Colour{FG: true}, Width: 16}
+	p.cur = Path{Fill: Colour{None: true}, Stroke: Colour{FG: true}, Width: 16, Layer: -1}
 	if err := p.run(); err != nil {
 		return nil, err
 	}
@@ -196,7 +199,7 @@ func (p *pathParser) endPath() {
 	if p.cur.Draws() {
 		p.fig.Paths = append(p.fig.Paths, p.cur)
 	}
-	p.cur = Path{Fill: p.cur.Fill, Stroke: p.cur.Stroke, Width: p.cur.Width}
+	p.cur = Path{Fill: p.cur.Fill, Stroke: p.cur.Stroke, Width: p.cur.Width, Layer: p.cur.Layer}
 	p.open = false
 }
 
@@ -283,6 +286,13 @@ func (p *pathParser) run() error {
 			return nil
 		}
 		c := p.s[p.pos]
+		if afterSep && p.wordAt("layer") {
+			if err := p.layer(); err != nil {
+				return err
+			}
+			afterSep = false
+			continue
+		}
 		if afterSep && (p.wordAt("fill") || p.wordAt("stroke")) {
 			if err := p.word(); err != nil {
 				return err
@@ -320,6 +330,34 @@ func (p *pathParser) run() error {
 		}
 		afterSep = false
 	}
+}
+
+// layer reads `layer <n>`: 1 or 2 digits, 0 to 63, then a separator, a
+// command letter or the end. It only ends the path (ARTICLE.md 6.1).
+func (p *pathParser) layer() error {
+	p.pos += 5
+	if !p.skipSeps() {
+		return errMalformed
+	}
+	start := p.pos
+	n := 0
+	for p.pos < len(p.s) && p.s[p.pos] >= '0' && p.s[p.pos] <= '9' {
+		n = n*10 + int(p.s[p.pos]-'0')
+		p.pos++
+	}
+	digits := p.pos - start
+	if digits < 1 || digits > 2 || n > 63 {
+		return errMalformed
+	}
+	if p.pos < len(p.s) {
+		c := p.s[p.pos]
+		if _, cmd := argCount[upper(c)]; !isSep(c) && !(cmd && (c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z')) {
+			return errMalformed
+		}
+	}
+	p.endPath()
+	p.cur.Layer = n
+	return nil
 }
 
 func (p *pathParser) word() error {

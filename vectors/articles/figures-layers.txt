@@ -1,0 +1,35 @@
+```path 100 60
+fill #345 stroke none M0 0 H100 V60 H0 Z
+layer 1 fill #fa0 M10 30 l10 -10 l10 10 Z
+layer 2 M40 30 l10 -10 l10 10 Z
+layer 1 stroke fg 2 M70 50 L90 50
+layer 05 layer 63
+```
+
+```path 50 50
+fill #f00 M0 0 C10 0 20 10 20 20 layer 3 S40 40 50 50 layer 4 Z
+```
+
+```path 50 50
+M0 0 L1 1 layer 64
+```
+
+```path 50 50
+M0 0 L1 1 layer 1.5
+```
+
+```path 50 50
+M0 0 L1 1 layer
+```
+
+```path 50 50
+M0 0 L1 1 layer 007
+```
+
+```path 50 50
+M0 0 L1 1layer 1
+```
+
+```path 50 50
+layer 2M0 0 L1 1
+```
