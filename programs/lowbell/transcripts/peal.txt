@@ -1,0 +1,25 @@
+# See walkthrough.txt for the transcript format.
+# The dark peal, as custom says: the honest ending at once. UNDO takes it
+# back. The bell will not ring between hours, and HINT helps one line more
+# each time.
+> hint
+< Your lantern is dry.
+> hint
+< FILL LANTERN.
+> hint
+< FILL LANTERN, then LIGHT LANTERN.
+< (That is the last hint for this.)
+> ring bell
+< Between hours the bell stays still.
+> pull rope
+< Between hours the bell stays still.
+> x peal
+< You have never had to ring it.
+> ring dark peal
+< three falling notes
+< nobody goes onto the Teeth
+< *** The end ***
+> undo
+< Undone
+> look
+< The Bell Chamber

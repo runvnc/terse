@@ -1,45 +1,80 @@
-# A dark place: nothing to see without a light; the lantern lights it
-# (the picture only where the beam falls); hints for the open puzzle,
-# one more each time. PLACEHOLDER STORY.
-> hint
-< The boathouse door is locked.
-> hint
-< The box on the jetty is closed. OPEN BOX.
-> open box
-> take brass key
-> unlock door
-> open door
-> e
-< It is pitch dark.
-> x coat
-< It is too dark to see that.
-> take flask
-< It is too dark to see that.
-> hint
-< It is too dark to see in here.
-> i
-< You are carrying a storm lantern and a brass key.
+# See walkthrough.txt for the transcript format.
+# The second ending: the log read, the Lamp left dark, and Tolly will not
+# sail blind. Also: the lamp room is dark without a light, a cover left on
+# hides a lit lamp, and a lantern put out leaves only what you remember.
+> fill lantern
 > light lantern
-< You light the storm lantern.
-< Inside the Boathouse
-< An oilskin coat hangs from a hook
-# Lit only by the lantern: the workbench, outside the beam, is not drawn.
-novectors line 2880 2592 4672 2592
-> hint
-< Your lantern's beam reveals things.
-> hint
-< SHINE LANTERN AT WALL.
-> hint
-< (That is the last hint for this.)
-> take flask
-< Taken.
-> put flask on bench
-< You put the flask of oil on the workbench.
-> look under bench
-< On the workbench you find a flask of oil.
-> turn off lantern
+> d
+> d
+> s
+> e
+> take wick
+> buy cord
+> buy candles
+> w
+> s
+> e
+> give parcel to tolly
+> w
+> s
+> take fleece
+> sw
+> shine lantern at reeds
+> muffle oarlocks
+> ne
+> n
+> n
+> n
+> u
+> tie cord to lever
+> wind crank
+> put candles in case
+> light candles
+< It is set.
+> u
+> z
+> z
+> z
+> ring bell
+< Ten.
+> d
+> d
+> s
+> s
+> s
+> sw
+> e
+> e
+> e
+> e
+< The Landing
+> n
+> shine lantern at hut
+> open hatch
+> in
+< The Lamp Room
+> read log
+< [The keeper's log]
+> put wick in lamp
+> light lamp
+< burns up bright behind the canvas
+> x lamp
+< A new wick stands in the holder.
+> put out lamp
+< You turn the wick down until the flame goes out.
+> put out lantern
 < You put out the storm lantern.
 > look
-< It is pitch dark.
+< It is black here.
+> light lantern
 > out
-< The Jetty
+> z
+> z
+> z
+> z
+> z
+> z
+> z
+> z
+< finds no Lamp, and will not sail blind
+< *** The end ***

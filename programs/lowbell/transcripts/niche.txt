@@ -1,0 +1,83 @@
+# See walkthrough.txt for the transcript format.
+# The lantern set in the cairn's niche with the Lamp left dark: one small
+# light on a hill, and Tolly will not steer for it. Asking Ines about two
+# lights gets no answer: the idea has to be the player's.
+> fill lantern
+> light lantern
+> d
+> d
+> s
+> e
+> take wick
+> buy cord
+> buy candles
+> w
+> s
+> e
+> give parcel to tolly
+> w
+> s
+> take fleece
+> sw
+> shine lantern at reeds
+> muffle oarlocks
+> ne
+> n
+> n
+> n
+> u
+> tie cord to lever
+> wind crank
+> put candles in case
+> light candles
+< It is set.
+> u
+> z
+> z
+> z
+> ring bell
+< Ten.
+> d
+> d
+> s
+> s
+> s
+> sw
+> e
+> e
+> e
+> e
+< The Landing
+> n
+> shine lantern at hut
+> open hatch
+> in
+< The Lamp Room
+> out
+> u
+> u
+< The Cairn
+> shine lantern at stone
+< [Her bearing]
+> z
+> z
+< Ines Marl comes up over the crest
+> ask ines about lights
+< She doesn't say anything.
+> ask ines about chalk
+< No good to a ferryman in the dark.
+> ask ines about relight
+< "That's yours to say,"
+> drop lantern
+< (in the niche, where it can be seen)
+< one small light on a dark hill
+> take lantern
+> put lantern in niche
+> z
+> z
+> z
+> z
+> z
+> z
+< too high and too faint
+< *** The end ***

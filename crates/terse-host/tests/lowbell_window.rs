@@ -2,7 +2,7 @@
 //! (`--drive`, in a headless compositor the host starts; skipped without
 //! weston): typed commands answered, the beam on the hidden chalk with the
 //! picture drawn as listed, the picture still where nothing is animated
-//! (the dark boathouse) and only the text changing while the player types,
+//! (the dark clock room) and only the text changing while the player types,
 //! each machine frame within half its budget; with both renderers, at
 //! 640 x 480 and 1900 x 1000. Late frames are checked by hand (--drive).
 
@@ -76,17 +76,17 @@ fn played_in_the_window() {
     let dir = tempfile::tempdir().unwrap();
     for (renderer, size) in [("software", "640x480"), ("software", "1900x1000"), ("gpu", "1900x1000")] {
         let mut script = String::from("settle max 300\nexpect vectors contains c aa8250ff\nshot start.png\npress enter\nwait 4\n");
-        script += &typed(&["light lantern", "open box", "take key", "unlock door", "open door", "east"]);
-        // The dark boathouse: nothing animated.
-        script += "settle\nexpect terminal contains Inside the Boathouse\n";
+        script += &typed(&["fill lantern", "light lantern", "down"]);
+        // The dark clock room: nothing animated.
+        script += "settle\nexpect terminal contains The Clock Room\n";
         script += "expect idle 60\n";
         // Typing: the scene's list and every row but the input line stay as
         // they were, while the letters show and go.
         script += "dump vectors > v0.txt\ndump terminal > t0.txt\ntype hint\nwait 4\nexpect terminal contains > hint\n";
         script += "dump vectors > v1.txt\ndump terminal > t1.txt\n";
         script += "press backspace\npress backspace\npress backspace\npress backspace\nwait 4\n";
-        script += &typed(&["shine lantern at wall"]);
-        script += "settle\nexpect terminal contains Chalk marks\nexpect vectors contains c ebebdcff\nshot chalk.png\n";
+        script += &typed(&["up", "shine lantern at frame"]);
+        script += "settle\nexpect terminal contains Someone scratched a drawing\nexpect vectors contains c ebebdcff\nshot chalk.png\n";
         script += "expect idle 60\n";
         script += "hold left 30\nsettle\nexpect vectors contains c 4e4e49ff\nshot faint.png\nexpect budget 50\n";
         // Late frames (expect no-slow) depend on the computer's load and the

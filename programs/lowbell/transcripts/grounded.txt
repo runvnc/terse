@@ -1,0 +1,72 @@
+# See walkthrough.txt for the transcript format.
+# The first ending: the Lamp relit as you were asked, and the ferry steers
+# straight for it, onto the Teeth. Only one candle set: midnight is silent.
+> fill lantern
+> light lantern
+> d
+> d
+> s
+> e
+> take wick
+> buy cord
+> buy candles
+> w
+> s
+> e
+> give parcel to tolly
+> w
+> s
+> take fleece
+> sw
+> shine lantern at reeds
+> muffle oarlocks
+> ne
+> n
+> n
+> n
+> u
+> tie cord to lever
+> wind crank
+> put candles in case
+> light candles
+< It is set.
+> u
+> z
+> z
+> z
+> ring bell
+< Ten.
+> d
+> d
+> s
+> s
+> s
+> sw
+> e
+> e
+> e
+> e
+< The Landing
+> n
+> shine lantern at hut
+> open hatch
+> in
+< The Lamp Room
+> put wick in lamp
+> untie cover
+> light lamp
+< [The Far Lamp, burning]
+> out
+> d
+> z
+> z
+> z
+> z
+> z
+> z
+> z
+> z
+< Midnight comes, and for the first time in two hundred years the bell of Low Bell says nothing.
+< a sound like a cart tipping out stones
+< Nobody ever learned the lamp had gone out.
+< *** The end ***

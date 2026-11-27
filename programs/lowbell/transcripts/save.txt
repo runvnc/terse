@@ -1,37 +1,24 @@
-# SAVE and RESTORE (named records), UNDO more than once. PLACEHOLDER STORY.
-> open box
+# See walkthrough.txt for the transcript format.
+# SAVE and RESTORE (named records), UNDO more than once.
+> fill lantern
 > save
 < Saved as "game".
-> take brass key
-< Taken.
+> light lantern
+< You strike a match
 > restore
 < Restored "game".
 > i
-! brass key
-> take key
+! (lit)
+> light lantern
 > save evening2
 < Saved as "evening2".
-> restore nosuch
-< There is no saved game called "nosuch".
-> save my game!
-< Names of saved games are letters and digits
-> drop key
-< Dropped.
-> take coin
-< Taken.
+> d
+> d
 > undo
 < Undone
 > undo
 < Undone
-> i
-< brass key
-! coin
-> drop key
-> restore evening2
-< Restored "evening2".
-> i
-< brass key
-> undo
-< Undone
-> i
-! brass key
+> look
+< The Bell Chamber
+> restore nothing
+< There is no saved game called "nothing".
