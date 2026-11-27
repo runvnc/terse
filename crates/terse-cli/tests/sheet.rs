@@ -731,6 +731,21 @@ fn inserting_and_deleting_rows_and_columns() {
     run.finish(&k2);
     assert_eq!(run.entry(), "E3   =C3*D3   = 546", "B and C moved right");
     assert_eq!(run.cell("B3"), "");
+    // Deleting the chart's rows removes it; undo brings it back, redo
+    // removes it again.
+    let k = Keys::new().wait(4).goto("A3").press("down shift").press("down shift").press("down shift").press("down shift").press("0x2d ctrl").wait(40);
+    let mut run = Run::new(&k);
+    run.finish(&k);
+    assert_eq!(run.figures(), vec![]);
+    let k = Keys { lines: k.lines.clone(), f: k.f }.press("z ctrl").wait(40);
+    let mut run = Run::new(&k);
+    run.finish(&k);
+    assert_eq!(run.figures(), vec![(640, 72)]);
+    assert_eq!(run.cell("A3"), "Panels");
+    let k = Keys { lines: k.lines.clone(), f: k.f }.press("y ctrl").wait(40);
+    let mut run = Run::new(&k);
+    run.finish(&k);
+    assert_eq!(run.figures(), vec![]);
     // Rows pushed off the sheet must be empty.
     let k = Keys::new().new_sheet().goto("A1").enter("x").goto("A99").enter("y").goto("A1").press("0x2e ctrl shift").wait(4);
     let mut run = Run::new(&k);
