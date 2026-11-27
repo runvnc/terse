@@ -10,7 +10,7 @@ use std::collections::HashSet;
 use std::fmt::Write as _;
 
 use crate::article_parse::{Align, Block, Colour, Figure, Inline, Table, Target};
-use crate::{BlobId, to_hex};
+use crate::{BlobId, highlight, to_hex};
 
 // --- Escaping ----------------------------------------------------------------
 
@@ -247,6 +247,78 @@ fn figure(f: &Figure, out: &mut String) {
     out.push_str("</svg></figure>\n");
 }
 
+/// `s[r]` escaped as [`esc`] escapes it within the whole of `s` (so that
+/// a `://` cut by a run's edge is still escaped).
+fn esc_in(s: &str, r: std::ops::Range<usize>) -> String {
+    let mut out = String::with_capacity(r.len());
+    for (i, c) in s[r.clone()].char_indices() {
+        match c {
+            ':' if s[r.start + i..].starts_with("://") => out.push_str("&#58;"),
+            c => out.push_str(&esc(c.encode_utf8(&mut [0; 4]))),
+        }
+    }
+    out
+}
+
+/// A preformatted block or fence. A fence whose info string names a
+/// language ([`highlight::lang`]) is coloured: each run of a class is a
+/// `<span>` of its CSS class; command lines are `<pre class="sh">`. Links
+/// are shown as everywhere else, the tokenizer seeing each as its address.
+fn pre(ctx: &Ctx, lines: &[Vec<Inline>], info: &str, out: &mut String) {
+    let lang = highlight::lang(info);
+    let texts: Vec<String> = lines
+        .iter()
+        .map(|l| {
+            l.iter()
+                .map(|x| match x {
+                    Inline::Text(t) | Inline::Code(t) => t.clone(),
+                    Inline::Link { target, .. } => address(target),
+                })
+                .collect()
+        })
+        .collect();
+    let runs = match lang {
+        Some(lang) => highlight::highlight(lang, &texts.iter().map(String::as_str).collect::<Vec<_>>()),
+        None => vec![Vec::new(); lines.len()],
+    };
+    out.push_str(if lang == Some(highlight::Lang::Shell) { "<pre class=\"sh\">" } else { "<pre>" });
+    for (i, (l, text)) in lines.iter().zip(&texts).enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        if runs[i].is_empty() {
+            out.push_str(&ctx.inlines(l, true));
+            continue;
+        }
+        let mut at = 0;
+        for x in l {
+            let len = match x {
+                Inline::Text(t) | Inline::Code(t) => t.len(),
+                Inline::Link { target, .. } => {
+                    out.push_str(&ctx.inlines(std::slice::from_ref(x), true));
+                    at += address(target).len();
+                    continue;
+                }
+            };
+            let (from, to) = (at, at + len);
+            let mut k = from;
+            for (class, r) in runs[i].iter().filter(|(_, r)| r.end > from && r.start < to) {
+                let (a, b) = (r.start.max(from), r.end.min(to));
+                if a > k {
+                    out.push_str(&esc_in(text, k..a));
+                }
+                let _ = write!(out, "<span class=\"{}\">{}</span>", class.css().unwrap_or(""), esc_in(text, a..b));
+                k = b;
+            }
+            if to > k {
+                out.push_str(&esc_in(text, k..to));
+            }
+            at = to;
+        }
+    }
+    out.push_str("</pre>\n");
+}
+
 /// An article's blocks as HTML; `ids` are the element ids already used on
 /// the page (headings get unique ones).
 pub fn article(ctx: &Ctx, blocks: &[Block], ids: &mut HashSet<String>) -> String {
@@ -272,16 +344,7 @@ pub fn article(ctx: &Ctx, blocks: &[Block], ids: &mut HashSet<String>) -> String
             Block::Item(x) => {
                 let _ = writeln!(out, "<li>{}</li>", ctx.inlines(x, false));
             }
-            Block::Pre(lines) => {
-                out.push_str("<pre>");
-                for (i, l) in lines.iter().enumerate() {
-                    if i > 0 {
-                        out.push('\n');
-                    }
-                    out.push_str(&ctx.inlines(l, true));
-                }
-                out.push_str("</pre>\n");
-            }
+            Block::Pre(lines, info) => pre(ctx, lines, info, &mut out),
             Block::Table(t) => table(ctx, t, &mut out),
             Block::Figure(f) => figure(f, &mut out),
         }
@@ -306,7 +369,7 @@ pub fn article_links(blocks: &[Block]) -> Vec<BlobId> {
     for b in blocks {
         match b {
             Block::Heading(x) | Block::Subheading(x) | Block::Paragraph(x) | Block::Item(x) => add(x),
-            Block::Pre(lines) => lines.iter().for_each(|l| add(l)),
+            Block::Pre(lines, _) => lines.iter().for_each(|l| add(l)),
             Block::Table(t) => t.rows.iter().flatten().for_each(|c| add(c)),
             Block::Figure(_) => {}
         }
@@ -328,6 +391,23 @@ mod tests {
         assert_eq!(slug("2. Blocks", &mut used), "s-2-blocks");
         assert_eq!(slug("A `b` c!", &mut used), "a-b-c");
         assert_eq!(slug("A b c", &mut used), "a-b-c-2");
+    }
+
+    #[test]
+    fn fences_coloured() {
+        let a = [7u8; 32];
+        let text = format!(
+            "```c x.c\nint x = 1; // terse:{} see\nchar *u = \"http://q\"; y = http://z;\n```\n\n```sh\nterse run a.terse\n```\n\n```\nint x;\n```\n\n    int y;\n",
+            to_hex(&a)
+        );
+        let crate::article_parse::Parsed::Article(blocks) = crate::article_parse::parse(text.as_bytes()) else { panic!() };
+        let resolve = |_: &Target| Some(("a.html".to_string(), "A".to_string()));
+        let html = article(&Ctx { resolve: &resolve }, &blocks, &mut HashSet::new());
+        assert!(html.contains("<pre><span class=\"t\">int</span> x = <span class=\"n\">1</span>; <span class=\"c\">// </span><a href=\"a.html\" title=\"A\">terse:070707…070707</a><span class=\"c\"> see</span>\n"), "{html}");
+        assert!(html.contains("<span class=\"s\">&quot;http&#58;//q&quot;</span>; y = http<span class=\"c\">&#58;//z;</span>") || html.contains("http&#58;<span class=\"c\">//z;</span>"), "{html}");
+        assert!(!html.contains("://"), "{html}");
+        assert!(html.contains("<pre class=\"sh\"><span class=\"k\">terse</span> run a.terse</pre>"), "{html}");
+        assert!(html.contains("<pre>int x;</pre>\n<pre>int y;</pre>"), "{html}");
     }
 
     #[test]

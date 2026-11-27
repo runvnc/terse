@@ -281,7 +281,7 @@ fn reference(blocks: &[Block]) -> Vec<String> {
                 );
                 inline_lines(&from_inlines(x), true, &mut out, "  ");
             }
-            Block::Pre(lines) => {
+            Block::Pre(lines, _) => {
                 out.push("pre".into());
                 for l in lines {
                     out.push("  line".into());
