@@ -47,9 +47,9 @@ document. A **program-profile host** (§profiles) implements:
 
 - **The machine** (§profile): RV32IMC in user mode, ROM and RAM, the frame
   loop and its budget, stopping and faults; the image format (§image).
-- **25 calls** (§calls.table): 10 of System (`wait_frame`,
+- **26 calls** (§calls.table): 11 of System (`wait_frame`,
   `next_event`, `frame_count`, `unix_time`, `random`, `controller`,
-  `exit`, `open`, `argument`, `device`), 10 of the Terminal (`write`,
+  `exit`, `open`, `argument`, `device`, `copy`), 10 of the Terminal (`write`,
   `command`, `set_cursor`, `get_cursor`, `set_colours`, `get_colours`,
   `cells_read`, `cells_write`, `palette_set`, `size`) and 5 of the 2D
   vector display (`submit`, `clear`, `style`, `persistence`, `fill`).
@@ -60,7 +60,8 @@ document. A **program-profile host** (§profiles) implements:
   them all as not connected.
 - `open` and `argument` are trivial on a host without a shell: `open`
   checks its request and returns 0 (or `FFFF_FFFEh` for a bad one), and
-  `argument` checks its buffer and returns 0.
+  `argument` checks its buffer and returns 0. `copy` is trivial on a host
+  without a clipboard: it checks its buffer, charges for it and returns 0.
 - The data tables the machine's state depends on: UTF-8 decoding and the
   East Asian Width property for the terminal's wide characters
   (§terminal.cells), the xterm palette (§terminal.reset), and the
@@ -74,13 +75,13 @@ document. A **program-profile host** (§profiles) implements:
   which a program-profile host may leave out: no shaping, bidirectional
   text or font fallback is needed.
 
-What a host draws beyond what each device requires (fonts, smoothing, the
-phosphor style's look) is up to it and is never machine state. The vector
+What a host draws beyond what each device requires (fonts, smoothing, how
+the phosphor style looks) is up to it and is never machine state. The vector
 display's requirements are in §vector.presentation: a minimal host may
 draw the phosphor style exactly as the clean style but for what
 §vector.phosphor requires of it (filled shapes and the page's figures as
-outlines, and a black screen: no cell or page backgrounds), with no glow
-and no afterglow, and ignore `persistence` (it still keeps the value).
+outlines, and a black screen: no cell or page backgrounds), and ignore
+`persistence` (it still keeps the value).
 
 **A core on the device bus** (`DEVICES.md`) keeps less. Devices 2 and 3
 (and every other device but 1 and 8) are then separate driver programs,
@@ -539,6 +540,7 @@ buffers it is said to write. `pc` continues after the `ecall`.
 | `107h` | `open` | `a0` = address of an open request (read) | 1 passed to the shell, 0 not | core |
 | `108h` | `argument` | `a0` = buffer (32 bytes, written) | 1, or 0 if the machine has none | core |
 | `109h` | `device` | `a0` = device slot | the device's version, or `FFFF_FFFFh` if the machine does not have it | core |
+| `10Ah` | `copy` | `a0` = text (read), `a1` = length, at most 65,536 | 0 | core |
 | `200h` | `write` | `a0` = buffer (read), `a1` = length, at most 4,096 | the length | deferred |
 | `201h` | `command` | `a0` = command | 0 | deferred |
 | `202h` | `set_cursor` | `a0` = column, `a1` = row | 0 | deferred |
@@ -629,6 +631,19 @@ machine's own and cost 4.
   on its command line), which a shell opens as it would a machine's
   request to open that blob. The argument never changes and is part of the
   machine's state (`STATE.md` 1.14).
+- **`copy`** offers the user's system clipboard `a1` bytes of UTF-8
+  text at `a0` (at most 65,536, wholly in ROM or wholly in RAM, else
+  `FFFF_FFFEh`), for the user's copy key: the host puts the text on the
+  clipboard only if, in the frame of the call, the program has read with
+  `next_event` the key-down of a copy key (key C, X or Insert with
+  Control held and neither Alt nor Meta; §events). Otherwise, and on a
+  host that has no clipboard for it, the text is dropped. So a program
+  cannot fill the clipboard on its own, only answer the user's copy. Of
+  several accepted calls in a frame the last counts. A host that finds
+  the text is not valid UTF-8 may replace what is not, or drop it. The
+  call returns 0 whatever the host does with the text: what reaches the
+  clipboard is not machine state, and the machine cannot read the
+  clipboard (pasted text comes only as §events says).
 - **`device`** returns the version of device `a0` if the machine has it:
   device 1, every device its image requires, and every optional device
   it was granted (§image); 8 only for a shell (§machines.shell). The
@@ -677,21 +692,32 @@ full is dropped.
   input, after keyboard layout and input-method composition. A host
   sends no text event for a control character (U+0000–U+001F,
   U+007F–U+009F): Enter, Tab, Backspace, Escape and Control-letter
-  combinations arrive only as key events. Text the user pastes arrives the
-  same way, one event per character, with no key events: a CR LF pair or
-  a lone CR becomes U+000A, U+000A is kept, and every other control
+  combinations arrive only as key events. Nor does a key pressed with
+  Control held (unless Alt is held too: Control+Alt is AltGr on some
+  systems, and AltGr types its character) or with Meta held: such a
+  chord is its key event with the modifiers, and no text, whatever text
+  the host's window system reports for it. Text the user pastes arrives the
+  same way, one event per character: a CR LF pair or a lone CR becomes
+  U+000A, U+0009 (tab) and U+000A are kept, and every other control
   character is dropped; it comes no faster than the queue has room for,
   and goes to whichever machine has the focus as each part is sent. How
   the user pastes is up to the host (the reference host: Control+V, or
-  Shift+Insert).
+  Shift+Insert). The paste key reaches the program like any other key,
+  and brackets the paste: its key-down comes before the pasted text and
+  its key-up after the last of it (held back until then if the user
+  lets go sooner), so a program can tell a paste from typing and may use
+  something of its own instead of the text (a spreadsheet, its copied
+  cells). A paste key pressed with nothing to paste still sends its
+  key-down and key-up. A program never reads what the user has not
+  pasted.
 - **Keys a host keeps.** Besides the home key of a system (§machines.input)
   and the keyboard while a consent prompt is shown (§content.feeds), a host
-  may keep a few keys for its own functions, such as a paste key; such a
-  key's press and its release reach no program (the modifier keys held
-  with it are still delivered). A host should keep as few as it can and
-  say which. (The reference host keeps its paste keys and, for its
-  volume, Control+Alt with minus, equals or M, and the keyboard's volume
-  keys: README "Sound".)
+  may keep a few keys for its own functions; such a key's press and its
+  release reach no program (the modifier keys held with it are still
+  delivered). A paste key is not kept: it is delivered as above. A host
+  should keep as few as it can and say which. (The reference host keeps,
+  for its volume, Control+Alt with minus, equals or M, and the keyboard's
+  volume keys: README "Sound".)
 - **Pointer** positions are in screen units (§screen): x is 0–639 and y
   is 0–479. It is sent when the position or a button changes, at most once
   per frame for movement; a button change is sent at once, with the current
@@ -1007,8 +1033,8 @@ right is (10240, 7680). Anything outside the screen is not shown.
 - **`clear`** empties the list.
 - **`style`** sets the display style: 0 clean, 1 phosphor (§vector.phosphor).
 - **`persistence`** sets the persistence, 0–255: how long the program
-  would like the phosphor style's afterglow to last, a hint a host may
-  ignore (§vector.phosphor).
+  would like what it draws in the phosphor style to linger, a hint a host
+  may ignore (§vector.phosphor).
 - **`fill`** sets the fill mode: 0 filled shapes are filled, 1 they are
   drawn as outlines (§vector.list).
 
@@ -1143,16 +1169,15 @@ host's. In either style a host must draw:
 - in the phosphor style, what §vector.phosphor requires.
 
 Smoothing of edges, the exact colour of blended pixels and the last pixel
-of every shape are up to the host. In the phosphor style its look (glow,
-afterglow and the rest that §vector.phosphor lists) is the host's choice
-as well. None of it is machine state, and the program cannot observe it.
+of every shape are up to the host. In the phosphor style everything that
+§vector.phosphor does not require is the host's choice as well. None of
+it is machine state, and the program cannot observe it.
 
 ### §vector.phosphor Phosphor style
 
-The phosphor style asks for the look of a vector monitor or oscilloscope
-tube: light on a black screen. Some of it changes what is visible, and a
-program written for the style relies on it; the rest is the look, which
-is the host's.
+The phosphor style asks for a vector display, real or simulated: light on
+a black screen. Some of it changes what is visible, and a program written
+for the style relies on it; how the display looks is not specified.
 
 **What a host must do in the phosphor style**, besides §vector.presentation:
 
@@ -1166,46 +1191,22 @@ is the host's.
 - The terminal's characters and cursor are drawn in their foreground
   colour, and the page's text and figures in their colours, on the black
   screen with the shapes.
-- Whatever a host adds for the look must not hide or blur what the list
-  and the text show: text stays as legible as in the clean style.
+- Nothing else a host draws may hide or blur what the list and the text
+  show: text stays as legible as in the clean style.
 
-Where light overlaps, a host may add it, as a tube does (opacity then
-acts as brightness, and a crossing or a line drawn twice is brighter), or
-blend it as the clean style does, in the order of §vector.layers without
-the backgrounds.
-
-**The host's choice.** Everything else about the look: whether and how
-overlapping light adds up; brightness, tone curve and tint (a tube's
-colour); the beam's profile across its width, and how thin a line may get;
-glow, halo and bloom; afterglow and trails, and how the persistence
-shapes them; extra light where lines end (dwell); flicker, curvature and
-vignette; where an outline sits on a shape's edge. A host that draws the
-phosphor style as plain lines in the given colours on black, with no glow
-and no afterglow, conforms. The persistence is a hint, the afterglow the
-program would like (0 none, 255 the longest), and a host may ignore it; it
-is kept in the machine's state all the same (§vector.determinism). In the
-clean style it has no meaning. None of the look is machine state, and the
-program cannot observe it. A host that draws an afterglow should let the
-user turn it off.
-
-*Note, not a requirement: the reference host's look.* `terse-host` draws
-the beam as a thin, sharp line on a faint, wide glow: a bright core whose
-width follows the stated width but is never thinner than about a pixel,
-and a dim glow that spreads far (the halation of the glass) but leaves the
-gaps between close lines and inside letters dark. It adds overlapping
-light, so a program can brighten a line by drawing it more than once on
-that host. Text is not beam light there: it is drawn in its own colours
-and antialiasing, as sharp as in the clean style, and adds a little to the
-glow. Light lingers: what the current list and text show is drawn at full
-brightness each frame, and an afterglow of what was shown before fades
-quickly at first, then with a dim tail multiplied by persistence ÷ 256
-each frame, down to black (with persistence 0, no tail). Something that
-stays put grows no brighter than about its own light, and a shape that
-keeps its structure and only moves leaves a continuous smear rather than
-separate copies. A frame whose light passes a quarter of a screen of ink
-sheds the look step by step, down to plain lines (`PERFORMANCE.md` §4).
-A program may be written with this look in mind, but its picture should
-not depend on it: on another host it may be plain lines.
+**The host's choice.** Everything else: how the display looks, and
+whether it is a real vector display or a simulated one; where light
+overlaps, whether it adds up or is blended as the clean style blends it
+(in the order of §vector.layers without the backgrounds). A host that draws
+the phosphor style as plain lines in the given colours on black conforms.
+The persistence is a hint of how long the program would like what it
+draws to linger (0 not at all, 255 the longest), and a host may ignore it;
+it is kept in the machine's state all the same (§vector.determinism). In
+the clean style it has no meaning. None of the look is machine state, and
+the program cannot observe it, so a program's picture should not depend
+on any one host's look. A host that makes light linger should let the
+user turn that off. How the reference host draws the style is described
+with that host (README "Phosphor style"), not here.
 
 ### §vector.determinism Determinism
 
@@ -1225,7 +1226,7 @@ the call runs and may take it below zero (§frames).
 | An unknown call, a call to a device the machine does not have, and a call whose `a7` is above `FFFFh` (§calls.convention) | 4 |
 | `write`: each byte of the buffer | 2 |
 | A clear, scroll up or scroll down done by `command` (`01h`–`03h`) | 150 |
-| Bytes copied between memory and a device: `next_event` (4 when an event is written), `random`, `controller` (8), `cells_read`, `cells_write`, `palette_set` and an accepted vector `submit`, each when it is carried out; `open` (33, or 34 + n, when the request is read: whenever it is valid, also when the call returns 0) and the system's `argument` (32, when written) | 1 per 4 bytes, rounded up, per call |
+| Bytes copied between memory and a device: `next_event` (4 when an event is written), `random`, `controller` (8), `cells_read`, `cells_write`, `palette_set` and an accepted vector `submit`, each when it is carried out; `open` (33, or 34 + n, when the request is read: whenever it is valid, also when the call returns 0), the system's `argument` (32, when written) and `copy` (its length, whenever the buffer is valid) | 1 per 4 bytes, rounded up, per call |
 
 The other devices are charged in the same terms; each device's document
 lists its charges (§content.charges, §sound.charges, §page.charges,
@@ -1323,9 +1324,9 @@ time on one thread (`PERFORMANCE.md` R10, with how it is measured). In a
 system the machines the shell shows share one more budget, the system
 ink (§machines.ink), so a whole system asks about what two machines can
 (`PERFORMANCE.md` R12). A
-host may draw more than a device requires (§vector.presentation's look,
-glow and afterglow, fonts), but should shed that extra work rather than
-let it make a frame slow.
+host may draw more than a device requires (how the phosphor style looks,
+fonts), but should shed that extra work rather than let it make a frame
+slow.
 
 **What a host must also do**, stated in frames so that any host can be
 tested (at 60 frames a second a frame is 16.7 ms):
@@ -1444,6 +1445,7 @@ the same.
 | `107h` | `open` | `a0` = address of an open request (read) | 1 passed to the shell, 0 not | core |
 | `108h` | `argument` | `a0` = buffer (32 bytes, written) | 1, or 0 if the machine has none | core |
 | `109h` | `device` | `a0` = device slot | the device's version, or `FFFF_FFFFh` if the machine does not have it | core |
+| `10Ah` | `copy` | `a0` = text (read), `a1` = length, at most 65,536 | 0 | core |
 | `200h` | `write` | `a0` = buffer (read), `a1` = length, at most 4,096 | the length | deferred |
 | `201h` | `command` | `a0` = command | 0 | deferred |
 | `202h` | `set_cursor` | `a0` = column, `a1` = row | 0 | deferred |

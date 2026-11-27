@@ -3,9 +3,9 @@
 // messages, answers pings and closes cleanly.
 //
 // A wss:// relay's certificate is checked by crypto/tls against the
-// system's trusted roots and the URL's host; TERSE_RELAY_CA may name a
-// PEM file of further CA certificates to trust (a self-hosted relay with a
-// private CA), as for the reference clients.
+// system's trusted roots and the URL's host; the user's own settings may
+// add authorities or pin a host to an authority or a key (trust.go), as
+// for the reference clients. Nothing turns verification off.
 package ws
 
 import (
@@ -23,7 +23,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -54,29 +53,6 @@ var ErrRequiresTLS = errors.New("this relay requires TLS (try wss://)")
 // besides the system's.
 const CAEnv = "TERSE_RELAY_CA"
 
-// clientTLS is the TLS configuration for a wss:// relay named host: the
-// system's roots, and those of CAEnv if it is set.
-func clientTLS(host string) (*tls.Config, error) {
-	cfg := &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12}
-	path := os.Getenv(CAEnv)
-	if path == "" {
-		return cfg, nil
-	}
-	pem, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", CAEnv, err)
-	}
-	pool, err := x509.SystemCertPool()
-	if err != nil || pool == nil {
-		pool = x509.NewCertPool()
-	}
-	if !pool.AppendCertsFromPEM(pem) {
-		return nil, fmt.Errorf("%s: %s: no PEM certificate in it", CAEnv, path)
-	}
-	cfg.RootCAs = pool
-	return cfg, nil
-}
-
 // tlsFailure says in words why a TLS handshake with a relay failed.
 func tlsFailure(err error) error {
 	var hostErr x509.HostnameError
@@ -85,10 +61,16 @@ func tlsFailure(err error) error {
 	var recErr tls.RecordHeaderError
 	var verErr *tls.CertificateVerificationError
 	switch {
+	case errors.Is(err, ErrPinKey):
+		return ErrPinKey
+	case errors.Is(err, ErrPinAuthority):
+		return ErrPinAuthority
+	case errors.Is(err, ErrPinKeyAuthority):
+		return ErrPinKeyAuthority
 	case errors.As(err, &hostErr):
 		return fmt.Errorf("the relay's certificate is for another name (%w)", err)
 	case errors.As(err, &authErr):
-		return fmt.Errorf("the relay's certificate is not trusted (not from a known authority; for a private CA, see %s): %w", CAEnv, err)
+		return fmt.Errorf("the relay's certificate is not trusted (not from a known authority; for a private one, see README \"Private authorities and pins\"): %w", err)
 	case errors.As(err, &certErr) && certErr.Reason == x509.Expired:
 		return fmt.Errorf("the relay's certificate has expired or is not valid yet: %w", err)
 	case errors.As(err, &certErr):
@@ -223,6 +205,10 @@ func DialStop(rawurl, addr string, timeout time.Duration, stop <-chan struct{}) 
 		!strings.EqualFold(resp.Header.Get("Upgrade"), "websocket") ||
 		resp.Header.Get("Sec-WebSocket-Accept") != acceptKey(key) {
 		c.Close()
+		if resp.StatusCode == http.StatusForbidden {
+			// NETWORK.md 5.3: the relay's own policy.
+			return nil, errors.New("the relay does not accept connections from this address (its operator's policy)")
+		}
 		return nil, fmt.Errorf("ws: handshake refused (%s)", resp.Status)
 	}
 	if !keep() {

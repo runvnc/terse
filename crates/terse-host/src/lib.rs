@@ -175,7 +175,12 @@ const USAGE: &str = "usage:
   ~/.local/share/terse/relay; ~/Library/Application Support/terse/data/relay on macOS; %LOCALAPPDATA%\\terse\\relay on Windows). One line on stderr says
   which. The host connects to all of them
   (at most 8) and, for feeds whose profile names relays, to up to two of those too, unless
-  --no-feed-relays. --screenshot and --selftest use relays only with --relay.
+  --no-feed-relays. --screenshot and --selftest use relays only with --relay. A relay without a
+  scheme is wss:// (encrypted) whatever its port, but localhost or a loopback address is ws://;
+  hints and profiles never name a plain relay. A --relay value may
+  carry options as a line of <config>/relays does (authority=, only-authority=, pin=), and
+  --relay-authority <file> trusts a PEM file's authorities for every relay (README \"Private
+  authorities and pins\").
   --no-prefetch: when an article is downloaded automatically, do not also fetch the first eight
   terse: links in it (NETWORK 4.4). --no-program-download: do not download the current version of
   each program of the subscribed feeds as it arrives (NETWORK 4.4).
@@ -329,6 +334,7 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
             "--force-phosphor" => force_phosphor = true,
             "--csv" => csv = Some(PathBuf::from(it.next().ok_or(USAGE)?)),
             "--relay" => relays.push(it.next().ok_or(USAGE)?),
+            "--relay-authority" => local::add_relay_authority(Path::new(&it.next().ok_or(USAGE)?)),
             "--no-feed-relays" => feed_relays = false,
             "--no-prefetch" => prefetch = false,
             "--no-program-download" => program_download = false,
@@ -476,9 +482,10 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
         eprintln!("terse-host: {}", chosen.describe());
         chosen.urls()
     } else if relays.is_empty() {
+        local::apply_trust(&[], Some(&config))?;
         Vec::new()
     } else {
-        local::find_relays(&relays, None, 0)?.urls()
+        local::find_relays(&relays, Some(&config), 0)?.urls()
     };
     if demo {
         setup::prepare_demo(&store, &config, &relays)?;

@@ -27,6 +27,7 @@
 <tr><td><code>107h</code></td><td><code>open</code></td><td><code>a0</code> = address of an open request (read)</td><td>1 passed to the shell, 0 not</td></tr>
 <tr><td><code>108h</code></td><td><code>argument</code></td><td><code>a0</code> = buffer (32 bytes, written)</td><td>1, or 0 if the machine has none</td></tr>
 <tr><td><code>109h</code></td><td><code>device</code></td><td><code>a0</code> = device slot</td><td>its version, or <code>FFFF_FFFFh</code> if absent</td></tr>
+<tr><td><code>10Ah</code></td><td><code>copy</code></td><td><code>a0</code> = text (read), <code>a1</code> = length, at most 65,536</td><td>0 (the host takes it only for the user&#39;s copy key)</td></tr>
 </tbody></table></div>
 <p><a href="device-terminal.html">The terminal</a>, slot 2:</p>
 <div class="table"><table>

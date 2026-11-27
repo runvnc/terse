@@ -1,6 +1,6 @@
 # Draw a line and read a key
 
-This page adds what most programs need besides text: drawing, and keys that change what is drawn. The program draws one line; Left and Right swing its top end, and Esc quits. In C here, and in Rust on [the next page](terse:f3ae70bc06c8ff3e3f726131f7f32a9e439a36a9b0ac5c870431da3d53c7bc02).
+This page adds what most programs need besides text: drawing, and keys that change what is drawn. The program draws one line; Left and Right swing its top end, and Esc quits. In C here, and in Rust on [the next page](terse:d0d50f883f27176adce3df4e1aab5624d98007c348681b58947285382c411261).
 
 ## The program
 
@@ -75,6 +75,6 @@ A line from (320, 400) to (300, 80) in screen units, written in sixteenths, one 
 
 ## What you have now
 
-A program that draws and reacts to keys: the shape of most games and tools. It is `examples/program/c/line.c` in the Tersenet sources. Next, [the same in Rust](terse:f3ae70bc06c8ff3e3f726131f7f32a9e439a36a9b0ac5c870431da3d53c7bc02), or, staying with C, a small game: [Make a small game](terse:d5c98518f864c9bd5fbf8720ab077c6a3185eb714d4716057a0540847d099fd6).
+A program that draws and reacts to keys: the shape of most games and tools. It is `examples/program/c/line.c` in the Tersenet sources. Next, [the same in Rust](terse:d0d50f883f27176adce3df4e1aab5624d98007c348681b58947285382c411261), or, staying with C, a small game: [Make a small game](terse:cb5d86d539893f2066da8a2934a9a7aed0febe61962b365af70d1b6b59b04785).
 
-Every drawing command is in [The 2D vector display](terse:0c51858179036c857957506bbc30f7867950de59d564c1a10be9340f727e5f32), and every event and key in [Events and input](terse:654230b0ec65952b422aaa86ce7da9e80af625be02f4ad365c408ed291a15c1a).
+Every drawing command is in [The 2D vector display](terse:3f558b8d18d32657c7ccf91702ba5af38db49c1442bb8ba108386f38e86960c6), and every event and key in [Events and input](terse:90c9d1da494e9438aeddf510a212a2f0cfd43daccb0b085d942e30639ef9d438).

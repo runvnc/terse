@@ -46,19 +46,23 @@ pub fn valid_url(url: &str) -> bool {
         && !url.chars().any(|c| c.is_whitespace() || c.is_control())
 }
 
-/// A relay as a person types it: a `ws://` or `wss://` URL as it is, or a
-/// host and maybe a port without a scheme, taken as `wss://` (over TLS, as
-/// public relays are reached: `relay.tersenet.org` is
-/// `wss://relay.tersenet.org`). `None` if it is neither.
+/// A relay as a person types it (NETWORK 3, "Encrypted by default"): a
+/// `ws://` or `wss://` URL as it is, or a host and maybe a port without a
+/// scheme, taken as `wss://` (`relay.tersenet.org` is
+/// `wss://relay.tersenet.org`; a port is only a port), except that
+/// `localhost` or a loopback address is taken as `ws://` (this machine:
+/// `127.0.0.1:7878` is `ws://127.0.0.1:7878`). `None` if it is neither.
 pub fn typed_url(text: &str) -> Option<String> {
     let t = text.trim();
     if valid_url(t) {
         return Some(t.to_string());
     }
-    if t.contains("://") || t.contains('/') {
+    if t.is_empty() || t.contains("://") || t.contains('/') {
         return None;
     }
-    let url = format!("wss://{t}");
+    let host = crate::relay::Endpoint::parse(&format!("wss://{t}")).ok()?.host;
+    let scheme = if terse_core::hints::loopback_text(&host) { "ws" } else { "wss" };
+    let url = format!("{scheme}://{t}");
     (valid_url(&url) && crate::relay::Endpoint::parse(&url).is_ok()).then_some(url)
 }
 
@@ -70,37 +74,81 @@ fn read_optional(path: &Path) -> Result<Option<String>, String> {
     }
 }
 
-/// The configured relay list and the file it came from: `<config>/relays`
-/// (possibly empty), else `<config>/relay`, else `None`. Blank lines and
-/// repeated URLs are skipped.
-pub fn read_relays(config: &Path) -> Result<Option<(Vec<String>, PathBuf)>, String> {
+/// A relay line (of the list, or a `--relay` value): its relay as a URL
+/// and the line with that URL, then its options ([`crate::trust`]).
+/// `Ok(None)` for a blank line or a `#` comment.
+pub fn relay_line(line: &str) -> Result<Option<(String, String)>, String> {
+    let Some(l) = crate::trust::split_line(line) else { return Ok(None) };
+    let url = typed_url(l.relay).ok_or(format!("not a relay (a wss:// or ws:// URL, or a host): {}", l.relay))?;
+    let mut text = url.clone();
+    for o in &l.options {
+        text.push(' ');
+        text.push_str(o);
+    }
+    Ok(Some((url, text)))
+}
+
+/// The configured relay list as written, a line per relay with its
+/// options, and the file it came from: `<config>/relays` (possibly empty),
+/// else `<config>/relay`, else `None`. Blank lines, `#` comments and
+/// repeated relays are skipped.
+pub fn read_relay_lines(config: &Path) -> Result<Option<(Vec<(String, String)>, PathBuf)>, String> {
     for name in [RELAYS_FILE, RELAY_FILE] {
         let path = config.join(name);
         let Some(text) = read_optional(&path)? else { continue };
-        let mut urls: Vec<String> = Vec::new();
-        for (i, line) in text.lines().map(str::trim).enumerate().filter(|(_, l)| !l.is_empty()) {
-            if !valid_url(line) {
-                return Err(format!("{}:{}: not a ws:// or wss:// URL: {line}", path.display(), i + 1));
-            }
-            if !urls.iter().any(|u| u == line) {
-                urls.push(line.to_string());
+        let mut lines: Vec<(String, String)> = Vec::new();
+        for (i, line) in text.lines().enumerate() {
+            let Some((url, line)) = relay_line(line).map_err(|e| format!("{}:{}: {e}", path.display(), i + 1))? else { continue };
+            if !lines.iter().any(|(u, _)| *u == url) {
+                lines.push((url, line));
             }
         }
-        return Ok(Some((urls, path)));
+        return Ok(Some((lines, path)));
     }
     Ok(None)
 }
 
-/// Writes the relay list to `<config>/relays`.
-pub fn write_relays(config: &Path, urls: &[String]) -> Result<PathBuf, String> {
-    if let Some(bad) = urls.iter().find(|u| !valid_url(u)) {
-        return Err(format!("not a ws:// or wss:// URL: {bad}"));
+/// The configured relay list, as URLs ([`read_relay_lines`]).
+pub fn read_relays(config: &Path) -> Result<Option<(Vec<String>, PathBuf)>, String> {
+    Ok(read_relay_lines(config)?.map(|(l, p)| (l.into_iter().map(|(u, _)| u).collect(), p)))
+}
+
+/// Writes the relay list to `<config>/relays`: relay lines, each a relay
+/// and maybe its options (checked: [`crate::trust::line_options`]).
+pub fn write_relays(config: &Path, lines: &[String]) -> Result<PathBuf, String> {
+    let mut text = String::new();
+    for line in lines {
+        let (url, line) = relay_line(line)?.ok_or("an empty relay line")?;
+        let l = crate::trust::split_line(&line).unwrap();
+        crate::trust::line_options(&url, &l.options, Some(config)).map_err(|e| e.to_string())?;
+        text.push_str(&line);
+        text.push('\n');
     }
     std::fs::create_dir_all(config).map_err(|e| format!("{}: {e}", config.display()))?;
     let path = config.join(RELAYS_FILE);
-    let text: String = urls.iter().map(|u| format!("{u}\n")).collect();
     std::fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))?;
     Ok(path)
+}
+
+/// Authorities given on the command line (`--relay-authority`), trusted
+/// for every relay by [`find_relays`].
+static RELAY_AUTHORITIES: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
+
+/// Trusts the authorities of a PEM file for every relay
+/// (`--relay-authority`), from the next [`find_relays`] on.
+pub fn add_relay_authority(path: &Path) {
+    RELAY_AUTHORITIES.lock().unwrap().push(path.to_path_buf());
+}
+
+/// Trusts what the user's settings say for `wss://` relays (README
+/// "Private authorities and pins"): `config`'s authorities folder and the
+/// options of its relay list, those of `given`, `--relay-authority` and
+/// `TERSE_RELAY_CA`. Never anything from the network.
+pub fn apply_trust(given: &[String], config: Option<&Path>) -> Result<(), String> {
+    let authorities = RELAY_AUTHORITIES.lock().unwrap().clone();
+    let trust = crate::trust::Trust::load(config, given, &authorities).map_err(|e| e.to_string())?;
+    crate::tls::set_trust(trust);
+    Ok(())
 }
 
 /// Whether something accepts a TCP connection on 127.0.0.1:`port`.
@@ -153,16 +201,24 @@ impl Found {
 /// The relays to use: `given` (`--relay`, repeatable; `none` alone disables
 /// the network), else the list in `config` if it is not empty, else a relay
 /// accepting connections on 127.0.0.1:`port`.
+/// The settings of `config` and `given` for `wss://` relays are applied
+/// first ([`apply_trust`]).
 pub fn find_relays(given: &[String], config: Option<&Path>, port: u16) -> Result<Found, String> {
+    let lines: Vec<String> = given.iter().filter(|g| *g != "none").cloned().collect();
+    apply_trust(&lines, config)?;
     match given {
         [] => {}
         [none] if none == "none" => return Ok(Found::Disabled),
         _ if given.iter().any(|u| u == "none") => return Err("--relay none cannot be combined with relays".into()),
         _ => {
-            if let Some(bad) = given.iter().find(|u| !valid_url(u)) {
-                return Err(format!("--relay {bad}: not a ws:// or wss:// URL"));
+            let mut urls = Vec::new();
+            for text in given {
+                let (url, _) = relay_line(text)?.ok_or(format!("--relay {text}: not a relay (a wss:// or ws:// URL, or a host)"))?;
+                if !urls.contains(&url) {
+                    urls.push(url);
+                }
             }
-            return Ok(Found::Given(given.to_vec()));
+            return Ok(Found::Given(urls));
         }
     }
     if let Some(config) = config
@@ -195,10 +251,23 @@ mod tests {
         assert_eq!(find_relays(&list(&["none"]), Some(config.path()), port).unwrap(), Found::Disabled);
         assert!(find_relays(&list(&["none", "ws://x:1"]), Some(config.path()), port).is_err());
         assert!(find_relays(&list(&["http://x"]), Some(config.path()), port).is_err());
-        // Typed without a scheme: over TLS.
+        // Typed without a scheme: encrypted, whatever the port.
         assert_eq!(typed_url("relay.tersenet.org").as_deref(), Some("wss://relay.tersenet.org"));
         assert_eq!(typed_url(" relay.example:8443 ").as_deref(), Some("wss://relay.example:8443"));
+        assert_eq!(typed_url("relay.example:7878").as_deref(), Some("wss://relay.example:7878"));
+        assert_eq!(typed_url("relay.example:80").as_deref(), Some("wss://relay.example:80"));
+        assert_eq!(typed_url("203.0.113.5:7878").as_deref(), Some("wss://203.0.113.5:7878"));
+        assert_eq!(typed_url("192.168.1.5:7878").as_deref(), Some("wss://192.168.1.5:7878"));
+        assert_eq!(typed_url("a.localhost:7878").as_deref(), Some("wss://a.localhost:7878"));
+        // Written with a scheme: as written.
         assert_eq!(typed_url("ws://relay.example:7878").as_deref(), Some("ws://relay.example:7878"));
+        assert_eq!(typed_url("wss://127.0.0.1:7878").as_deref(), Some("wss://127.0.0.1:7878"));
+        // Loopback without a scheme: plain (this machine).
+        assert_eq!(typed_url("127.0.0.1:7878").as_deref(), Some("ws://127.0.0.1:7878"));
+        assert_eq!(typed_url("127.1.2.3:9").as_deref(), Some("ws://127.1.2.3:9"));
+        assert_eq!(typed_url("localhost:7878").as_deref(), Some("ws://localhost:7878"));
+        assert_eq!(typed_url("LocalHost:7878").as_deref(), Some("ws://LocalHost:7878"));
+        assert_eq!(typed_url("[::1]:7878").as_deref(), Some("ws://[::1]:7878"));
         for bad in ["http://x", "", "a b", "relay.example/x", "[::1"] {
             assert_eq!(typed_url(bad), None, "{bad}");
         }
@@ -216,11 +285,18 @@ mod tests {
         assert_eq!(found.urls(), list(&["ws://a.example:1", "ws://b.example:2"]));
         let two = list(&["ws://x:1", "ws://y:2"]);
         assert_eq!(find_relays(&two, Some(config.path()), open).unwrap(), Found::Given(two.clone()));
+        // --relay and the list take hosts without a scheme as people type them.
+        let typed = list(&["relay.example", "127.0.0.1:7878"]);
+        let found = find_relays(&typed, Some(config.path()), open).unwrap();
+        assert_eq!(found, Found::Given(list(&["wss://relay.example", "ws://127.0.0.1:7878"])));
+        std::fs::write(config.path().join(RELAYS_FILE), "relay.example:9000\nlocalhost:7878\n").unwrap();
+        let found = find_relays(&[], Some(config.path()), open).unwrap();
+        assert_eq!(found.urls(), list(&["wss://relay.example:9000", "ws://localhost:7878"]));
         // An empty list falls through to the local relay.
         write_relays(config.path(), &[]).unwrap();
         assert_eq!(find_relays(&[], Some(config.path()), open).unwrap(), Found::Local(local_url(open)));
         assert!(write_relays(config.path(), &list(&["http://x"])).is_err());
-        std::fs::write(config.path().join(RELAYS_FILE), "garbage\n").unwrap();
+        std::fs::write(config.path().join(RELAYS_FILE), "garbage/x\n").unwrap();
         assert!(find_relays(&[], Some(config.path()), open).is_err());
         let many: Vec<String> = (0..10).map(|i| format!("ws://r{i}.example")).collect();
         assert_eq!(Found::Given(many).urls().len(), MAX_RELAYS);

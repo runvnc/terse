@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Relays: encryption and trust - the Tersenet manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Contents</a></nav></header>
+<main>
+<article>
+<h1 id="relays-encryption-and-trust">Relays: encryption and trust</h1>
+<p>Which relays a client reaches with encryption, and which certificates it accepts. The rules are in NETWORK.md section 3; the file names here are the reference&#39;s (<code>terse</code>, <code>terse-host</code>, <code>terse node</code>, <code>tersereader</code>), not requirements on other clients.</p>
+<h2 id="encrypted-unless-written-otherwise">Encrypted unless written otherwise</h2>
+<p>A relay written without a scheme is encrypted: <code>relay.example.org</code> means <code>wss&#58;//relay.example.org</code>, and <code>relay.example.org:9000</code> means <code>wss&#58;//relay.example.org:9000</code>. A port is only a port; it says nothing about encryption. This holds wherever a relay is written: on a command line (<code>--relay</code>), in the relay list, and in the hints of a feed address.</p>
+<p>A plain relay is written with its scheme, <code>ws&#58;//host:port</code>, in your own relay list or on your command line. Plain relays are for this machine, a private network and tests. The one exception: <code>localhost</code> or a loopback address without a scheme (<code>127.0.0.1:7878</code>, the local relay) is plain, since its traffic never leaves the machine. A client never takes such an address from the network.</p>
+<p>Nothing that goes on the network names a plain relay: a hint has no scheme and always means <code>wss&#58;//</code>, a profile lists only <code>wss&#58;//</code> relays (a <code>ws&#58;//</code> line is invalid and skipped), and a client never gives out a plain relay in its address or profile (<code>terse profile set</code> leaves it out and says so). So a client connects without encryption only to relays its user wrote as plain, and a failed encrypted connection is never tried again in plain.</p>
+<h2 id="certificates">Certificates</h2>
+<p>An encrypted relay&#39;s certificate must come from an authority the client trusts and be for the relay&#39;s name. Nothing turns this check off.</p>
+<p>For relays the public authorities do not vouch for, the user may set, in their own settings only:</p>
+<ul>
+<li>an authority for every relay: a PEM file in <code>&lt;config&gt;/authorities/</code> (every <code>*.pem</code> there), <code>TERSE_RELAY_CA=&lt;file&gt;</code> or <code>--relay-authority &lt;file&gt;</code>;</li>
+<li>options for one relay, after it on its line of <code>&lt;config&gt;/relays</code> or in a <code>--relay</code> value: <code>authority=&lt;file&gt;</code> trusts an authority for that host too; <code>only-authority=&lt;file&gt;</code> trusts only that authority; <code>pin=sha256:&lt;64 hex digits&gt;</code> accepts only the certificate, or the public key, with that fingerprint (<code>terse relay fingerprint &lt;cert.pem&gt;</code> prints both).</li>
+</ul>
+<p>With <code>only-authority</code> or <code>pin</code>, nothing else is accepted for that host, a certificate from a public authority included. An option applies only to the host it is written with. A plain relay takes no options.</p>
+<pre># &lt;config&gt;/relays
+wss&#58;//relay.tersenet.org
+wss&#58;//relay.corp.example only-authority=corp-ca.pem
+wss&#58;//203.0.113.7:7443 pin=sha256:3b0c…
+ws&#58;//192.168.1.20:7878</pre>
+<p>Nothing received from the network (a hint, a profile, a link, an entry) can add an authority, a pin or a plain connection: those come only from the user.</p>
+<h2 id="a-relay-on-a-home-or-office-network">A relay on a home or office network</h2>
+<p>The simple way is plain: <code>terse-relay --listen 0.0.0.0:7878</code>, and <code>ws&#58;//192.168.1.20:7878</code> in each client&#39;s relay list. The recommended way is encrypted, with a self-signed certificate that each client pins:</p>
+<pre>openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 3650 -subj /CN=relay.home -keyout relay.key -out relay.pem
+terse-relay --listen 0.0.0.0:7443 --store relay-store --tls-cert relay.pem --tls-key relay.key
+terse relay fingerprint relay.pem
+terse relay add wss&#58;//192.168.1.20:7443 pin=sha256:…</pre>
+<p>The pin stands for an authority and for the name check, so the certificate needs no particular name.</p>
+<p>When a relay cannot be used, the programs say why: &quot;the relay&#39;s certificate is not trusted&quot;, &quot;is for another name&quot;, &quot;does not match the key pinned for it&quot;, &quot;is not from the authority pinned for it&quot;, &quot;this relay requires TLS (try wss&#58;//)&quot;, &quot;this relay does not speak TLS (try ws&#58;//)&quot;.</p>
+</article>
+</main>
+<footer><nav class="pn"><a rel="prev" href="network-names.html">← Profiles, names and search</a><a rel="next" href="signatures.html">Signatures and valid entries →</a></nav></footer>
+</body>
+</html>

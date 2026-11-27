@@ -21,7 +21,7 @@
 <li>Slots 0-15 are host data, kept per shell (by identity, else image ID), written durably, never sent anywhere. <code>terse</code> keeps them in <code>&lt;data&gt;/snapshots</code>. A snapshot may exceed 1 MiB.</li>
 <li>A snapshot restores only its exact image, fetched by ID.</li>
 <li>Named records are not in it.</li>
-<li>Pending content requests fail in the restored machine&#39;s first frame; a waiting open request is dropped; unanswered locates are lost; the page is laid out anew and the 2D afterglow starts empty.</li>
+<li>Pending content requests fail in the restored machine&#39;s first frame; a waiting open request is dropped; unanswered locates are lost; the page is laid out anew and any 2D afterglow starts empty.</li>
 <li>The shell itself cannot be snapshotted or restored.</li>
 </ul>
 <h2 id="determinism-and-state">Determinism and state</h2>

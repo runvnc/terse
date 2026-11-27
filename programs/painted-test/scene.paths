@@ -1,0 +1,116 @@
+size 640 352
+; The tower in front of the mountains, painted in the article path syntax
+; (ARTICLE.md section 6) plus scene.py's @circle, @ellipse and ; comments.
+; Units are screen units: the figure fills the top 352 of the screen's 480.
+; Painted back to front. The character and the occluders are not here:
+; they are the vector display's (painted-test.c).
+stroke none
+
+; Sky, in bands, deep blue to the warm haze at the horizon.
+; The top band is the page background, #26386c (painted-test.c): free of the caps.
+fill #304a84 M0 58 H640 V96 H0 Z
+fill #45649e M0 96 H640 V126 H0 Z
+fill #6a83b6 M0 126 H640 V150 H0 Z
+fill #9b9fc4 M0 150 H640 V170 H0 Z
+fill #d3b2b0 M0 170 H640 V188 H0 Z
+fill #efc89f M0 188 H640 V232 H0 Z
+
+; The low sun and its glow, setting behind the range.
+fill #ffe7b040
+@circle 252 150 44
+fill #ffe7b060
+@circle 252 150 28
+fill #fff3d0
+@circle 252 150 15
+
+; Clouds.
+fill #f6e4e2c8
+@ellipse 92 66 34 7
+@ellipse 84 60 14 9
+@ellipse 102 58 16 11
+fill #f6e4e2a0
+@ellipse 548 44 42 6
+@ellipse 540 39 16 8
+@ellipse 560 37 13 8
+@ellipse 360 84 24 4
+
+; Far range: hazy.
+fill #8f99c0 M0 232 V170 L40 152 L80 162 L130 122 L170 140 L205 130 L250 160 L300 136 L345 112 L390 140 L430 124 L480 150 L530 118 L575 140 L610 128 L640 138 V232 Z
+fill #c9d0e8 M130 122 L120 130 L126 129 L131 133 L136 128 L141 130 Z
+fill #c9d0e8 M345 112 L333 122 L339 121 L345 126 L351 121 L358 123 Z
+fill #c9d0e8 M530 118 L518 127 L525 126 L530 131 L535 126 L543 127 Z
+
+; Middle range: three peaks, a shadowed flank each, snow.
+fill #5f6c99 M0 232 V182 L45 162 L85 138 L120 112 L150 134 L175 128 L215 165 L250 152 L300 104 L340 140 L370 132 L410 168 L460 160 L510 140 L560 120 L600 148 L640 158 V232 Z
+fill #4c5884 M120 112 L150 134 L175 128 L215 165 L222 232 L160 232 L138 170 Z
+fill #4c5884 M300 104 L340 140 L370 132 L410 168 L418 232 L330 232 L314 160 Z
+fill #4c5884 M560 120 L600 148 L640 158 V232 L596 232 L574 172 Z
+fill #eef1f8 M120 112 L100 126 L108 124 L114 131 L121 124 L128 130 L134 124 L142 128 Z
+fill #eef1f8 M300 104 L278 124 L287 121 L293 129 L300 120 L308 128 L314 121 L322 124 Z
+fill #eef1f8 M560 120 L535 130 L545 129 L551 134 L558 128 L566 133 L574 130 Z
+
+; Near hills and their trees.
+fill #4a7360 M0 232 V206 C60 190 120 194 170 205 C220 215 262 197 320 199 C380 201 420 191 470 197 C530 205 590 187 640 197 V232 Z
+fill #3a5f4e
+M30 224 l-5 0 l5 -16 l5 16 Z M42 224 l-6 0 l6 -20 l6 20 Z M53 224 l-4 0 l4 -13 l4 13 Z
+M226 224 l-5 0 l5 -15 l5 15 Z M238 224 l-6 0 l6 -19 l6 19 Z
+M552 224 l-5 0 l5 -17 l5 17 Z M566 224 l-6 0 l6 -22 l6 22 Z M578 224 l-4 0 l4 -12 l4 12 Z
+M610 224 l-5 0 l5 -14 l5 14 Z
+
+; The meadow, lighter far away, darker near.
+fill #7aa857 M0 222 C120 216 240 226 360 220 C460 216 560 224 640 220 V352 H0 Z
+fill #88b664 M0 222 C120 216 240 226 360 220 C460 216 560 224 640 220 V234 C500 238 300 230 0 238 Z
+fill #6e9c4d M0 300 C150 292 300 306 640 294 V352 H0 Z
+
+; The path to the door.
+fill #d9c08c stroke #bfa271 1.5
+M250 352 C270 322 330 302 380 292 C418 284 428 274 430 268 L450 268 C452 278 448 292 428 302 C398 318 380 334 400 352 Z
+stroke none
+
+; Grass tufts and flowers.
+stroke #5a8a3e 1.2
+M40 280 l3 -6 M43 280 l1 -7 M46 280 l-1 -6
+M180 248 l2 -5 M182 248 l1 -6 M184 248 l-1 -5
+M520 300 l3 -7 M523 300 l1 -8 M526 300 l-2 -7
+M600 260 l2 -5 M602 260 l1 -6 M604 260 l-1 -5
+M300 340 l3 -7 M303 340 l1 -8 M306 340 l-2 -7
+stroke none
+fill #f2e6f6
+@circle 214 286 1.6
+@circle 222 292 1.6
+@circle 560 324 1.8
+@circle 492 262 1.4
+fill #f0c94a
+@circle 218 296 1.6
+@circle 552 318 1.8
+@circle 610 304 1.6
+
+; The tower: its shadow on the grass, the body in three tones, courses of
+; stone, the eave, the conical roof, a pennant, windows, the door, a step.
+fill #00000030
+@ellipse 452 266 42 7
+fill #c9bda9 M412 110 H468 V262 Q440 270 412 262 Z
+fill #ddd3c1 M416 110 H430 V265.4 L416 263.1 Z
+fill #a39784 M454 110 H468 V262 L460 263.9 L454 264.9 Z
+fill #8d826f M462 110 H468 V262 L462 263.5 Z
+fill none stroke #ab9f8a 1
+M412 140 H468 M412 175 H468 M412 210 H468 M412 245 H468
+M436 110 V140 M422 140 V175 M450 140 V175 M436 175 V210 M424 210 V245 M456 210 V245
+stroke none
+fill #8e8270 M404 102 H476 V114 Q440 120 404 114 Z
+fill #b0a48f M404 102 H476 V106 H404 Z
+fill #5b4382 M398 104 Q440 112 482 104 L440 26 Z
+fill #45316a M440 26 L482 104 Q462 109 446 110 Z
+fill none stroke #7c64a8 1.5 M439 32 L408 101
+stroke #4a3a2a 1.5 M440 27 V10
+stroke none fill #d8574a M440 10 L458 14 L440 19 Z
+fill #4a3626 M433 163 V151 C433 143 447 143 447 151 V163 Z
+fill #ffcf5e M435.5 161 V151.5 C435.5 146 444.5 146 444.5 151.5 V161 Z
+fill #4a3626 M453 204 V194 C453 188 461 188 461 194 V204 Z
+fill #f5bd4f M455 202 V194.5 C455 191 459 191 459 194.5 V202 Z
+fill #7e7362 M425 265 V234 C425 225.7 431.7 219 440 219 C448.3 219 455 225.7 455 234 V265 Z
+fill #7a4a2a M428 265 V234 C428 227.4 433.4 222 440 222 C446.6 222 452 227.4 452 234 V265 Z
+fill none stroke #5c361d 1 M434 223.6 V265 M440 222 V265 M446 223.6 V265
+stroke none fill #e2c060
+@circle 447.5 246 1.6
+fill #a59a88 M423 264 H457 L460 270 H420 Z

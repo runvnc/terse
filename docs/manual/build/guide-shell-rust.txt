@@ -26,7 +26,7 @@ fn main() {
 }
 ```
 
-The runtime has three calls of device 8, the ones a first shell needs, with the C library's names: `mach_start_named` (the key, 32 zero bytes, `BUILT_IN`, for a built-in program, and the name), `mach_place` and `mach_focus`. The other calls of the device (listing the built-in programs, a machine's state, snapshots) are not wrapped; a program reaches them with the runtime's `call`, which takes the call's number, `(8 << 8) | function`, and its arguments, as [The Machines device](terse:90fe2f90b2cf0e4241e8e642ac485d82e04cd85b01721315ab238700a6877be8) lists them.
+The runtime has three calls of device 8, the ones a first shell needs, with the C library's names: `mach_start_named` (the key, 32 zero bytes, `BUILT_IN`, for a built-in program, and the name), `mach_place` and `mach_focus`. The other calls of the device (listing the built-in programs, a machine's state, snapshots) are not wrapped; a program reaches them with the runtime's `call`, which takes the call's number, `(8 << 8) | function`, and its arguments, as [The Machines device](terse:b756d4178e2a831e38fc7a19ca7d43f169dffe1751bd18d6db3dda7803213d9f) lists them.
 
 ## Build it and run it
 
@@ -40,6 +40,6 @@ The headless run prints what the C shell's does: `-- machine 1 running 0 0 640 4
 
 ## What you have now
 
-A shell in Rust. It is `examples/program/rust/myshell.rs` in the Tersenet sources; the full shell, `programs/shell/shell.c`, is in C. Next, a device of your own: [Invent a device](terse:d613f25466ceee884d567e2d0451fd40133eba37b69d5a79dcf927b845558f1d).
+A shell in Rust. It is `examples/program/rust/myshell.rs` in the Tersenet sources; the full shell, `programs/shell/shell.c`, is in C. Next, a device of your own: [Invent a device](terse:6f66444ae9884c50a5051d1ccd67d57ac3eaddbbb92665c5509aa0edf1755537).
 
-Panels, the 3D view and input routing are in [Screens, panels and input](terse:ba8400be642cc0f5ec88432fd49d0639690be9c24645bd3a578c4199ee420f7d).
+Panels, the 3D view and input routing are in [Screens, panels and input](terse:6c60c8fa7d1a7f8c2052d26843e70b5381dd5565e1b5d6c14033d6c1f6e552fa).

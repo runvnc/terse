@@ -132,6 +132,10 @@ static uint32_t sys(M *m, int fn, int64_t *ch)
     }
     case 8: return in_ram(m, a0, 32) ? 0 : 0xFFFFFFFE;
     case 9: return a0 < 256 && m->has[a0] ? m->ver[a0] : 0xFFFFFFFF;
+    case 10: /* copy: no clipboard here, so the text is dropped (SPEC §system) */
+        if (a1 > 65536 || (a1 && !readable(m, a0, a1))) return 0xFFFFFFFE;
+        *ch += (a1 + 3) / 4;
+        return 0;
     default: return 0xFFFFFFFF;
     }
 }

@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The reference host&#39;s look - the Tersenet manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Contents</a></nav></header>
+<main>
+<article>
+<h1 id="the-reference-host-s-look">The reference host&#39;s look</h1>
+<p>This page describes how one host, the reference (<code>terse-host</code>, and <code>terse-bus</code> with the reference drivers), chooses to draw. None of it is a requirement. The specification says what every host must draw: for the phosphor style, a real or simulated vector display with a black screen, filled shapes and the page&#39;s figures as outlines, and text as legible as in the clean style (see the 2D vector display). How it looks beyond that is each host&#39;s choice: a host that draws plain lines in the given colours on black conforms, and so does one with a real vector monitor. A program may be written with the reference&#39;s look in mind, but its picture should not depend on it. The machine is the same, hash for hash, whatever the look; only the picture differs.</p>
+<h2 id="the-phosphor-style">The phosphor style</h2>
+<p>The reference simulates an arcade vector monitor with the renderer of MAME&#39;s vector monitors (<code>--look mame</code>, the default): a sharp beam about a pixel wide whatever the line&#39;s stated width, light that adds up where lines cross or meet (so a line drawn twice is brighter on this host), a faint glow, and a phosphor that fades within a frame. The GPU renderer runs MAME&#39;s passes on the GPU; the software renderer computes the same passes on the CPU.</p>
+<p>The terminal&#39;s text is drawn by the beam in a vector font. <code>--font-strokes</code> chooses it: <code>arcade</code> (the default, a vector monitor&#39;s character generator), <code>hershey</code> (Hershey Roman Simplex), <code>drafting</code>, or <code>off</code> (the glyphs as light). A character the stroke font does not draw, and an article&#39;s text, are drawn as light in their colours.</p>
+<p><code>--look classic</code> gives the earlier look: a softer beam on a wide glow, with an afterglow whose tail follows the program&#39;s persistence and a smear behind moving shapes. <code>--tube p31|amber|vectrex</code> makes the colours a monochrome tube&#39;s, <code>--vignette</code> darkens the glass towards its edges, and <code>--no-trails</code> clears what lingers every frame. The look&#39;s options can be kept as lines in the file <code>look</code> of Tersenet&#39;s settings folder (<code>look classic</code>, <code>font-strokes drafting</code>); the command line wins.</p>
+<h2 id="the-3d-display">The 3D display</h2>
+<p>The 3D lines, points and circles are drawn by the same beam. Light dims with depth as the specification&#39;s depth cue says. In the classic look, the beam dwells at line ends and points, with extra light there, but not where a circle&#39;s chords join or where a face cut a line.</p>
+<p>The eye moves with the pointer (parallax): the picture&#39;s centre is the reference eye, an edge the full 160 units the specification allows, smoothed over a few frames. Over a machine that draws in 3D itself the eye rests, so that what you point at stays where the program drew it. <code>--parallax off</code> keeps it still, and <code>--eye &lt;dx&gt;,&lt;dy&gt;</code> places it for screenshots.</p>
+<h2 id="shedding-the-look">Shedding the look</h2>
+<p>The look is optional work, so the reference drops it before it lets a frame be late. It sheds in steps: in the default look, 1 draws the phosphor at most 720 lines high, 2 at most 480, 3 also without the bloom; in the classic look, 1 drops the smear, 2 the glow, 3 draws plain lines. A frame whose lists draw a lot of ink is shed by the ink alone, so screenshots are the same on every run; in a window it also sheds one level more after 3 frames in a row that took longer than a frame to draw. <code>--no-shed</code> keeps the whole look. A device driver with a look of its own may be told the same level; one that ignores it is still a correct driver.</p>
+<h2 id="the-shell">The shell</h2>
+<p>The shell&#39;s layouts (master and stack, grid, the gallery of machines on a turning ring, zoom) are the shell program&#39;s own drawing, not the host&#39;s: another shell may lay its machines out any way it likes. See Using the shell.</p>
+</article>
+</main>
+<footer><nav class="pn"><a rel="prev" href="device-vector3-surfaces.html">← Surfaces: a program&#39;s own screen in its 3D scene</a><a rel="next" href="device-sound.html">The sound device (device 6) →</a></nav></footer>
+</body>
+</html>

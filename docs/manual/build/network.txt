@@ -14,7 +14,7 @@ A blob reached without an entry (by a link) tells what it is by its first four b
 
 ## Relay protocol
 
-Relay URLs are `ws://` or `wss://` (TLS; `TERSE_RELAY_CA` adds a private CA). All messages are binary WebSocket messages; multi-byte integers are little-endian. `req` is a 32-bit number chosen by the client and echoed in the reply; replies may come in any order.
+Relay URLs are `wss://` (TLS) or `ws://` (plain): [Relays: encryption and trust](terse:c35479f8cdafbecdad303b51e768cf30ae0f57dea161729aa736a059668a4054) says when each is used. All messages are binary WebSocket messages; multi-byte integers are little-endian. `req` is a 32-bit number chosen by the client and echoed in the reply; replies may come in any order.
 
 | Message | Direction | Layout |
 |---|---|---|
@@ -56,7 +56,7 @@ A feed is a numbered series of small signed entries from one author, each pointi
 | 0 | 32 | feed key |
 | 32 | 4 | `seq`: 1 for the first entry, then increasing |
 | 36 | 4 | time: Unix seconds, as claimed by the author |
-| 40 | 1 | kind: 1 article, 2 profile, 3 program, 4 document; 0 and 255 reserved; 5 to 254 not yet defined |
+| 40 | 1 | kind: 1 article, 2 profile, 3 program, 4 document, 5 attachment; 0 and 255 reserved; 6 to 254 not yet defined |
 | 41 | 3 | size of the blob in bytes |
 | 44 | 32 | blob ID |
 | 76 | 32 | reply-to: the blob ID this entry responds to, or all zero |
@@ -77,7 +77,9 @@ An entry is valid if: `n` is at most 120 and the entry's length matches it; the 
 
 Program and document entries are valid whatever their blob holds; that is found out on use. A feed's current version of a program is its valid program entry with that name and the highest `seq` the client or relay holds. A program's identity is (feed key, name).
 
-An entry of a kind not listed here (5 to 254) is valid if it meets the rules above (the kind-specific ones apply only to their kinds). Relays pass it on like any other, so that kinds a later revision adds reach clients that know them; a client keeps or skips it without error, and neither downloads, lists in the timeline nor opens it (`terse feed list` shows `[kind 9: title]`).
+An *attachment* (kind 5) keeps a part of an earlier entry of the same feed, something its article links to: its blob is the part, its reply-to that entry's blob. Relays keep it like any entry; readers do not list it, and reach its blob by the link.
+
+An entry of a kind not listed here (6 to 254) is valid if it meets the rules above (the kind-specific ones apply only to their kinds). Relays pass it on like any other, so that kinds a later revision adds reach clients that know them; a client keeps or skips it without error, and neither downloads, lists in the timeline nor opens it (`terse feed list` shows `[kind 9: title]`).
 
 ## Relay feed messages
 
@@ -99,13 +101,13 @@ An entry of a kind not listed here (5 to 254) is valid if it meets the rules abo
 
 ## Feed addresses
 
-A key says which feed, not where it is: a client that asks only its own relays finds nothing of a feed published elsewhere. A feed address adds up to two hints, relays that should hold it: `<key>@relay.example.org` or `<key>@relay.example:9000,[2001:db8::7]`. A hint is a host (a name, an IPv4 address, an IPv6 one in brackets) and a port (7878 if left out), at most 80 bytes, meaning `ws://host:port`, or `wss://host` for port 443. A client refuses a malformed address; in an article a malformed hint list leaves the link the key alone. NETWORK.md 4.9 has the grammar.
+A key says which feed, not where it is: a client that asks only its own relays finds nothing of a feed published elsewhere. A feed address adds up to two hints, relays that should hold it: `<key>@relay.example.org` or `<key>@relay.example:9000,[2001:db8::7]`. A hint is a host (a name, an IPv4 address, an IPv6 one in brackets) and maybe a port, at most 80 bytes, naming an encrypted relay: `relay.example:9000` is `wss://relay.example:9000`. A hint has no scheme: it never names a plain relay. A client refuses a malformed address; in an article a malformed hint list leaves the link the key alone. NETWORK.md 4.9 has the grammar.
 
 A client keeps the hints with the subscription. If none of its own relays holds an entry of the feed (each answers `highest` 0), it follows the feed on the hinted relays too, as feed relays (below: same address checks, same switch, same cap), until the feed's profile has `relay` lines. Its user's own address takes its hints from their profile's `relay` lines, then the client's relays, public ones only; with none, only people on the same relays find the feed.
 
 ## Profiles, names and search
 
-A feed's profile (a kind 2 entry) gives it a display name and the relays it publishes on; a user may give a feed a nickname; search finds feeds by name, articles and documents by title and programs by name, and lookup finds a feed's program by its name. All of it is in [profiles, names and search](terse:1c32e6fd33ba4eef65ec3df7142c057bc64fdec4849226c28d61f713f145ed6f).
+A feed's profile (a kind 2 entry) gives it a display name and the relays it publishes on; a user may give a feed a nickname; search finds feeds by name, articles and documents by title and programs by name, and lookup finds a feed's program by its name. All of it is in [profiles, names and search](terse:d28034e5cc0deddda0145d71828834380fe59dc4809fd4cd70481f71aebb0f3c).
 
 ## Several relays
 
@@ -127,4 +129,4 @@ Entries of kinds it does not handle (programs and documents, for a client withou
 
 ## For machine hosts
 
-Programs never see this protocol, nor any secret key: they use the content device, and the host speaks the protocol for them. A program may ask to subscribe, unsubscribe, publish, set the profile or a nickname, and the host asks the user first; the timeline above is what the timeline operation reads. A host may start a program by image ID, checking that the blob is a valid image. Completions arrive as events ([events](terse:654230b0ec65952b422aaa86ce7da9e80af625be02f4ad365c408ed291a15c1a)) and cost budget ([charges](terse:700aa265f5d0ae8141b841e6eeecb0b6146ac6935da3121441ee039db69ecf7c)).
+Programs never see this protocol, nor any secret key: they use the content device, and the host speaks the protocol for them. A program may ask to subscribe, unsubscribe, publish, set the profile or a nickname, and the host asks the user first; the timeline above is what the timeline operation reads. A host may start a program by image ID, checking that the blob is a valid image. Completions arrive as events ([events](terse:90c9d1da494e9438aeddf510a212a2f0cfd43daccb0b085d942e30639ef9d438)) and cost budget ([charges](terse:700aa265f5d0ae8141b841e6eeecb0b6146ac6935da3121441ee039db69ecf7c)).

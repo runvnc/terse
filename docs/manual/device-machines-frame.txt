@@ -20,7 +20,7 @@ A snapshot is a machine's state serialization (holding its image ID and argument
 - Slots 0-15 are host data, kept per shell (by identity, else image ID), written durably, never sent anywhere. `terse` keeps them in `<data>/snapshots`. A snapshot may exceed 1 MiB.
 - A snapshot restores only its exact image, fetched by ID.
 - Named records are not in it.
-- Pending content requests fail in the restored machine's first frame; a waiting open request is dropped; unanswered locates are lost; the page is laid out anew and the 2D afterglow starts empty.
+- Pending content requests fail in the restored machine's first frame; a waiting open request is dropped; unanswered locates are lost; the page is laid out anew and any 2D afterglow starts empty.
 - The shell itself cannot be snapshotted or restored.
 
 ## Determinism and state

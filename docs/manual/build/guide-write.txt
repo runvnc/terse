@@ -30,7 +30,7 @@ It looks like Markdown, and what the two have in common is written the same way 
 - Tersenet's own: `terse:` links to articles, feeds and programs, and figures: drawings, written as a fence whose opening backquotes are followed by `path` and a size.
 - Read differently: a table needs no `|---|` line (without one it simply has no header), and a line indented four spaces starts a code block even right after a paragraph's line.
 
-So an article that keeps to what the two share shows much the same on GitHub, and a Markdown file mostly reads well in Tersenet, with its emphasis marks showing. [Writing an article](terse:d114ee24a46f18a8e21bf8f96eb968f2b976e17b474cef33dc7f04d61337ca37) shows every rule.
+So an article that keeps to what the two share shows much the same on GitHub, and a Markdown file mostly reads well in Tersenet, with its emphasis marks showing. [Writing an article](terse:2c34635be0d3910e4131c8f41559778e0e4beea2e3e0e8dd2a5a20f080752eda) shows every rule.
 
 ## Publish it
 
@@ -52,7 +52,7 @@ An article can link to another by its blob ID, `terse:` and 64 hex digits (the `
 link terse:5d86159d…ad537da380d: held here, uploaded now (taken by 1 of 1 relays); kept: your feed's entry #2 names it, and relays keep it while they keep that entry
 ```
 
-An entry names one article, and a public relay drops an article no entry names after a while, so publish each part of yours as an article of its own before the article that links to it: a link to an article that no entry names gets a warning. A link to another feed's article is *link-only*: that feed's relays keep it. `--dry-run` shows the list and publishes nothing.
+An entry names one article, and a public relay drops an article no entry names after a while, so a part that no entry names (a picture, a page you wrote only to link to) is uploaded with the article and then named by an *attachment* entry of your feed, which readers do not list: `seq 3 attachment terse:…`. A part you want listed too, publish as an article of its own first. A link to another feed's article is *link-only*: that feed's relays keep it. `--dry-run` shows the list and publishes nothing.
 
 ## See it
 
@@ -81,4 +81,4 @@ The heading is the title, so the reader shows it once. A shortcut for trying thi
 
 ## What you have now
 
-A feed with an article in it, and a reader that shows it. Next, the reader itself: [Read articles and follow links](terse:bf5ab5540831f67d42a4ec49ebc63a09af349ee1fcaf945ce8046ef77a39d981).
+A feed with an article in it, and a reader that shows it. Next, the reader itself: [Read articles and follow links](terse:b9de97b929ded8dc0568680a6e1a9b14b777f01842d3fc4fc51dc3113b3dcc39).

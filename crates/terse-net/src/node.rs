@@ -844,7 +844,8 @@ impl Node {
         if !profile::valid_name(name) {
             return self.ready.push((token, Done::Failed));
         }
-        let relays = self.relay_urls().into_iter().filter(|u| !profile::loopback_url(u)).collect();
+        // Encrypted relays only (NETWORK 4.6), and not this machine's.
+        let relays = self.relay_urls().into_iter().filter(|u| profile::valid_relay_line(u) && !profile::loopback_url(u)).collect();
         let data = Document { listed, relays, description }.build();
         let entry = Entry::profile(identity.feed_key(), 0, time, &data, name);
         self.start_publish(token, &data, entry);
@@ -906,6 +907,17 @@ impl Node {
             return self.ready.push((token, Done::Failed));
         }
         let entry = Entry::document(identity.feed_key(), 0, time, data, title);
+        self.start_publish(token, data, entry);
+    }
+
+    /// Starts publishing an attachment (kind 5, NETWORK 4.2): `data`, a
+    /// part of the user's earlier entry whose blob is `of`.
+    pub fn start_publish_attachment(&mut self, token: Token, data: &[u8], of: BlobId, time: u32) {
+        let Some(identity) = &self.identity else { return self.ready.push((token, Done::Failed)) };
+        if !valid_size(data.len()) {
+            return self.ready.push((token, Done::Failed));
+        }
+        let entry = Entry::attachment(identity.feed_key(), 0, time, data, of);
         self.start_publish(token, data, entry);
     }
 
@@ -2037,6 +2049,13 @@ impl Node {
         self.wait_for_all(0)
     }
 
+    /// Publishes an attachment, blocking, like `publish_article`.
+    pub fn publish_attachment(&mut self, data: &[u8], of: BlobId, time: u32) -> Done {
+        self.connect_all();
+        self.start_publish_attachment(0, data, of, time);
+        self.wait_for_all(0)
+    }
+
     /// Publishes a program, blocking, like `publish_article`.
     pub fn publish_program(&mut self, image: &[u8], name: &str, time: u32) -> Done {
         self.connect_all();
@@ -2763,12 +2782,12 @@ mod tests {
             let (b, sb) = fake_relay();
             let b = Arc::new(Mutex::new(Some(b)));
             node.set_feed_relays_unrestricted(Box::new(move |url| {
-                assert_eq!(url, "ws://feed-relay");
+                assert_eq!(url, "wss://feed-relay");
                 b.lock().unwrap().take().unwrap()
             }));
             node.set_feed_relays(on);
             let author = Identity::from_seed([30; 32]);
-            let doc = b"listed: no\nrelay: ws://feed-relay\n";
+            let doc = b"listed: no\nrelay: wss://feed-relay\n";
             {
                 let mut s = sa.lock().unwrap();
                 s.blobs.insert(blob_id(doc), doc.to_vec());
@@ -2780,7 +2799,7 @@ mod tests {
             let events = poll_n(&mut node, 50);
             let seqs = node.feed_store().seqs(&author.feed_key()).unwrap();
             if on {
-                assert_eq!(node.connected_relays(), ["relay", "ws://feed-relay"], "{events:?}");
+                assert_eq!(node.connected_relays(), ["relay", "wss://feed-relay"], "{events:?}");
                 assert_eq!(seqs, [1, 2]);
                 assert!(node.store().read(&blob_id(b"on b")).unwrap().is_some(), "downloaded from B");
             } else {
@@ -2788,6 +2807,53 @@ mod tests {
                 assert_eq!(seqs, [1]);
                 assert_eq!(node.fetch(blob_id(b"on b")), Done::NotFound);
             }
+        }
+    }
+
+    /// NETWORK 3, 4.6, 4.9: nothing from the network names a plain relay:
+    /// a profile's `ws://` relay line is invalid and skipped, a `ws:` hint
+    /// is malformed; an encrypted relay named by the network is contacted. The relays' hosts are public addresses, so the
+    /// rules of section 5.1 are the real ones here; the connector only
+    /// records what would be contacted.
+    #[test]
+    fn plain_relays_from_the_network_are_never_contacted() {
+        for (doc, hints, want) in [
+            (&b"listed: no\nrelay: ws://203.0.113.9:7878\n"[..], "203.0.113.10:7878", None),
+            (&b"listed: no\nrelay: wss://203.0.113.9:7878\n"[..], "203.0.113.10:7878", Some("wss://203.0.113.9:7878")),
+            (&b"listed: no\n"[..], "203.0.113.11:9000", Some("wss://203.0.113.11:9000")),
+            (&b"listed: no\n"[..], "ws:203.0.113.10:7878", None),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let (mut node, sa) = node_with_fake(dir.path());
+            let contacted = Arc::new(Mutex::new(Vec::<String>::new()));
+            let seen = contacted.clone();
+            node.connect_feed_relay = Box::new(move |url| {
+                seen.lock().unwrap().push(url.to_string());
+                fake_relay().0
+            });
+            node.feed_relays_dirty = true;
+            let author = Identity::from_seed([31; 32]);
+            {
+                let mut s = sa.lock().unwrap();
+                s.blobs.insert(blob_id(doc), doc.to_vec());
+                s.held.push(Entry::profile(author.feed_key(), 1, 1, doc, "Author").sign(&author).unwrap().bytes);
+            }
+            node.set_subscriptions(Subscriptions::in_memory([]));
+            node.subscribe_with_hints(author.feed_key(), Some(hints)).unwrap();
+            // A `ws:` hint is malformed: the subscription has none.
+            assert_eq!(node.subscriptions().hints(&author.feed_key()).is_some(), !hints.starts_with("ws:"));
+            // The own relay holds the profile only; without a relay line
+            // the hints are used once the own relay has answered.
+            if doc == b"listed: no\n" {
+                sa.lock().unwrap().held.clear();
+            }
+            poll_n(&mut node, 50);
+            let contacted = contacted.lock().unwrap().clone();
+            match want {
+                None => assert!(contacted.is_empty(), "{contacted:?}"),
+                Some(url) => assert_eq!(contacted, [url]),
+            }
+            assert!(!contacted.iter().any(|u| u.starts_with("ws://")), "{contacted:?}");
         }
     }
 

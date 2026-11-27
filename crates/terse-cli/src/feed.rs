@@ -28,7 +28,7 @@ use crate::{Args, USAGE, read, relay_urls};
 pub const SYNC_DEADLINE: Duration = Duration::from_secs(60);
 
 /// Every `key` and `feed` command accepts these, used or not.
-const OPTIONS: [&str; 4] = ["--config", "--relay", "--store", "--no-feed-relays"];
+const OPTIONS: [&str; 5] = ["--config", "--relay", "--relay-authority", "--store", "--no-feed-relays"];
 
 fn known(args: &Args, extra: &[&str]) -> Result<(), String> {
     args.check_known(&[&OPTIONS[..], extra].concat())
@@ -200,10 +200,24 @@ pub fn relay(args: &[String]) -> Result<ExitCode, String> {
     let (command, rest) = args.split_first().ok_or(USAGE)?;
     let args = Args::parse(rest, &[])?;
     known(&args, &[])?;
+    if command == "fingerprint" {
+        // The fingerprints a pin= takes (README "Private authorities and pins").
+        let [file] = args.positional.as_slice() else { return Err(USAGE.into()) };
+        for cert in terse_net::tls::read_certs(std::path::Path::new(file)).map_err(|e| e.to_string())? {
+            let (whole, key) = terse_net::trust::fingerprints(&cert);
+            if let Some(key) = key {
+                println!("pin={}  (its public key: stays the same if the certificate is renewed with the same key)", terse_net::trust::fingerprint_text(&key));
+            }
+            println!("pin={}  (this certificate)", terse_net::trust::fingerprint_text(&whole));
+        }
+        return Ok(ExitCode::SUCCESS);
+    }
     let config = config_dir(&args)?;
-    let mut list = terse_net::local::read_relays(&config)?.map(|(l, _)| l).unwrap_or_default();
-    let save = |list: &[String]| -> Result<(), String> {
-        let path = terse_net::local::write_relays(&config, list)?;
+    // The list as written: each relay's URL and its line (with options).
+    let mut list = terse_net::local::read_relay_lines(&config)?.map(|(l, _)| l).unwrap_or_default();
+    let save = |list: &[(String, String)]| -> Result<(), String> {
+        let lines: Vec<String> = list.iter().map(|(_, l)| l.clone()).collect();
+        let path = terse_net::local::write_relays(&config, &lines)?;
         eprintln!("terse: relays saved in {}", path.display());
         Ok(())
     };
@@ -211,29 +225,41 @@ pub fn relay(args: &[String]) -> Result<ExitCode, String> {
     let typed = |text: &String| -> Result<String, String> {
         let url = terse_net::local::typed_url(text).ok_or(format!("not a relay: {text} (a ws:// or wss:// URL, or a host name)"))?;
         if !text.contains("://") {
-            eprintln!("terse: taken as {url} (over TLS; for a plain relay give ws://{text})");
+            if url.starts_with("ws://") {
+                eprintln!("terse: taken as {url} (plain: a relay on this machine; for TLS give wss://{text})");
+            } else {
+                eprintln!("terse: taken as {url} (encrypted; for a plain relay give ws://{text})");
+            }
         }
         Ok(url)
     };
-    let positional: Vec<String> = match command.as_str() {
-        "set" | "add" | "remove" => args.positional.iter().map(typed).collect::<Result<_, _>>()?,
+    // The relay, then its options as given (authority=, only-authority=,
+    // pin=: checked when saved).
+    let positional: Vec<String> = match (command.as_str(), args.positional.split_first()) {
+        ("set" | "add" | "remove", Some((relay, options))) => {
+            let mut v = vec![typed(relay)?];
+            v.extend(options.iter().cloned());
+            v
+        }
         _ => args.positional.clone(),
     };
+    let line = |p: &[String]| (p[0].clone(), p.join(" "));
     match (command.as_str(), positional.as_slice()) {
-        ("set", [url]) => {
-            save(std::slice::from_ref(url))?;
-            println!("{url}");
+        ("set", [_, ..]) => {
+            let one = [line(&positional)];
+            save(&one)?;
+            println!("{}", one[0].1);
         }
-        ("add", [url]) => {
-            if list.contains(url) {
-                return Err(format!("{url} is already in the list"));
+        ("add", [url, ..]) => {
+            if list.iter().any(|(u, _)| u == url) {
+                return Err(format!("{url} is already in the list (remove it first to change its options)"));
             }
-            list.push(url.clone());
+            list.push(line(&positional));
             save(&list)?;
         }
         ("remove", [url]) => {
             let before = list.len();
-            list.retain(|u| u != url);
+            list.retain(|(u, _)| u != url);
             if list.len() == before {
                 return Err(format!("{url} is not in the list"));
             }
@@ -249,8 +275,8 @@ pub fn relay(args: &[String]) -> Result<ExitCode, String> {
             return Ok(ExitCode::from(1));
         }
         ("list" | "show", []) => {
-            for url in &list {
-                println!("{url}");
+            for (_, line) in &list {
+                println!("{line}");
             }
         }
         _ => return Err(USAGE.into()),
@@ -390,16 +416,6 @@ fn publish(args: &[String]) -> Result<ExitCode, String> {
             missing.join(", ")
         )
     });
-    // A blob held here that no entry names goes up, but a relay that drops
-    // such blobs drops it after a while.
-    for l in linked.iter().filter(|l| l.keep == crate::links::Keep::Unnamed) {
-        eprintln!(
-            "terse: warning: {} is named by no entry: a relay that drops blobs no entry names (NETWORK.md 5.3) will \
-             drop it and the link will lead nowhere there; to keep it, publish it as an article of its own \
-             (terse feed publish <file> --title <t>)",
-            l.link()
-        );
-    }
     if dry_run || refusal.is_some() {
         let would = if dry_run { "would be uploaded" } else { "not uploaded" };
         for l in &linked {
@@ -441,6 +457,21 @@ fn publish(args: &[String]) -> Result<ExitCode, String> {
                 eprintln!("terse: no relay: stored locally only");
             }
             println!("seq {seq} blob {}", to_hex(&blob));
+            // The article's own parts that no entry names: an attachment
+            // entry each (NETWORK 4.2), so relays keep them with it.
+            for l in linked.iter().filter(|l| l.keep == crate::links::Keep::Unnamed) {
+                let Some(Ok(Some(bytes))) = l.upload.map(|id| node.store().read(&id)) else { continue };
+                let done = node.publish_attachment(&bytes, blob, now());
+                crate::say_delivery(&mut node);
+                match done {
+                    Done::Published { seq, .. } => println!("seq {seq} attachment {}", l.link()),
+                    _ => eprintln!(
+                        "terse: warning: no attachment entry for {}: a relay that drops blobs no entry names (NETWORK.md \
+                         5.3) will drop it",
+                        l.link()
+                    ),
+                }
+            }
             Ok(ExitCode::SUCCESS)
         }
         Done::Refused => Err("every relay refused the entry (each one's reason is above)".into()),
@@ -559,7 +590,7 @@ fn address(args: &[String]) -> Result<ExitCode, String> {
     if hints.is_empty() {
         println!("{key}");
         eprintln!(
-            "terse: no public relay in your profile or relay list, so your address has no hints: only people who use the same relay as you will find your feed"
+            "terse: no public encrypted (wss://) relay in your profile or relay list, so your address has no hints (plain ws:// relays are never given out): only people who use the same relay as you will find your feed"
         );
     } else {
         println!("{key}@{hints}");
@@ -644,6 +675,8 @@ fn entry_line(entry: &Entry, article: Option<Article>, name: Option<&str>) -> St
             terse_net::entry::KIND_PROGRAM => format!("[program: {title}]"),
             terse_net::entry::KIND_DOCUMENT => format!("[document: {title}]"),
             terse_net::entry::KIND_ARTICLE => title,
+            // A part of an earlier article (NETWORK 4.2): listed here only.
+            terse_net::entry::KIND_ATTACHMENT => format!("[attachment of {}]", short_key(&entry.reply_to)),
             // A kind this revision does not define (NETWORK 6): listed, not
             // opened.
             kind => format!("[kind {kind}: {title}]"),
@@ -941,6 +974,13 @@ fn profile_set(args: &[String]) -> Result<ExitCode, String> {
     let current = node.profile(&identity.feed_key()).and_then(|(_, d)| d);
     let listed = args.has("--listed") || (!args.has("--unlisted") && current.as_ref().is_some_and(|d| d.listed));
     node.set_identity(identity);
+    // Plain relays are not listed (NETWORK 4.6); this machine's go
+    // without a word, others are named.
+    let plain: Vec<&String> = relays.iter().filter(|u| u.starts_with("ws://") && !profile::loopback_url(u)).collect();
+    if !plain.is_empty() {
+        let list: Vec<&str> = plain.iter().map(|u| u.as_str()).collect();
+        eprintln!("terse: not in the profile: {}: {}", list.join(", "), profile::PLAIN_NOT_LISTED);
+    }
     let done = node.publish_profile(name, listed, description, now());
     crate::say_delivery(&mut node);
     match done {

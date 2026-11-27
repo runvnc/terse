@@ -175,6 +175,8 @@ pub fn run(
         title,
         shell_title: program.image.title_lossy(),
         paste: VecDeque::new(),
+        copied: None,
+        paste_key: None,
         swallowed: Vec::new(),
         clipboard: None,
         gfx: None,
@@ -607,6 +609,8 @@ struct FrameDriver<'a> {
     slow: Option<Slow>,
     /// Each machine's budget use this frame (serial, units).
     used: Vec<(u32, u64)>,
+    /// Text a machine offered the clipboard this frame (SPEC §system `copy`).
+    copied: &'a mut Option<Vec<u8>>,
 }
 
 impl Driver for FrameDriver<'_> {
@@ -662,6 +666,10 @@ impl Driver for FrameDriver<'_> {
             FrameInput { events: &input, unix_time: self.unix_time, random: &io.random, completions: &completions, controllers };
         let result = machine.run_frame(&frame);
         self.used.push((who.serial, result.used));
+        // SPEC §system `copy`: text for the clipboard, if the user copied.
+        if let Some(t) = machine.take_copied() {
+            *self.copied = Some(t);
+        }
         // The test hook (TERSE_HOST_SLOW): this machine's frames take longer.
         if let Some(s @ Slow { what: SlowPart::Machine(h), from, .. }) = self.slow
             && h == who.handle
@@ -751,8 +759,15 @@ struct App {
     shell_title: String,
     /// Pasted text not yet delivered, fed in as the event queue has room.
     paste: VecDeque<char>,
-    /// Keys (HID usages) whose presses went to the host (the prompt, a
-    /// paste, the home key), so their releases do too.
+    /// Text a machine offered the clipboard in answer to the user's copy
+    /// key (SPEC §system `copy`), put there after the frame.
+    copied: Option<Vec<u8>>,
+    /// The paste key (HID usage) while its press has reached the program:
+    /// its release, which brackets the paste (SPEC §events), waits until
+    /// the pasted text has gone; `true` once the user has let go.
+    paste_key: Option<(u8, bool)>,
+    /// Keys (HID usages) whose presses went to the host (the prompt, the
+    /// home key), so their releases do too.
     swallowed: Vec<u8>,
     clipboard: Option<arboard::Clipboard>,
     gfx: Option<Gfx>,
@@ -913,6 +928,13 @@ impl App {
             let n = room.min(self.paste.len());
             self.pending.extend(self.paste.drain(..n).map(Event::text));
         }
+        // The paste key's release, after the last of the pasted text.
+        if self.paste.is_empty()
+            && let Some((usage, true)) = self.paste_key
+        {
+            self.paste_key = None;
+            self.pending.push(Event::key_up(usage, modifier_bits(self.modifiers)));
+        }
         let mut driver = FrameDriver {
             io: &mut self.io,
             content: &mut self.content,
@@ -926,12 +948,16 @@ impl App {
             watch: &mut self.watch,
             slow: self.slow,
             used: Vec::new(),
+            copied: &mut self.copied,
         };
         // Panels are hit as the eye now sees them (SPEC §machines.input).
         self.system.set_eye(self.eye);
         self.system.frame(&self.pending, controllers, &mut driver);
         let ran = driver.ran;
         self.used = driver.used;
+        if let Some(text) = self.copied.take() {
+            self.copy_to_clipboard(&text);
+        }
         if let Some(mut d) = self.drive.take() {
             d.after_frame(&*self, &self.used);
             self.drive = Some(d);
@@ -1167,23 +1193,37 @@ impl App {
             }
             return;
         }
-        // Paste: Ctrl+V or Shift+Insert gives the clipboard's text as text events.
+        // Paste (SPEC §events): Ctrl+V or Shift+Insert reaches the program
+        // as a key, and the clipboard's text follows as text events; the
+        // key's release waits until the text has gone.
         let ctrl_v = self.modifiers.control_key()
             && !self.modifiers.alt_key()
             && !self.modifiers.super_key()
             && physical_key == PhysicalKey::Code(KeyCode::KeyV);
         let shift_insert = self.modifiers.shift_key() && physical_key == PhysicalKey::Code(KeyCode::Insert);
-        if pressed && (ctrl_v || shift_insert) {
-            swallow(&mut self.swallowed, usage);
-            self.paste_clipboard();
-            return;
+        if let Some(u) = usage {
+            if pressed && (ctrl_v || shift_insert) {
+                self.pending.push(Event::key_down(u, modifier_bits(self.modifiers)));
+                self.paste_clipboard();
+                self.paste_key = Some((u, false));
+                return;
+            }
+            if !pressed && let Some((k, _)) = self.paste_key.filter(|&(k, _)| k == u) {
+                if self.paste.is_empty() {
+                    self.paste_key = None;
+                    self.pending.push(Event::key_up(k, modifier_bits(self.modifiers)));
+                } else {
+                    self.paste_key = Some((k, true));
+                }
+                return;
+            }
         }
         if let Some(usage) = usage {
             let mods = modifier_bits(self.modifiers);
             self.pending.push(if pressed { Event::key_down(usage, mods) } else { Event::key_up(usage, mods) });
         }
-        if pressed && let Some(text) = text {
-            self.pending.extend(text.chars().filter(|c| !c.is_control()).map(Event::text));
+        if pressed {
+            self.pending.extend(crate::keymap::typed_text(text, self.modifiers).into_iter().map(Event::text));
         }
     }
 
@@ -1253,7 +1293,21 @@ impl App {
     }
 
     /// Queues the clipboard's text for delivery as text events (SPEC §events):
-    /// newlines kept, other control characters dropped.
+    /// tabs and newlines kept, other control characters dropped.
+    /// Puts text a machine copied in answer to the user's copy key on the
+    /// clipboard (SPEC §system `copy`); without a clipboard it is dropped.
+    fn copy_to_clipboard(&mut self, text: &[u8]) {
+        if self.clipboard.is_none() {
+            match arboard::Clipboard::new() {
+                Ok(c) => self.clipboard = Some(c),
+                Err(e) => return eprintln!("terse-host: clipboard: {e}"),
+            }
+        }
+        if let Err(e) = self.clipboard.as_mut().unwrap().set_text(String::from_utf8_lossy(text).into_owned()) {
+            eprintln!("terse-host: clipboard: {e}");
+        }
+    }
+
     fn paste_clipboard(&mut self) {
         if self.clipboard.is_none() {
             match arboard::Clipboard::new() {
@@ -1598,13 +1652,31 @@ impl ApplicationHandler for App {
 
 #[cfg(test)]
 mod tests {
+    /// A chord with Control or the logo key types nothing, whatever text
+    /// the window system gives it (Wayland: "c" for Ctrl+C; others: U+0003);
+    /// AltGr (Control+Alt) and Shift still type; control characters never.
     #[test]
-    fn pasted_text_keeps_newlines_only() {
-        let got: String = super::paste_chars("a\tb\r\nc\rd\ne\u{1b}[0m\u{7f}é日").collect();
-        assert_eq!(got, "ab\nc\nd\ne[0mé日");
+    fn chords_type_no_text() {
+        use winit::keyboard::ModifiersState as M;
+        let t = |text: Option<&str>, m: M| crate::keymap::typed_text(text, m).into_iter().collect::<String>();
+        assert_eq!(t(Some("c"), M::CONTROL), "");
+        assert_eq!(t(Some("\u{3}"), M::CONTROL), "");
+        assert_eq!(t(Some("C"), M::CONTROL | M::SHIFT), "");
+        assert_eq!(t(Some("v"), M::SUPER), "");
+        assert_eq!(t(Some("@"), M::CONTROL | M::ALT), "@");
+        assert_eq!(t(Some("C"), M::SHIFT), "C");
+        assert_eq!(t(Some("\u{3}"), M::empty()), "");
+        assert_eq!(t(Some("é"), M::empty()), "é");
+        assert_eq!(t(None, M::empty()), "");
     }
 
-    /// A key the host takes (paste, the consent prompt) held down: its
+    #[test]
+    fn pasted_text_keeps_tabs_and_newlines_only() {
+        let got: String = super::paste_chars("a\tb\r\nc\rd\ne\u{1b}[0m\u{7f}é日").collect();
+        assert_eq!(got, "a\tb\nc\nd\ne[0mé日");
+    }
+
+    /// A key the host takes (the consent prompt) held down: its
     /// auto-repeated presses are noted once, so its one release is taken
     /// and nothing is left to swallow a later release.
     #[test]

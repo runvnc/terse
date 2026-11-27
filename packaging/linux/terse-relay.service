@@ -3,7 +3,7 @@
 #   sudo useradd --system --home /var/lib/terse-relay --create-home terse-relay
 #   sudo install -m 755 terse-relay /usr/local/bin/
 #   sudo install -d -o terse-relay /etc/terse-relay
-#   sudo -u terse-relay touch /etc/terse-relay/writers     # one feed key a line
+#   sudo -u terse-relay touch /etc/terse-relay/deny        # what this relay refuses
 #   sudo cp terse-relay.service /etc/systemd/system/
 #   sudo systemctl daemon-reload && sudo systemctl enable --now terse-relay
 #
@@ -18,9 +18,12 @@
 # read on reload (certbot --deploy-hook "systemctl reload terse-relay").
 #
 # The status: journalctl -u terse-relay | grep status, or
-# cat /run/terse-relay/status. A changed writers file is read within 2 s
-# (or at once: systemctl reload terse-relay, which also reads a
-# --tls-cert again).
+# cat /run/terse-relay/status. The deny list (README "Removing what does
+# not belong": sudo -u terse-relay terse-relay deny /etc/terse-relay/deny
+# feed <key> <reason>) is read within 2 s of a change (or at once:
+# systemctl reload terse-relay, which also reads a --tls-cert again). To
+# close publishing instead, add --writers /etc/terse-relay/writers (one
+# feed key a line).
 
 [Unit]
 Description=Tersenet relay
@@ -33,8 +36,8 @@ ExecStart=/usr/local/bin/terse-relay --public \
     --listen 127.0.0.1:7878 \
     --store /var/lib/terse-relay/store \
     --max-store-bytes 12G \
-    --max-connections 256 \
-    --writers /etc/terse-relay/writers \
+    --memory 512M \
+    --deny /etc/terse-relay/deny \
     --trust-proxy 127.0.0.1,::1 \
     --status-file /run/terse-relay/status
 ExecReload=/bin/kill -HUP $MAINPID
@@ -45,8 +48,10 @@ Restart=on-failure
 RestartSec=2
 RuntimeDirectory=terse-relay
 StateDirectory=terse-relay
-# One thread per connection (up to ~2 MiB each while a large put arrives);
-# --max-connections 256 keeps that under MemoryMax on a 1 GB server.
+# One thread per connection (up to ~3 MiB each at worst, while the largest
+# put arrives); --memory 512M allows 149 of them, leaving room under
+# MemoryMax for the index of what is held (~200 bytes an entry; the status
+# line says the worst case).
 LimitNOFILE=4096
 TasksMax=512
 MemoryMax=600M

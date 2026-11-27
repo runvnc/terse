@@ -5,31 +5,42 @@
 //! The stack is rustls with the ring crypto provider. The roots a client
 //! trusts are compiled in (`webpki-roots`, Mozilla's list), so every
 //! system, a static Linux binary on a bare server included, trusts the same
-//! certificates; a release refreshes them (RELEASING.md). A self-hosted
-//! relay with a certificate from a private CA is trusted by naming the
-//! CA's PEM file in [`CA_ENV`] (or with [`trust_ca_file`]), on top of the
-//! built-in roots. Certificates are always verified, the relay's name
-//! included; there is no way to turn that off.
+//! certificates; a release refreshes them (RELEASING.md). The user's own
+//! settings add authorities, for every relay or for one host, or pin a
+//! host to an authority or a key ([`crate::trust`], set with
+//! [`set_trust`]; [`CA_ENV`] and [`trust_ca_file`] add an authority for
+//! every relay). Certificates are always verified, the relay's name
+//! included (a pinned key stands for both); there is no way to turn that
+//! off.
 //!
 //! A [`Stream`] is what a relay WebSocket runs over: plain TCP or TLS over
 //! TCP. Read and write timeouts are those of the TCP stream, so the read
 //! loops that poll with a short timeout behave the same over TLS.
 
+use std::collections::HashMap;
 use std::io::{self, Read, Write};
 use std::net::TcpStream;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+use rustls::client::WebPkiServerVerifier;
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+use rustls::crypto::WebPkiSupportedAlgorithms;
 use rustls::pki_types::pem::PemObject;
-use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
+use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime};
 pub use rustls::ServerConfig;
-use rustls::{CertificateError, ClientConfig, ClientConnection, RootCertStore, ServerConnection, StreamOwned};
+use rustls::{
+    CertificateError, ClientConfig, ClientConnection, DigitallySignedStruct, OtherError, RootCertStore, ServerConnection, SignatureScheme,
+    StreamOwned,
+};
+
+use crate::trust::{Fingerprint, HostTrust, Trust};
 
 /// The environment variable naming a PEM file of CA certificates that a
 /// client trusts for `wss://` relays besides the built-in roots: for a
 /// self-hosted relay whose certificate comes from a private CA (and for
 /// the tests).
-pub const CA_ENV: &str = "TERSE_RELAY_CA";
+pub const CA_ENV: &str = crate::trust::CA_ENV;
 
 /// The first byte of every TLS record a server sends first (a handshake
 /// record), and of an alert.
@@ -146,15 +157,25 @@ pub fn read_certs(path: &Path) -> io::Result<Vec<CertificateDer<'static>>> {
     Ok(certs)
 }
 
-/// Extra trusted CAs: from [`trust_ca_file`], else from [`CA_ENV`] the
-/// first time a client config is needed.
-static CLIENT: Mutex<Option<Arc<ClientConfig>>> = Mutex::new(None);
+/// What this process trusts ([`set_trust`]; [`CA_ENV`] alone until then),
+/// and the client configurations made from it: for every host without
+/// settings of its own (`""`), and per host that has some.
+struct Held {
+    trust: Arc<Trust>,
+    configs: HashMap<String, Arc<ClientConfig>>,
+}
 
-fn build_client(extra: &[CertificateDer<'static>]) -> io::Result<Arc<ClientConfig>> {
-    let mut roots = RootCertStore { roots: webpki_roots::TLS_SERVER_ROOTS.to_vec() };
-    for cert in extra {
-        roots.add(cert.clone()).map_err(|e| invalid(format!("a trusted CA certificate: {e}")))?;
+static HELD: Mutex<Option<Held>> = Mutex::new(None);
+
+fn roots(certs: impl IntoIterator<Item = CertificateDer<'static>>, public: bool) -> io::Result<RootCertStore> {
+    let mut roots = RootCertStore { roots: if public { webpki_roots::TLS_SERVER_ROOTS.to_vec() } else { Vec::new() } };
+    for cert in certs {
+        roots.add(cert).map_err(|e| invalid(format!("a trusted authority's certificate: {e}")))?;
     }
+    Ok(roots)
+}
+
+fn with_roots(roots: RootCertStore) -> io::Result<Arc<ClientConfig>> {
     let config = ClientConfig::builder_with_provider(provider())
         .with_safe_default_protocol_versions()
         .map_err(io::Error::other)?
@@ -163,29 +184,168 @@ fn build_client(extra: &[CertificateDer<'static>]) -> io::Result<Arc<ClientConfi
     Ok(Arc::new(config))
 }
 
-/// Trusts the CA certificates in a PEM file for `wss://` relays, besides
-/// the built-in roots, from now on in this process (in place of
-/// [`CA_ENV`]).
+/// Why a pinned host's certificate was refused.
+#[derive(Debug)]
+pub enum PinRefused {
+    /// It is not the pinned certificate or key (`pin=`).
+    Key,
+    /// It is not from the pinned authority (`only-authority=`).
+    Authority,
+    /// Neither (both were given).
+    KeyOrAuthority,
+}
+
+impl std::fmt::Display for PinRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            PinRefused::Key => "the relay's certificate does not match the key pinned for it (pin= in your relay list): it is not trusted",
+            PinRefused::Authority => {
+                "the relay's certificate is not from the authority pinned for it (only-authority= in your relay list): it is not trusted"
+            }
+            PinRefused::KeyOrAuthority => {
+                "the relay's certificate matches neither the key nor the authority pinned for it (your relay list): it is not trusted"
+            }
+        })
+    }
+}
+
+impl std::error::Error for PinRefused {}
+
+fn pin_refused(why: PinRefused) -> rustls::Error {
+    rustls::Error::InvalidCertificate(CertificateError::Other(OtherError(Arc::new(why))))
+}
+
+/// A pinned host's verifier: the certificate or its public key is one of
+/// `pins`, or it chains to one of the pinned authorities and is for the
+/// host. Nothing else is accepted, a public authority's certificate
+/// included. A matching pin stands for the chain and the name.
+#[derive(Debug)]
+struct Pinned {
+    pins: Vec<Fingerprint>,
+    authority: Option<Arc<WebPkiServerVerifier>>,
+    algorithms: WebPkiSupportedAlgorithms,
+}
+
+impl ServerCertVerifier for Pinned {
+    fn verify_server_cert(
+        &self,
+        end_entity: &CertificateDer<'_>,
+        intermediates: &[CertificateDer<'_>],
+        server_name: &ServerName<'_>,
+        ocsp: &[u8],
+        now: UnixTime,
+    ) -> Result<ServerCertVerified, rustls::Error> {
+        if !self.pins.is_empty() {
+            let (whole, key) = crate::trust::fingerprints(end_entity);
+            if self.pins.iter().any(|p| *p == whole || Some(*p) == key) {
+                return Ok(ServerCertVerified::assertion());
+            }
+        }
+        match &self.authority {
+            None => Err(pin_refused(PinRefused::Key)),
+            Some(v) => v.verify_server_cert(end_entity, intermediates, server_name, ocsp, now).map_err(|e| match e {
+                rustls::Error::InvalidCertificate(CertificateError::UnknownIssuer) => {
+                    pin_refused(if self.pins.is_empty() { PinRefused::Authority } else { PinRefused::KeyOrAuthority })
+                }
+                e => e,
+            }),
+        }
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(message, cert, dss, &self.algorithms)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(message, cert, dss, &self.algorithms)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        self.algorithms.supported_schemes()
+    }
+}
+
+/// The configuration for a host with settings of its own: pinned, only
+/// what it pins; else the public authorities, those for every relay and
+/// its own.
+fn host_config(trust: &Trust, host: &HostTrust) -> io::Result<Arc<ClientConfig>> {
+    if !host.pinned() {
+        return with_roots(roots(trust.all.iter().chain(&host.also).cloned(), true)?);
+    }
+    let provider = provider();
+    let authority = if host.only.is_empty() {
+        None
+    } else {
+        let roots = Arc::new(roots(host.only.iter().cloned(), false)?);
+        Some(WebPkiServerVerifier::builder_with_provider(roots, provider.clone()).build().map_err(io::Error::other)?)
+    };
+    let verifier = Pinned { pins: host.pins.clone(), authority, algorithms: provider.signature_verification_algorithms };
+    let config = ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .map_err(io::Error::other)?
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(verifier))
+        .with_no_client_auth();
+    Ok(Arc::new(config))
+}
+
+/// Trusts what `trust` says, from now on in this process, in place of
+/// what was trusted before ([`CA_ENV`] alone until the first call): the
+/// user's own settings, never anything from the network.
+pub fn set_trust(trust: Trust) {
+    *HELD.lock().unwrap() = Some(Held { trust: Arc::new(trust), configs: HashMap::new() });
+}
+
+/// Trusts the CA certificates in a PEM file for every `wss://` relay,
+/// besides the built-in roots and what is trusted already.
 pub fn trust_ca_file(path: &Path) -> io::Result<()> {
-    let config = build_client(&read_certs(path)?)?;
-    *CLIENT.lock().unwrap() = Some(config);
+    let certs = read_certs(path)?;
+    let mut held = HELD.lock().unwrap();
+    let mut trust = match held.take() {
+        Some(h) => (*h.trust).clone(),
+        None => Trust::from_env().map_err(invalid)?,
+    };
+    trust.all.extend(certs);
+    *held = Some(Held { trust: Arc::new(trust), configs: HashMap::new() });
     Ok(())
 }
 
-/// The client configuration: the built-in roots, and the CAs of
-/// [`trust_ca_file`] or [`CA_ENV`].
-pub fn client_config() -> io::Result<Arc<ClientConfig>> {
-    let mut held = CLIENT.lock().unwrap();
-    if let Some(c) = held.as_ref() {
+/// The client configuration for a relay named `host` (as its URL writes
+/// it): the built-in roots and the authorities trusted for every relay,
+/// or what the user's settings say for that host.
+pub fn client_config_for(host: &str) -> io::Result<Arc<ClientConfig>> {
+    let mut guard = HELD.lock().unwrap();
+    if guard.is_none() {
+        let trust = Trust::from_env().map_err(invalid)?;
+        *guard = Some(Held { trust: Arc::new(trust), configs: HashMap::new() });
+    }
+    let held = guard.as_mut().unwrap();
+    let own = held.trust.host(host).cloned();
+    let key = if own.is_some() { crate::trust::host_key(host) } else { String::new() };
+    if let Some(c) = held.configs.get(&key) {
         return Ok(c.clone());
     }
-    let extra = match std::env::var_os(CA_ENV).filter(|p| !p.is_empty()) {
-        Some(path) => read_certs(Path::new(&path)).map_err(|e| io::Error::new(e.kind(), format!("{CA_ENV}: {e}")))?,
-        None => Vec::new(),
+    let config = match &own {
+        Some(h) => host_config(&held.trust, h)?,
+        None => with_roots(roots(held.trust.all.iter().cloned(), true)?)?,
     };
-    let config = build_client(&extra)?;
-    *held = Some(config.clone());
+    held.configs.insert(key, config.clone());
     Ok(config)
+}
+
+/// The client configuration for a relay without settings of its own.
+pub fn client_config() -> io::Result<Arc<ClientConfig>> {
+    client_config_for("")
 }
 
 /// Counts the bytes read through it and notes the first (for the
@@ -243,9 +403,10 @@ fn client_failure(e: io::Error, first: Option<u8>) -> io::Error {
                 "the relay's certificate is not valid yet (is this computer's clock right?)".into()
             }
             CertificateError::Revoked => "the relay's certificate has been revoked".into(),
-            CertificateError::UnknownIssuer => {
-                format!("the relay's certificate is not trusted (it is not from a known authority; for a private CA, see {CA_ENV})")
-            }
+            CertificateError::UnknownIssuer => "the relay's certificate is not trusted (it is not from a known authority; \
+                 for a private one, add it to your settings: README \"Private authorities and pins\")"
+                .to_string(),
+            CertificateError::Other(o) if o.0.downcast_ref::<PinRefused>().is_some() => o.0.to_string(),
             other => format!("the relay's certificate is not trusted ({other:?})"),
         },
         rustls::Error::InvalidMessage(_) => "this relay does not speak TLS (try ws://)".into(),
@@ -262,7 +423,7 @@ fn client_failure(e: io::Error, first: Option<u8>) -> io::Error {
 pub fn connect(host: &str, mut tcp: TcpStream) -> io::Result<Stream> {
     let host = host.strip_prefix('[').and_then(|h| h.strip_suffix(']')).unwrap_or(host);
     let name = ServerName::try_from(host.to_string()).map_err(|_| invalid(format!("{host}: not a host name for TLS")))?;
-    let mut conn = ClientConnection::new(client_config()?, name).map_err(io::Error::other)?;
+    let mut conn = ClientConnection::new(client_config_for(host)?, name).map_err(io::Error::other)?;
     let mut counting = Counting { tcp: &mut tcp, read: 0, first: None };
     while conn.is_handshaking() {
         if let Err(e) = conn.complete_io(&mut counting) {

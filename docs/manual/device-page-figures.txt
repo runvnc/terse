@@ -79,7 +79,7 @@ So seven such paths fit this figure's area cap (35,168); an eighth would take th
 
 ## Outlines
 
-When the vector display (device 3) is in the phosphor style or in fill mode 1, figures are drawn as outlines: nothing is filled, and a path that is filled but not stroked is stroked one unit wide in its fill colour. In the phosphor style they are light on the tube like the rest of the page. An image without the vector display has the clean style and fill mode 0, so its figures are filled.
+When the vector display (device 3) is in the phosphor style or in fill mode 1, figures are drawn as outlines: nothing is filled, and a path that is filled but not stroked is stroked one unit wide in its fill colour. In the phosphor style they are light on the black screen like the rest of the page. An image without the vector display has the clean style and fill mode 0, so its figures are filled.
 
 ## Building a figure in C
 

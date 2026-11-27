@@ -8,8 +8,9 @@
 //! linked blob named by an entry of the user's own feed is the user's own
 //! and is uploaded again; one named by another feed's entry is someone
 //! else's (**link-only**: kept where that feed is kept); one held here that
-//! no entry names is uploaded too, with a warning, since such a relay drops
-//! it after a while (publish it as an article of its own to keep it).
+//! no entry names is uploaded too, and after the article an attachment
+//! entry (kind 5, NETWORK 4.2) of the user's feed names it, so relays keep
+//! it as they keep the article.
 //! Publishing refuses, unless `--force`, an article that links to a blob of
 //! the user's own feed that this host does not hold: that part cannot go up
 //! with it. Figures are written in the article's text (ARTICLE.md 6), so
@@ -38,8 +39,9 @@ pub enum Keep {
     Own { seq: u32 },
     /// An entry of another feed names it (link-only).
     Others { feed: FeedKey, seq: u32 },
-    /// Held here and named by no entry held here: a relay that drops blobs
-    /// no entry names drops it.
+    /// Held here and named by no entry held here: an attachment entry
+    /// published after the article names it (a relay that drops blobs no
+    /// entry names would drop it otherwise).
     Unnamed,
     /// Not held here, and no entry held here names it (link-only).
     Unknown,
@@ -86,7 +88,7 @@ impl Linked {
             Keep::Others { feed, seq } => {
                 format!("link-only: {}'s {what} #{seq} names it; kept where that feed is kept", name(feed))
             }
-            Keep::Unnamed => "NOT KEPT: no entry names it, and a relay that drops blobs no entry names (NETWORK.md 5.3) drops it".into(),
+            Keep::Unnamed => "no entry names it yet: an attachment entry of your feed names it after the article, so relays keep it".into(),
             Keep::Unknown => "link-only: no entry held here names it; kept only where its own feed is kept".into(),
             Keep::Nothing => return format!("link {}: {held}", self.link()),
         };

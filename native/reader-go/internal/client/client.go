@@ -25,6 +25,7 @@ import (
 // Options are the user's choices.
 type Options struct {
 	Relays       []string // the user's relays for this run; nil: the store's list
+	Authorities  []string // --relay-authority: PEM files of authorities trusted for every relay
 	AutoLimit    int      // automatic download limit in bytes (NETWORK.md 4.4); 0: none
 	Prefetch     bool     // prefetch the articles that automatically downloaded articles link to
 	FeedRelays   bool     // follow feeds on the relays their profiles name, and on their addresses' hints
@@ -1048,7 +1049,7 @@ func (c *Client) profileRelays(key [32]byte) (chosen []string) {
 		if own[normURL(u)] {
 			continue
 		}
-		if !c.opt.AllowPrivate && terse.RefusedHost(hostOf(u)) {
+		if !c.opt.AllowPrivate && !terse.NetworkRelayUsable(u, hostOf(u)) {
 			continue
 		}
 		chosen = append(chosen, u)

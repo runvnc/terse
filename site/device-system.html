@@ -11,7 +11,7 @@
 <main>
 <article>
 <h1 id="the-system-device-device-1">The system device (device 1)</h1>
-<p>The system device is the machine&#39;s link to time and input: it ends frames, hands out events, reads the clock, random bytes and game controllers, stops the machine, lets a machine that a shell started ask the shell to open something and read the argument the shell gave it, and tells a program which devices it has. It is slot 1, version 0. Every machine has it: an image need not list it (listing (1, 0) is allowed too), and it cannot be absent. The exact rules are in SPEC.md, the core machine (§system, §events, §controllers).</p>
+<p>The system device is the machine&#39;s link to time and input: it ends frames, hands out events, reads the clock, random bytes and game controllers, stops the machine, lets a machine that a shell started ask the shell to open something and read the argument the shell gave it, tells a program which devices it has, and puts text on the user&#39;s clipboard when the user copies. It is slot 1, version 0. Every machine has it: an image need not list it (listing (1, 0) is allowed too), and it cannot be absent. The exact rules are in SPEC.md, the core machine (§system, §events, §controllers).</p>
 <h2 id="reset-state">Reset state</h2>
 <div class="table"><table>
 <thead><tr><th>Item</th><th>At reset</th></tr></thead>
@@ -37,6 +37,7 @@
 <tr><td><code>107h</code></td><td><code>open</code></td><td><code>a0</code> = address of an open request (read)</td><td>1 passed to the shell, 0 not</td><td>4, plus 1 per 4 bytes read</td></tr>
 <tr><td><code>108h</code></td><td><code>argument</code></td><td><code>a0</code> = buffer (32 bytes, written)</td><td>1, or 0 if the machine has none</td><td>4, plus 8 when written</td></tr>
 <tr><td><code>109h</code></td><td><code>device</code></td><td><code>a0</code> = device slot</td><td>the device&#39;s version, or <code>FFFF_FFFFh</code> if the machine does not have it</td><td>4</td></tr>
+<tr><td><code>10Ah</code></td><td><code>copy</code></td><td><code>a0</code> = text (read), <code>a1</code> = length, at most 65,536</td><td>0</td><td>4, plus 1 per 4 bytes</td></tr>
 </tbody></table></div>
 <p>The charge is in budget units on top of the <code>ecall</code> instruction itself (1 from ROM, 4 from RAM). A call that fails is charged 4 and copies nothing. Every buffer a call writes must lie wholly in RAM; one it reads (only <code>open</code>&#39;s) wholly in ROM or wholly in RAM. A bad buffer gives <code>FFFF_FFFEh</code> and nothing else happens. A call number from <code>10Ah</code> to <code>1FFh</code> is unknown and returns <code>FFFF_FFFFh</code>.</p>
 <h2 id="wait-frame">wait_frame</h2>
@@ -74,7 +75,7 @@
 <tr><td>a request this machine made earlier still waits (the shell has not read it with <code>request</code>)</td><td>0, nothing else happens</td></tr>
 <tr><td>otherwise</td><td>1: the request waits for the shell</td></tr>
 </tbody></table></div>
-<p>The shell is told of a waiting request at the start of the next system frame, by an open requested event, and reads it with the machines device&#39;s <code>request</code> call; then the machine may make another. What the shell does with the request is its own policy, and the machine is not told. The built-in shell, for example, takes requests only from the machine with the keyboard, asks the user before starting a program that is not built in, and opens a blob according to its first bytes. See [the machines device](<a href="device-machines.html" title="The Machines device (device 8)">terse:90fe2f…877be8</a>).</p>
+<p>The shell is told of a waiting request at the start of the next system frame, by an open requested event, and reads it with the machines device&#39;s <code>request</code> call; then the machine may make another. What the shell does with the request is its own policy, and the machine is not told. The built-in shell, for example, takes requests only from the machine with the keyboard, asks the user before starting a program that is not built in, and opens a blob according to its first bytes. See [the machines device](<a href="device-machines.html" title="The Machines device (device 8)">terse:b756d4…213d9f</a>).</p>
 <p>In C, <code>terse_open(request)</code> with the kinds <code>OPEN_BLOB</code> and <code>OPEN_PROGRAM</code>:</p>
 <pre>#include &quot;terse.h&quot;
 
@@ -127,6 +128,8 @@ int main(void)
     }
 }</pre>
 <p>The charges of all devices are listed together in <a href="charges.html">charges</a>.</p>
+<h2 id="copy-the-user-s-copy-key">copy: the user&#39;s copy key</h2>
+<p><code>copy</code> offers the user&#39;s system clipboard the text at <code>a0</code>, <code>a1</code> bytes of UTF-8 (at most 65,536, wholly in ROM or wholly in RAM, else <code>FFFF_FFFEh</code>). The host takes it only for the user&#39;s own copy: only if, in the frame of the call, the program has read the key-down of a copy key with <code>next_event</code> (C, X or Insert with Control, without Alt or Meta). At any other time, and on a host without a clipboard, the text is dropped, so a program cannot fill the clipboard on its own. The call returns 0 either way, and the machine never reads the clipboard: what the user pastes comes as text events between the paste key&#39;s down and up. A spreadsheet copies its cells as tab-separated lines; in C, <code>terse_copy(text, n)</code>.</p>
 </article>
 </main>
 <footer><nav class="pn"><a rel="prev" href="machine-calls.html">← The call table</a><a rel="next" href="device-terminal.html">The terminal (device 2) →</a></nav></footer>

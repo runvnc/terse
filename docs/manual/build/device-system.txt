@@ -4,7 +4,8 @@ The system device is the machine's link to time and input: it ends
 frames, hands out events, reads the clock, random bytes and game
 controllers, stops the machine, lets a machine that a shell started
 ask the shell to open something and read the argument the shell gave it,
-and tells a program which devices it has.
+tells a program which devices it has, and puts text on the user's
+clipboard when the user copies.
 It is slot 1, version 0. Every machine has it: an image need not list it
 (listing (1, 0) is allowed too), and it cannot be absent. The exact rules are in SPEC.md, the core machine (§system, §events, §controllers).
 
@@ -33,6 +34,7 @@ It is slot 1, version 0. Every machine has it: an image need not list it
 | `107h` | `open` | `a0` = address of an open request (read) | 1 passed to the shell, 0 not | 4, plus 1 per 4 bytes read |
 | `108h` | `argument` | `a0` = buffer (32 bytes, written) | 1, or 0 if the machine has none | 4, plus 8 when written |
 | `109h` | `device` | `a0` = device slot | the device's version, or `FFFF_FFFFh` if the machine does not have it | 4 |
+| `10Ah` | `copy` | `a0` = text (read), `a1` = length, at most 65,536 | 0 | 4, plus 1 per 4 bytes |
 
 The charge is in budget units on top of the `ecall` instruction itself (1
 from ROM, 4 from RAM). A call that fails is charged 4 and copies nothing.
@@ -61,7 +63,7 @@ work in between ran out of budget and was paused.
 four bytes, type, `a`, `b`, `c`, to the buffer, and returns 1. If the queue
 is empty it writes nothing and returns 0. The buffer is checked first: a
 buffer not wholly in RAM gives `FFFF_FFFEh` and removes no event. Event
-types and their bytes are in [Events and input](terse:654230b0ec65952b422aaa86ce7da9e80af625be02f4ad365c408ed291a15c1a). In C,
+types and their bytes are in [Events and input](terse:90c9d1da494e9438aeddf510a212a2f0cfd43daccb0b085d942e30639ef9d438). In C,
 `terse_event_pop(&e)` returns the event's type, or `EV_NONE` (0) when the
 queue is empty.
 
@@ -100,7 +102,7 @@ bytes; `terse_random_byte()` returns one byte.
 at the start of the frame, and returns byte 0 (1 if connected, else 0).
 Controllers are numbered 0 to 3; a number above 3 reads as a controller
 that is not connected (eight zero bytes, result 0). The layout of the
-eight bytes is in [Events and input](terse:654230b0ec65952b422aaa86ce7da9e80af625be02f4ad365c408ed291a15c1a). In a system only the
+eight bytes is in [Events and input](terse:90c9d1da494e9438aeddf510a212a2f0cfd43daccb0b085d942e30639ef9d438). In a system only the
 machine with the focus (the shell when the focus is 0) sees the
 controllers; every other machine reads all four as not connected. A new
 focus takes effect at the next frame. In C: `terse_pad_read(n, &pad)` with a
@@ -145,7 +147,7 @@ the request is its own policy, and the machine is not told. The built-in
 shell, for example, takes requests only from the machine with the
 keyboard, asks the user before starting a program that is not built in,
 and opens a blob according to its first bytes. See [the machines
-device](terse:90fe2f90b2cf0e4241e8e642ac485d82e04cd85b01721315ab238700a6877be8).
+device](terse:b756d4178e2a831e38fc7a19ca7d43f169dffe1751bd18d6db3dda7803213d9f).
 
 In C, `terse_open(request)` with the kinds `OPEN_BLOB` and `OPEN_PROGRAM`:
 
@@ -217,7 +219,7 @@ these devices, and `--without S` withholds one more.
 
 Events, the latched Unix time, the random bytes and the controller state
 are the only inputs from this device. With the content completions (see
-[blobs](terse:f5ca53b100a2234cee09280d95cfc4e5f9c9c29f1bf72e20e6ef02a06636151d)), they are what a host records per frame to
+[blobs](terse:325094c30918dfaa2daf4b9e48027f6e49851f8cd74486c969bb23ae05d12f87)), they are what a host records per frame to
 replay a run exactly. For a machine a shell started, whether `open` passes
 a request on depends on whether the shell has read the previous one, and
 is an input like a completion.
@@ -256,3 +258,16 @@ int main(void)
 
 The charges of all devices are listed together in
 [charges](terse:700aa265f5d0ae8141b841e6eeecb0b6146ac6935da3121441ee039db69ecf7c).
+
+## copy: the user's copy key
+
+`copy` offers the user's system clipboard the text at `a0`, `a1` bytes of
+UTF-8 (at most 65,536, wholly in ROM or wholly in RAM, else `FFFF_FFFEh`).
+The host takes it only for the user's own copy: only if, in the frame of
+the call, the program has read the key-down of a copy key with
+`next_event` (C, X or Insert with Control, without Alt or Meta). At any
+other time, and on a host without a clipboard, the text is dropped, so a
+program cannot fill the clipboard on its own. The call returns 0 either
+way, and the machine never reads the clipboard: what the user pastes
+comes as text events between the paste key's down and up. A spreadsheet
+copies its cells as tab-separated lines; in C, `terse_copy(text, n)`.

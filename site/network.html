@@ -18,7 +18,7 @@
 <p>A client keeps a local blob store (a cache) and uses it when it can. Otherwise it fetches the whole blob from its relays, checks its hash, stores it, and only then uses it. A blob that fails the check counts as not found on that relay. A put stores the blob locally and sends it to every connected relay. Clients never trust relays: every blob is verified on receipt.</p>
 <p>A blob reached without an entry (by a link) tells what it is by its first four bytes: <code>TERS</code> is a program image, <code>TDOC</code> a document (data for a program), anything else an article.</p>
 <h2 id="relay-protocol">Relay protocol</h2>
-<p>Relay URLs are <code>ws&#58;//</code> or <code>wss&#58;//</code> (TLS; <code>TERSE_RELAY_CA</code> adds a private CA). All messages are binary WebSocket messages; multi-byte integers are little-endian. <code>req</code> is a 32-bit number chosen by the client and echoed in the reply; replies may come in any order.</p>
+<p>Relay URLs are <code>wss&#58;//</code> (TLS) or <code>ws&#58;//</code> (plain): <a href="relay-settings.html">Relays: encryption and trust</a> says when each is used. All messages are binary WebSocket messages; multi-byte integers are little-endian. <code>req</code> is a 32-bit number chosen by the client and echoed in the reply; replies may come in any order.</p>
 <div class="table"><table>
 <thead><tr><th>Message</th><th>Direction</th><th>Layout</th></tr></thead>
 <tbody>
@@ -57,7 +57,7 @@
 <tr><td>0</td><td>32</td><td>feed key</td></tr>
 <tr><td>32</td><td>4</td><td><code>seq</code>: 1 for the first entry, then increasing</td></tr>
 <tr><td>36</td><td>4</td><td>time: Unix seconds, as claimed by the author</td></tr>
-<tr><td>40</td><td>1</td><td>kind: 1 article, 2 profile, 3 program, 4 document; 0 and 255 reserved; 5 to 254 not yet defined</td></tr>
+<tr><td>40</td><td>1</td><td>kind: 1 article, 2 profile, 3 program, 4 document, 5 attachment; 0 and 255 reserved; 6 to 254 not yet defined</td></tr>
 <tr><td>41</td><td>3</td><td>size of the blob in bytes</td></tr>
 <tr><td>44</td><td>32</td><td>blob ID</td></tr>
 <tr><td>76</td><td>32</td><td>reply-to: the blob ID this entry responds to, or all zero</td></tr>
@@ -76,7 +76,8 @@
 <tr><td>4</td><td>document</td><td>any title</td><td>a document (starts with <code>TDOC</code>)</td></tr>
 </tbody></table></div>
 <p>Program and document entries are valid whatever their blob holds; that is found out on use. A feed&#39;s current version of a program is its valid program entry with that name and the highest <code>seq</code> the client or relay holds. A program&#39;s identity is (feed key, name).</p>
-<p>An entry of a kind not listed here (5 to 254) is valid if it meets the rules above (the kind-specific ones apply only to their kinds). Relays pass it on like any other, so that kinds a later revision adds reach clients that know them; a client keeps or skips it without error, and neither downloads, lists in the timeline nor opens it (<code>terse feed list</code> shows <code>[kind 9: title]</code>).</p>
+<p>An *attachment* (kind 5) keeps a part of an earlier entry of the same feed, something its article links to: its blob is the part, its reply-to that entry&#39;s blob. Relays keep it like any entry; readers do not list it, and reach its blob by the link.</p>
+<p>An entry of a kind not listed here (6 to 254) is valid if it meets the rules above (the kind-specific ones apply only to their kinds). Relays pass it on like any other, so that kinds a later revision adds reach clients that know them; a client keeps or skips it without error, and neither downloads, lists in the timeline nor opens it (<code>terse feed list</code> shows <code>[kind 9: title]</code>).</p>
 <h2 id="relay-feed-messages">Relay feed messages</h2>
 <ul>
 <li>The relay verifies an entry before storing it. Publishing an entry the relay already holds succeeds; publishing a different entry with a <code>seq</code> it already holds is refused.</li>
@@ -96,7 +97,7 @@
 <li>Publishing an article or document: the client puts the blob, then signs and publishes an entry with the next <code>seq</code> (one more than the highest it holds or has used for its own feed). The entry is stored like a received one; if the client subscribes to its own feed, it is in the timeline at once.</li>
 </ul>
 <h2 id="feed-addresses">Feed addresses</h2>
-<p>A key says which feed, not where it is: a client that asks only its own relays finds nothing of a feed published elsewhere. A feed address adds up to two hints, relays that should hold it: <code>&lt;key&gt;@relay.example.org</code> or <code>&lt;key&gt;@relay.example:9000,[2001:db8::7]</code>. A hint is a host (a name, an IPv4 address, an IPv6 one in brackets) and a port (7878 if left out), at most 80 bytes, meaning <code>ws&#58;//host:port</code>, or <code>wss&#58;//host</code> for port 443. A client refuses a malformed address; in an article a malformed hint list leaves the link the key alone. NETWORK.md 4.9 has the grammar.</p>
+<p>A key says which feed, not where it is: a client that asks only its own relays finds nothing of a feed published elsewhere. A feed address adds up to two hints, relays that should hold it: <code>&lt;key&gt;@relay.example.org</code> or <code>&lt;key&gt;@relay.example:9000,[2001:db8::7]</code>. A hint is a host (a name, an IPv4 address, an IPv6 one in brackets) and maybe a port, at most 80 bytes, naming an encrypted relay: <code>relay.example:9000</code> is <code>wss&#58;//relay.example:9000</code>. A hint has no scheme: it never names a plain relay. A client refuses a malformed address; in an article a malformed hint list leaves the link the key alone. NETWORK.md 4.9 has the grammar.</p>
 <p>A client keeps the hints with the subscription. If none of its own relays holds an entry of the feed (each answers <code>highest</code> 0), it follows the feed on the hinted relays too, as feed relays (below: same address checks, same switch, same cap), until the feed&#39;s profile has <code>relay</code> lines. Its user&#39;s own address takes its hints from their profile&#39;s <code>relay</code> lines, then the client&#39;s relays, public ones only; with none, only people on the same relays find the feed.</p>
 <h2 id="profiles-names-and-search">Profiles, names and search</h2>
 <p>A feed&#39;s profile (a kind 2 entry) gives it a display name and the relays it publishes on; a user may give a feed a nickname; search finds feeds by name, articles and documents by title and programs by name, and lookup finds a feed&#39;s program by its name. All of it is in <a href="network-names.html">profiles, names and search</a>.</p>

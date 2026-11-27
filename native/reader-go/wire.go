@@ -42,6 +42,7 @@ func openNode(cfg *config) (nodeapi.Node, error) {
 func openInProcess(cfg *config) (*node.Node, error) {
 	opt := client.DefaultOptions()
 	opt.Relays = cfg.relays
+	opt.Authorities = cfg.authorities
 	opt.AutoLimit = cfg.autoLimit
 	opt.Prefetch = cfg.prefetch
 	opt.FeedRelays = cfg.feedRelays

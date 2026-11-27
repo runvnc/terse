@@ -16,8 +16,17 @@ use std::process::ExitCode;
 use crate::{Args, USAGE};
 
 /// The options of `terse node`.
-const OPTIONS: [&str; 8] =
-    ["--socket", "--relay", "--store", "--config", "--no-feed-relays", "--auto-download", "--no-prefetch", "--no-program-download"];
+const OPTIONS: [&str; 9] = [
+    "--socket",
+    "--relay",
+    "--relay-authority",
+    "--store",
+    "--config",
+    "--no-feed-relays",
+    "--auto-download",
+    "--no-prefetch",
+    "--no-program-download",
+];
 
 pub fn node(args: &[String]) -> Result<ExitCode, String> {
     let args = Args::parse(args, &[])?;
@@ -781,7 +790,17 @@ mod imp {
                     if list.len() > local::MAX_RELAYS {
                         return Some(refused(t, req, "at most eight relays"));
                     }
-                    if let Err(e) = local::write_relays(&self.config, &list) {
+                    // A relay that was listed keeps its options (README
+                    // "Private authorities and pins").
+                    let old = local::read_relay_lines(&self.config).ok().flatten().map(|(l, _)| l).unwrap_or_default();
+                    let lines: Vec<String> = list
+                        .iter()
+                        .map(|u| old.iter().find(|(o, _)| o == u).map_or(u.clone(), |(_, line)| line.clone()))
+                        .collect();
+                    if let Err(e) = local::write_relays(&self.config, &lines) {
+                        return Some(refused(t, req, &e));
+                    }
+                    if let Err(e) = local::apply_trust(&[], Some(&self.config)) {
                         return Some(refused(t, req, &e));
                     }
                     self.node.set_relays(&list);

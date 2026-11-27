@@ -1,6 +1,6 @@
 # Content: feeds, names, search and publishing
 
-Eleven operations of the content device (device 4) work with feeds: numbered series of signed entries, one series per author, each entry pointing at a blob. Four read what the host holds about the feeds it follows, one searches the relays, five change the user's subscriptions, feed, profile or nicknames (only with the user's consent), and one tells the program the host's own feed key. They use the same request block, `submit` call, handles, completion rules and statuses as get and put; that article, "Content: blobs, requests and statuses", comes before this one. How feeds travel is in [the network](terse:4495a8ee7f7807763b38f85228938ef76ec4fde95f3fb454e7d23cb2402316cd).
+Eleven operations of the content device (device 4) work with feeds: numbered series of signed entries, one series per author, each entry pointing at a blob. Four read what the host holds about the feeds it follows, one searches the relays, five change the user's subscriptions, feed, profile or nicknames (only with the user's consent), and one tells the program the host's own feed key. They use the same request block, `submit` call, handles, completion rules and statuses as get and put; that article, "Content: blobs, requests and statuses", comes before this one. How feeds travel is in [the network](terse:401c42853201f64f28c72d9acd2ae7dbf51a744e41003a2fa2280458107d139b).
 
 | `op` | Operation | C helper | Consent |
 |---|---|---|---|
@@ -53,7 +53,7 @@ The entry, as it appears from record byte 2 on (offsets here are within the entr
 | 108 | 1 | `n`: title length, 0 to 120 |
 | 109 | `n` | title, UTF-8 |
 
-So `L` is 110 + `n`, and a record is at most 231 bytes. A program tells articles from documents by the kind byte. The host has verified every entry it delivers. When new entries arrive the program gets a feeds-updated event (type `07h`, see [events](terse:654230b0ec65952b422aaa86ce7da9e80af625be02f4ad365c408ed291a15c1a)), sent after the automatic download of their blobs has finished or failed, so the local flags are already right; read the timeline again then.
+So `L` is 110 + `n`, and a record is at most 231 bytes. A program tells articles from documents by the kind byte. The host has verified every entry it delivers. When new entries arrive the program gets a feeds-updated event (type `07h`, see [events](terse:90c9d1da494e9438aeddf510a212a2f0cfd43daccb0b085d942e30639ef9d438)), sent after the automatic download of their blobs has finished or failed, so the local flags are already right; read the timeline again then.
 
 ## Programs (0Dh)
 
@@ -63,7 +63,7 @@ The current version of each program (kind 3 entry) of the subscribed feeds, in i
 
 `id` is a feed key; `offset` and `size` are not used. Subscribe adds the feed to the host's subscriptions; unsubscribe removes it.
 
-A subscribe may carry the hints of the feed's address ([the network](terse:4495a8ee7f7807763b38f85228938ef76ec4fde95f3fb454e7d23cb2402316cd), "Feed addresses"): `length` bytes at `addr`, in ROM or RAM, copied at submit, the text after the `@` exactly, such as `relay.example:9000` or `a.example,[2001:db8::7]`: one or two hints, at most 161 bytes. `length` 0 gives none (`content_follow` sets it so; `content_subscribe` gives hints). Malformed hints are a bad request (`04h` at submit). The host keeps them with the subscription and, if its own relays do not hold the feed, follows it on the relays they name. Unsubscribe does not use `length` and `addr`.
+A subscribe may carry the hints of the feed's address ([the network](terse:401c42853201f64f28c72d9acd2ae7dbf51a744e41003a2fa2280458107d139b), "Feed addresses"): `length` bytes at `addr`, in ROM or RAM, copied at submit, the text after the `@` exactly, such as `relay.example:9000` or `a.example,[2001:db8::7]`: one or two hints, at most 161 bytes. `length` 0 gives none (`content_follow` sets it so; `content_subscribe` gives hints). Malformed hints are a bad request (`04h` at submit). The host keeps them with the subscription and, if its own relays do not hold the feed, follows it on the relays they name. Unsubscribe does not use `length` and `addr`.
 
  With the user's consent the request completes with `01h` once the list has changed; the feed's entries arrive later, each batch announced by a feeds-updated event. Without asking, it completes with `01h` at once if the list already is as asked (subscribing to a feed already subscribed, whose hints are then left as they were, unsubscribing from one that is not), and with `05h` if `id` is not a valid feed key (an Ed25519 public key). An unsubscribe from an invalid key meets both rules; the reference host completes it with `01h`, since such a feed cannot be subscribed.
 
@@ -126,7 +126,7 @@ Searches the relays. `id` is not used. `offset` is the scope; the query is the `
 | 2 | `FIND_ENTRIES` | articles and documents by title | kinds 1 and 4 |
 | 3 | `FIND_PROGRAMS` | programs by name, current versions only | kind 3 |
 
-Any other scope is a bad request. A match is the query occurring as a run of bytes in the name or title, with A to Z folded to a to z on both sides. Results are timeline records (only flag bit 0 may be set), as many whole ones as fit, in order; `length` is the bytes delivered and `size` the number of results the host has, at most 16. The host asks all its relays, verifies every entry they return, drops invalid ones and duplicates, and merges and caps the results as described in [the network](terse:4495a8ee7f7807763b38f85228938ef76ec4fde95f3fb454e7d23cb2402316cd).
+Any other scope is a bad request. A match is the query occurring as a run of bytes in the name or title, with A to Z folded to a to z on both sides. Results are timeline records (only flag bit 0 may be set), as many whole ones as fit, in order; `length` is the bytes delivered and `size` the number of results the host has, at most 16. The host asks all its relays, verifies every entry they return, drops invalid ones and duplicates, and merges and caps the results as described in [the network](terse:401c42853201f64f28c72d9acd2ae7dbf51a744e41003a2fa2280458107d139b).
 
 | Case | Status |
 |---|---|

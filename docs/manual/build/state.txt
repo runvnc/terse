@@ -117,7 +117,7 @@ A machine's only inputs are, per frame: its events (in order), the latched Unix 
 
 A snapshot is the serialization plus the program's identity. A machine is restored from a serialization S and the image whose ID S names: it has the devices S's grants say (an optional device the host has and S lacks stays absent; one S has that the host cannot give fails the restore), and S is read section by section, with the sections those devices imply. It is refused if it is cut short or too long, names another image, has a present machines section (a shell), or does not serialize back to exactly S (so every field is in range: flags, stopped and fault fields consistent, budget not positive, L equal to the image's RAM, n at most 64, cursor on the grid, valid lists and lengths, a clamped page rectangle, pending requests with known ops, blocks in RAM and fields as a submit leaves them).
 
-The restored machine has S's hash and is between frames; its next frame is numbered by S's counter. Host bookkeeping starts afresh: pending content requests fail in the next frame, the page is laid out as a new document, the afterglow is empty. Time and random bytes are what the host supplies from then on.
+The restored machine has S's hash and is between frames; its next frame is numbered by S's counter. Host bookkeeping starts afresh: pending content requests fail in the next frame, the page is laid out as a new document, any afterglow is empty. Time and random bytes are what the host supplies from then on.
 
 The snapshot file:
 
@@ -136,7 +136,7 @@ The snapshot file:
 
 A writer stores exactly the pages that are not all zero; a reader accepts any page stored. Bits past the last page must be clear. A reader also refuses N below 200 or above 1,160,947 (the longest serialization; 1,423,155 with experimental sections), and L that is 0, not a multiple of 8,192, above 786,432 (96 pages) or more than N - 200. Bytes after the hash, or a hash that does not match, are refused.
 
-`terse run <image> --save-state <file>` writes the file after the last frame; `--load-state <file>` starts from one instead of reset (the image is the one given, else the one the snapshot names). `--frames 0 --hash` then prints the saved hash, and a continued run has the hashes of the uninterrupted one. Both are for a single machine. Shells take snapshots of their machines with [the Machines device](terse:90fe2f90b2cf0e4241e8e642ac485d82e04cd85b01721315ab238700a6877be8).
+`terse run <image> --save-state <file>` writes the file after the last frame; `--load-state <file>` starts from one instead of reset (the image is the one given, else the one the snapshot names). `--frames 0 --hash` then prints the saved hash, and a continued run has the hashes of the uninterrupted one. Both are for a single machine. Shells take snapshots of their machines with [the Machines device](terse:b756d4178e2a831e38fc7a19ca7d43f169dffe1751bd18d6db3dda7803213d9f).
 
 ## The conformance image
 
@@ -152,4 +152,4 @@ Run it headless for 200 frames with an empty store and no subscriptions, and com
 
 With `--dump --dump-vectors` instead of `--hash-every 10` it prints the final screen (compare with `expected-screen.txt`): one PASS or FAIL line per section it can check itself, and the display list. The hashes are the authoritative check; they also cover what the program cannot see, such as the palette, the list, every register and every unit of budget. Esc exits with the number of failed sections.
 
-See [the machine](terse:d3101301394f2408bdd43ab92cd647028c42addb78a525e0c9490852aa7e6a03) for frames and the budget, and [charges](terse:700aa265f5d0ae8141b841e6eeecb0b6146ac6935da3121441ee039db69ecf7c).
+See [the machine](terse:d5582dce5b933ab662643e810c537ba15a1888f126018b878cc7946ccdc9e258) for frames and the budget, and [charges](terse:700aa265f5d0ae8141b841e6eeecb0b6146ac6935da3121441ee039db69ecf7c).
