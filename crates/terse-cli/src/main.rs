@@ -53,7 +53,7 @@ const USAGE: &str = "usage:
   terse feed site [<address>] --out <dir> [--title <t>] [--base-url <https://...>] [--force]
   terse profile set --name <n> [--listed|--unlisted] [--description <file>]
   terse profile show [<key>]
-  terse find [--entries|--programs] <text>
+  terse find [--entries|--programs] [--pages <n>|--all] <text>
   terse records list [<owner>] | show <owner> <name> | delete <owner> <name>   [--data <dir>]
   terse manual build|check [--dir <docs/manual>]
   terse manual site --out <dir> [--dir <docs/manual>]   (the manual as a static website)
@@ -144,7 +144,8 @@ article that links to a blob of your feed this host does not hold is refused unl
 --dry-run lists the links and publishes nothing.
 feed publish --program publishes an image as a program (NETWORK 4.2) under --name (default: the
 image's title); feed programs lists the current version of each program held (of one feed, or of
-all the feeds held), find --programs searches programs by name.
+all the feeds held), find --programs searches programs by name. find shows a page of up to 16
+results, --pages <n> the first n pages, --all every page (at most 64).
 Named records (SPEC §content.records), the data programs keep on this machine, are in <data>/records; --data
 defaults to $XDG_DATA_HOME/terse (or ~/.local/share/terse; ~/Library/Application Support/terse/data on macOS; %LOCALAPPDATA%\\terse on Windows). `run` keeps them there too. `records`
 shows them for inspection: an <owner> is builtin:<title>, program:<feed key>:<name> or

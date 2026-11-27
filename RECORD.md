@@ -492,10 +492,10 @@ publishes them in a followed feed for the program.
   report documents and list it in the launcher; it moves the launcher's
   entries after the built-ins, which the shell's scripted tests and
   reference pictures navigate by.
-- **Search.** At most 16 results a page (more by paging, which the
-  reference does not build yet), listed feeds only, no profile
-  lookup by key: an aggregate of strangers is a small, self-selected
-  sample.
+- **Search.** At most 16 results a page; `reports` pages through at
+  most 16 pages (256 results) of each of its up to 4 searches. Listed
+  feeds only, no profile lookup by key: an aggregate of strangers is a
+  small, self-selected sample.
 - **Defences against faked reports** (not built). Feed keys are free, so
   "all found" can be flooded. Later signals the owner discussed:
   - *vouching*: a feed publishes a signed list of feeds it vouches for,

@@ -21,6 +21,7 @@
 //!   with verification; following and publishing feeds.
 //! - [`records`]: named records, the data programs keep on this host (SPEC §content.records).
 //! - [`snapshots`]: snapshots of the machines a shell runs (SPEC §machines.snapshots).
+//! - [`search`]: a search kept for more results (NETWORK 4.7).
 //! - [`service`]: runs a node on a background thread for the frame loop.
 //! - [`timeline`]: the arrival order of entries and the feed records of SPEC §content.feeds.
 
@@ -46,6 +47,7 @@ pub mod profile;
 pub mod protocol;
 pub mod records;
 pub mod relay;
+pub mod search;
 pub mod service;
 pub mod snapshots;
 pub mod store;

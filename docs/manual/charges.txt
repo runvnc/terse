@@ -160,10 +160,10 @@ All but the request block's 52 bytes are provisional.
 | Blob | 1 to 1,048,576 bytes |
 | Request block | 52 bytes, in RAM |
 | Pending requests | 8 (handles 1 to 8) |
-| `length` of get, load, records, find | 1 to 16,384 |
+| `length` of get, load, records, find, find more | 1 to 16,384 |
 | Publish title | 0 to 120 bytes |
 | Display name, nickname, find query | 1 to 48 bytes (a nickname may be 0: removes it) |
-| Find results | at most 16 |
+| Find results | at most 16 a page (find more for the next) |
 | Named records per owner | 256 records, 1,048,576 bytes in all |
 | One named record | 0 to 65,536 bytes |
 | Record name | 1 to 32 bytes |
@@ -213,7 +213,7 @@ All but the request block's 52 bytes are provisional.
 | Relays from a feed's profile | at most 2 a feed |
 | Relay connections | at most 16 |
 | Entries a relay keeps | at least the 256 newest of a feed, and its latest profile |
-| Search results | at most 16 |
+| Search results | at most 16 a page |
 | Profile document | at most 4,096 bytes; 0 to 4 relay lines |
 | Reconnecting | after 1 s, doubling up to 30 s |
 | Peer get | not found after 3 s without an answer |

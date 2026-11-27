@@ -76,6 +76,7 @@ Fields an op does not use are ignored.
 | `0Fh` | Load | [named records](terse:{content-records}) |
 | `10h` | Delete | [named records](terse:{content-records}) |
 | `11h` | Records | [named records](terse:{content-records}) |
+| `12h` | Find more | [feeds](terse:{content-feeds}) |
 
 Get (`01h`) asks for up to `length` bytes of blob `id` starting at `offset`, delivered to `addr`. On success `length` is the number of bytes delivered (fewer if the blob ends first) and `size` is the blob's size. A get whose `offset` is at or beyond the end of the blob completes with `01h`, `length` 0 and `size` the blob's size.
 

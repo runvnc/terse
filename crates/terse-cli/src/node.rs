@@ -247,7 +247,9 @@ mod imp {
     #[derive(Debug)]
     enum Request {
         Get { req: u32, id: BlobId },
-        Find { req: u32, scope: u8, query: Vec<u8> },
+        /// `cursor`: `None` for a find that ends at its query (NETWORK.md
+        /// 4.7: taken as `c` 0 and answered without a cursor).
+        Find { req: u32, scope: u8, query: Vec<u8>, cursor: Option<Vec<u8>> },
         Lookup { req: u32, feed: FeedKey, kind: u8, name: Vec<u8> },
         Held { req: u32, id: BlobId },
         Timeline { req: u32, before: u32, max: u16 },
@@ -322,7 +324,11 @@ mod imp {
         let parsed = (|| {
             let r = match t {
                 GET => Request::Get { req, id: f.id()? },
-                FIND => Request::Find { req, scope: f.u8()?, query: f.short()? },
+                FIND => {
+                    let (scope, query) = (f.u8()?, f.short()?);
+                    let cursor = if f.0.is_empty() { None } else { Some(f.short()?) };
+                    Request::Find { req, scope, query, cursor }
+                }
                 LOOKUP => Request::Lookup { req, feed: f.id()?, kind: f.u8()?, name: f.short()? },
                 HELD => Request::Held { req, id: f.id()? },
                 TIMELINE => Request::Timeline { req, before: f.u32()?, max: f.u16()? },
@@ -462,7 +468,9 @@ mod imp {
     /// A request waiting on the network.
     enum Pending {
         Get { held: bool },
-        Find,
+        /// A Find: the search kept for its next pages, if it asked for them
+        /// (it had `c`), and the reply has `c`.
+        Find { search: Option<u64>, paged: bool },
         Lookup,
     }
 
@@ -482,6 +490,9 @@ mod imp {
         conns: HashMap<u64, Conn>,
         pending: HashMap<Token, (u64, u32, Pending)>,
         next_token: Token,
+        /// The last key of a search kept in the node (LOCAL.md 4.2: the
+        /// node's cursor names it).
+        next_search: u64,
         syncs: Vec<(u64, u32, Instant)>,
         arrivals: Arrivals,
         /// Arrival records read so far.
@@ -514,6 +525,7 @@ mod imp {
                 conns: HashMap::new(),
                 pending: HashMap::new(),
                 next_token: 0,
+                next_search: 0,
                 syncs: Vec::new(),
                 arrivals,
                 seen: 0,
@@ -685,12 +697,34 @@ mod imp {
                     self.node.start_get(token, id);
                     return None;
                 }
-                Request::Find { req, scope, query } => {
+                // LOCAL.md 4.2: pages of the node's merged results; the
+                // cursor names the search the node keeps, and the find.
+                Request::Find { req, scope, query, cursor } => {
+                    let paged = cursor.is_some();
                     if !(1..=3).contains(&scope) || !(1..=profile::MAX_NAME).contains(&query.len()) || std::str::from_utf8(&query).is_err() {
-                        return Some(found_reply(req, REFUSED, &[]));
+                        return Some(found_reply(req, REFUSED, &[], paged.then_some(&[])));
                     }
-                    let token = self.token(conn, req, Pending::Find);
-                    self.node.start_find(token, scope, &query);
+                    match cursor.as_deref() {
+                        None => {
+                            let token = self.token(conn, req, Pending::Find { search: None, paged });
+                            self.node.start_find(token, scope, &query);
+                        }
+                        Some([]) => {
+                            self.next_search += 1;
+                            let key = self.next_search;
+                            let token = self.token(conn, req, Pending::Find { search: Some(key), paged });
+                            self.node.start_search(token, key, scope, &query);
+                        }
+                        Some(c) => {
+                            let key = match NodeCursor::decode(c, scope, &query) {
+                                Some(key) if self.node.search_query(key) == Some((scope, &query[..])) => key,
+                                // Not this node's, or a search it no longer keeps.
+                                _ => return Some(found_reply(req, REFUSED, &[], Some(&[]))),
+                            };
+                            let token = self.token(conn, req, Pending::Find { search: Some(key), paged });
+                            self.node.start_more(token, key);
+                        }
+                    }
                     return None;
                 }
                 Request::Lookup { req, feed, kind, name } => {
@@ -1003,12 +1037,14 @@ mod imp {
                         [status(GET | 0x80, req, DONE), bytes].concat()
                     }
                     (Pending::Get { .. }, _) => status(GET | 0x80, req, NOT_FOUND),
-                    (Pending::Find, Done::Found(found)) => {
+                    (Pending::Find { search, paged }, Done::Found(found)) => {
                         let entries: Vec<&[u8]> = found.iter().map(|s| s.bytes.as_slice()).collect();
-                        found_reply(req, DONE, &entries)
+                        let more = search.filter(|&k| self.node.search_more(k) == Some(true));
+                        let cursor = more.map(|k| NodeCursor::encode(k, &self.node)).unwrap_or_default();
+                        found_reply(req, DONE, &entries, paged.then_some(&cursor[..]))
                     }
                     // No relay answered: refused, as a relay refuses (NETWORK.md 4.7).
-                    (Pending::Find, _) => found_reply(req, REFUSED, &[]),
+                    (Pending::Find { paged, .. }, _) => found_reply(req, REFUSED, &[], paged.then_some(&[])),
                     (Pending::Lookup, Done::Found(found)) if !found.is_empty() => {
                         self.dirty = true;
                         [status(0x88, req, DONE), found[0].bytes.clone()].concat()
@@ -1067,15 +1103,31 @@ mod imp {
         }
     }
 
-    /// A Find reply (NETWORK.md 4.7).
-    fn found_reply(req: u32, st: u8, entries: &[&[u8]]) -> Vec<u8> {
-        let mut m = status(0x86, req, st);
-        m.push(entries.len().min(255) as u8);
-        for e in entries.iter().take(255) {
-            m.extend_from_slice(&(e.len() as u16).to_le_bytes());
-            m.extend_from_slice(e);
+    /// A Find reply (NETWORK.md 4.7); `cursor`: `None` ends it at the last
+    /// entry (the answer to a find that ended at its query).
+    fn found_reply(req: u32, st: u8, entries: &[&[u8]], cursor: Option<&[u8]>) -> Vec<u8> {
+        terse_net::protocol::encode_find_reply(req, st, &entries[..entries.len().min(255)], cursor)
+    }
+
+    /// The node's cursor (LOCAL.md 4.2): the key of the search it keeps (8,
+    /// LE), then 8 bytes of the BLAKE3 hash of the scope and query, so a
+    /// cursor of another find is refused. The relays' cursors stay in the
+    /// node's search.
+    struct NodeCursor;
+
+    impl NodeCursor {
+        fn tag(scope: u8, query: &[u8]) -> [u8; 8] {
+            blob_id(&[&[scope][..], query].concat())[..8].try_into().unwrap()
         }
-        m
+
+        fn encode(key: u64, node: &Node) -> Vec<u8> {
+            let (scope, query) = node.search_query(key).expect("a search kept");
+            [&key.to_le_bytes()[..], &Self::tag(scope, query)].concat()
+        }
+
+        fn decode(c: &[u8], scope: u8, query: &[u8]) -> Option<u64> {
+            (c.len() == 16 && c[8..] == Self::tag(scope, query)).then(|| u64::from_le_bytes(c[..8].try_into().unwrap()))
+        }
     }
 
     #[cfg(test)]

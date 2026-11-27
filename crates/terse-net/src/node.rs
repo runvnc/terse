@@ -55,6 +55,7 @@ use crate::feeds::{FeedStore, Insert, Subscriptions};
 use crate::identity::{FeedKey, Identity};
 use crate::profile::{self, Document, Nicknames};
 use crate::protocol::{MAX_FIND_RESULTS, Refusal, SCOPE_ENTRIES, SCOPE_FEEDS, SCOPE_PROGRAMS};
+use crate::search::{Asked, MAX_SEARCHES, Next, Search};
 use crate::relay::{DEFAULT_TIMEOUT, RelayClient, RelayReply};
 use crate::store::{BlobStore, default_store_dir};
 use crate::timeline::{self, Arrivals};
@@ -82,6 +83,9 @@ const SUBSCRIPTIONS_CHECK: Duration = Duration::from_secs(1);
 
 const FIRST_RETRY: Duration = Duration::from_secs(1);
 const MAX_RETRY: Duration = Duration::from_secs(30);
+
+/// The keys of the searches [`Node::start_find`] makes for one page.
+const ONE_SHOT: u64 = 1 << 63;
 
 /// How an operation ended.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -224,8 +228,10 @@ enum Op {
     PublishBlob { token: Token, entry: Entry, in_flight: usize, published: bool, outcomes: Vec<(u64, Delivery)> },
     /// Done at the first relay that accepts, kept like `Put`.
     Entry { token: Token, signed: SignedEntry, in_flight: usize, refused: bool, reported: bool, outcomes: Vec<(u64, Delivery)> },
-    /// The verified results of each relay that answered, by link.
-    Find { token: Token, scope: u8, query: Vec<u8>, in_flight: usize, refused: bool, found: BTreeMap<u64, Vec<SignedEntry>> },
+    /// A page of the search kept under `key` ([`Node::start_search`]);
+    /// the relays' results go to it. `answered`: a relay answered;
+    /// `refused`: one refused.
+    Find { token: Token, key: u64, generation: u64, in_flight: usize, refused: bool, answered: bool },
     /// The highest `seq` of the valid answers so far.
     Lookup { token: Token, feed: FeedKey, name: Vec<u8>, in_flight: usize, refused: bool, not_found: bool, best: Option<SignedEntry> },
 }
@@ -290,6 +296,11 @@ pub struct Node {
     ops: HashMap<u64, Op>,
     next_op: u64,
     ready: Vec<(Token, Done)>,
+    /// Searches kept for more results (NETWORK 4.7), by the caller's key.
+    searches: HashMap<u64, Search>,
+    /// Counts searches made and pages asked, for [`Search::generation`]
+    /// and [`Search::used`].
+    search_clock: u64,
     feeds: FeedStore,
     subscriptions: Subscriptions,
     /// When the subscription file was last looked at for another
@@ -385,6 +396,8 @@ impl Node {
             next_link: 0,
             waiting: HashMap::new(),
             ops: HashMap::new(),
+            searches: HashMap::new(),
+            search_clock: 0,
             delivery: Vec::new(),
             blob_refusals: HashMap::new(),
             deliver_to_all: false,
@@ -982,32 +995,217 @@ impl Node {
     }
 
     /// Starts a search (NETWORK 4.7) on every connected relay: `scope` 1
-    /// (feeds) or 2 (entries). Fails if no relay could be asked.
+    /// (feeds), 2 (entries) or 3 (programs); one page, which finishes as
+    /// `Done::Found` (the merged, verified results), `Refused` if no relay
+    /// answered and one refused, else `Failed`. The finds end at the query
+    /// (as before paging): no more is asked.
     pub fn start_find(&mut self, token: Token, scope: u8, query: &[u8]) {
+        self.search_clock += 1;
+        let key = ONE_SHOT | self.search_clock;
+        self.begin_search(token, key, scope, query, true);
+    }
+
+    /// Starts a search kept under `key` (below 2^63, chosen by the caller;
+    /// it replaces a search kept under it): its first page finishes as
+    /// [`Self::start_find`] says, and [`Self::start_more`] shows the next
+    /// ones (NETWORK 4.7, "More results"). At most [`MAX_SEARCHES`] are
+    /// kept; the one used least recently is forgotten first.
+    pub fn start_search(&mut self, token: Token, key: u64, scope: u8, query: &[u8]) {
+        self.begin_search(token, key & !ONE_SHOT, scope, query, false);
+    }
+
+    fn begin_search(&mut self, token: Token, key: u64, scope: u8, query: &[u8], one_shot: bool) {
         if !(SCOPE_FEEDS..=SCOPE_PROGRAMS).contains(&scope) || !(1..=profile::MAX_NAME).contains(&query.len()) {
             return self.ready.push((token, Done::Failed));
         }
         self.maintain();
         let copy = query.to_vec();
-        if self.defer(move |n| n.start_find(token, scope, &copy)) {
+        if self.defer(move |n| n.begin_search(token, key, scope, &copy, one_shot)) {
             return;
         }
         let targets = self.connected_links();
         if targets.is_empty() {
             return self.ready.push((token, Done::Failed));
         }
-        let op = self.new_op(Op::Find {
-            token,
-            scope,
-            query: query.to_vec(),
-            in_flight: targets.len(),
-            refused: false,
-            found: BTreeMap::new(),
-        });
-        for lid in targets {
-            let req = self.links.get_mut(&lid).unwrap().client.find(scope, query);
-            self.waiting.insert((lid, req), Waiting::Op(op));
+        if !self.searches.contains_key(&key) && self.searches.len() >= MAX_SEARCHES {
+            let oldest = self.searches.iter().filter(|(k, s)| !s.busy && *k & ONE_SHOT == 0).min_by_key(|(_, s)| s.used).map(|(&k, _)| k);
+            if let Some(k) = oldest {
+                self.searches.remove(&k);
+            }
         }
+        self.search_clock += 1;
+        self.searches.insert(key, Search::new(scope, query, targets, one_shot, self.search_clock));
+        self.ask_pages(token, key);
+    }
+
+    /// The next page of the search kept under `key` (NETWORK 4.7): up to
+    /// 16 results not shown before, as `Done::Found`; `NotFound` if no
+    /// search is kept under it or it has no more ([`Self::search_more`]),
+    /// `Failed` while its page before is still being asked for.
+    pub fn start_more(&mut self, token: Token, key: u64) {
+        let key = key & !ONE_SHOT;
+        match self.searches.get(&key) {
+            Some(s) if s.busy => return self.ready.push((token, Done::Failed)),
+            Some(s) if s.more() => {}
+            _ => return self.ready.push((token, Done::NotFound)),
+        }
+        self.maintain();
+        self.ask_pages(token, key);
+    }
+
+    /// Whether the search kept under `key` has more results to show
+    /// (`None`: no search is kept under it).
+    pub fn search_more(&self, key: u64) -> Option<bool> {
+        self.searches.get(&(key & !ONE_SHOT)).map(Search::more)
+    }
+
+    /// The scope and query of the search kept under `key`.
+    pub fn search_query(&self, key: u64) -> Option<(u8, &[u8])> {
+        self.searches.get(&(key & !ONE_SHOT)).map(|s| (s.scope, &s.query[..]))
+    }
+
+    /// Forgets the search kept under `key`.
+    pub fn end_search(&mut self, key: u64) {
+        self.searches.remove(&(key & !ONE_SHOT));
+    }
+
+    /// Asks each relay of the search under `key` that should be asked for
+    /// its next page; the page is shown once they have answered (at once
+    /// if none is to be asked).
+    fn ask_pages(&mut self, token: Token, key: u64) {
+        self.search_clock += 1;
+        let clock = self.search_clock;
+        let Some(search) = self.searches.get_mut(&key) else { return self.ready.push((token, Done::Failed)) };
+        search.used = clock;
+        // A relay no longer in the list has nothing more to give.
+        search.relays.retain(|lid, _| self.links.contains_key(lid));
+        let wanted: Vec<u64> = search.wanted().into_iter().filter(|l| self.links[l].client.connected()).collect();
+        let generation = search.generation;
+        let op = self.new_op(Op::Find { token, key, generation, in_flight: 0, refused: false, answered: false });
+        for lid in wanted {
+            self.ask_page(op, key, lid);
+        }
+        self.finish_page(op);
+    }
+
+    /// Sends the find for the next page of relay `lid` in the search
+    /// under `key`, for op `op`.
+    fn ask_page(&mut self, op: u64, key: u64, lid: u64) {
+        let Some(search) = self.searches.get_mut(&key) else { return };
+        let Some(part) = search.relays.get_mut(&lid) else { return };
+        let Some(link) = self.links.get_mut(&lid) else { return };
+        let (asked, req) = match (&part.next, search.one_shot, part.asked) {
+            (Next::End, ..) => return,
+            (Next::First, true, _) | (Next::First, _, Some(Asked::First)) => (Asked::Legacy, link.client.find(search.scope, &search.query)),
+            (Next::First, ..) => (Asked::First, link.client.find_page(search.scope, &search.query, &[])),
+            (Next::Cursor(c), ..) => (Asked::Cursor, link.client.find_page(search.scope, &search.query, c)),
+        };
+        part.asked = Some(asked);
+        search.busy = true;
+        self.waiting.insert((lid, req), Waiting::Op(op));
+        if let Some(Op::Find { in_flight, .. }) = self.ops.get_mut(&op) {
+            *in_flight += 1;
+        }
+    }
+
+    /// Ends op `op` (a page of a search) once no relay is still to answer:
+    /// the page, or why there is none.
+    fn finish_page(&mut self, op_id: u64) {
+        if !matches!(self.ops.get(&op_id), Some(Op::Find { in_flight: 0, .. })) {
+            return;
+        }
+        let Some(Op::Find { token, key, generation, refused, answered, .. }) = self.ops.remove(&op_id) else { unreachable!() };
+        let done = match self.searches.get_mut(&key) {
+            Some(search) if search.generation == generation => {
+                search.busy = false;
+                let page = search.take_page();
+                let one_shot = search.one_shot;
+                if one_shot {
+                    self.searches.remove(&key);
+                }
+                // NETWORK 4.7: a search that no relay answered and at
+                // least one refused is refused.
+                if answered || !page.is_empty() {
+                    Done::Found(page)
+                } else if refused {
+                    Done::Refused
+                } else {
+                    Done::Failed
+                }
+            }
+            // Replaced by another search under the same key.
+            _ => Done::Failed,
+        };
+        self.ready.push((token, done));
+    }
+
+    /// A relay's answer to a page of a search (NETWORK 4.7).
+    fn page_reply(&mut self, lid: u64, op_id: u64, reply: RelayReply) {
+        let Some(Op::Find { key, generation, in_flight, refused, answered, .. }) = self.ops.get_mut(&op_id) else { return };
+        *in_flight -= 1;
+        let (key, generation) = (*key, *generation);
+        let Some(search) = self.searches.get_mut(&key).filter(|s| s.generation == generation) else {
+            return self.finish_page(op_id);
+        };
+        let asked = search.relays.get_mut(&lid).and_then(|p| p.asked.take());
+        let mut again = false;
+        match reply {
+            RelayReply::Found(entries, cursor) => {
+                *answered = true;
+                let kinds: &[u8] = match search.scope {
+                    SCOPE_FEEDS => &[KIND_PROFILE],
+                    SCOPE_ENTRIES => &[KIND_ARTICLE, KIND_DOCUMENT],
+                    _ => &[KIND_PROGRAM],
+                };
+                // NETWORK 4.7: every result is verified; forged ones and
+                // ones that do not answer the query are dropped.
+                let query = search.query.clone();
+                let results = entries
+                    .iter()
+                    .filter_map(|b| entry::decode(b).ok())
+                    .filter(|s| kinds.contains(&s.entry.kind) && profile::matches(s.entry.title.as_bytes(), &query))
+                    .collect();
+                search.add_page(lid, results, cursor);
+            }
+            RelayReply::Refused(_) => match asked {
+                // A cursor the relay cannot continue from: its first page
+                // again; the results shown are dropped from it.
+                Some(Asked::Cursor) => {
+                    search.restart(lid);
+                    again = true;
+                }
+                // A relay from before paging refuses a find with `c`: the
+                // first page once more, ending at the query.
+                Some(Asked::First) => {
+                    if let Some(p) = search.relays.get_mut(&lid) {
+                        p.asked = Some(Asked::First);
+                    }
+                    again = true;
+                }
+                _ => {
+                    *refused = true;
+                    if let Some(p) = search.relays.get_mut(&lid) {
+                        p.next = Next::End;
+                    }
+                }
+            },
+            // No answer: a relay asked for its first page gives no more; one
+            // asked after a cursor is asked again for the next page.
+            _ => {
+                if let Some(p) = search.relays.get_mut(&lid)
+                    && asked != Some(Asked::Cursor)
+                {
+                    p.next = Next::End;
+                }
+            }
+        }
+        if again && self.links.get(&lid).is_some_and(|l| l.client.connected()) {
+            self.ask_page(op_id, key, lid);
+        } else if again && let Some(p) = self.searches.get_mut(&key).and_then(|s| s.relays.get_mut(&lid)) {
+            p.next = Next::End;
+            p.asked = None;
+        }
+        self.finish_page(op_id);
     }
 
     /// Asks every connected relay for the current version of the program
@@ -1836,38 +2034,7 @@ impl Node {
                     self.ready.push((token, done));
                 }
             }
-            Op::Find { scope, query, in_flight, refused, found, .. } => {
-                *in_flight -= 1;
-                *refused |= matches!(reply, RelayReply::Refused(_));
-                if let RelayReply::Found(entries) = reply {
-                    let kinds: &[u8] = match *scope {
-                        SCOPE_FEEDS => &[KIND_PROFILE],
-                        SCOPE_ENTRIES => &[KIND_ARTICLE, KIND_DOCUMENT],
-                        _ => &[KIND_PROGRAM],
-                    };
-                    // NETWORK 4.7: every result is verified; forged ones and
-                    // ones that do not answer the query are dropped.
-                    found.entry(lid).or_default().extend(
-                        entries
-                            .iter()
-                            .filter_map(|b| entry::decode(b).ok())
-                            .filter(|s| kinds.contains(&s.entry.kind) && profile::matches(s.entry.title.as_bytes(), query)),
-                    );
-                }
-                if *in_flight == 0 {
-                    let Some(Op::Find { token, scope, query, refused, found, .. }) = self.ops.remove(&op_id) else {
-                        unreachable!()
-                    };
-                    let done = if !found.is_empty() {
-                        Done::Found(merge_found(scope, &query, found.into_values().collect()))
-                    } else if refused {
-                        Done::Refused
-                    } else {
-                        Done::Failed
-                    };
-                    self.ready.push((token, done));
-                }
-            }
+            Op::Find { .. } => self.page_reply(lid, op_id, reply),
         }
     }
 
@@ -2063,9 +2230,22 @@ impl Node {
         self.wait_for_all(0)
     }
 
-    /// Searches, blocking.
+    /// Searches, blocking: one page, no more ([`Self::start_find`]).
     pub fn find(&mut self, scope: u8, query: &[u8]) -> Done {
         self.start_find(0, scope, query);
+        self.wait_for(0)
+    }
+
+    /// Starts a search kept under `key`, blocking ([`Self::start_search`]).
+    pub fn search(&mut self, key: u64, scope: u8, query: &[u8]) -> Done {
+        self.start_search(0, key, scope, query);
+        self.wait_for(0)
+    }
+
+    /// The next page of the search under `key`, blocking
+    /// ([`Self::start_more`]).
+    pub fn more(&mut self, key: u64) -> Done {
+        self.start_more(0, key);
         self.wait_for(0)
     }
 
@@ -2227,6 +2407,14 @@ mod tests {
         find: Vec<Vec<u8>>,
         /// Refuse finds.
         find_refused: bool,
+        /// A relay from before paging: a find with `c` is malformed to it
+        /// (refused), and it never gives a cursor.
+        find_legacy: bool,
+        /// Refuse this many cursors (as if no longer usable).
+        refuse_cursors: usize,
+        /// The cursors of the finds received (`None`: a find that ended at
+        /// its query).
+        find_cursors: Vec<Option<Vec<u8>>>,
         gets: usize,
         /// The blobs asked for, in order.
         asked: Vec<BlobId>,
@@ -2275,10 +2463,32 @@ mod tests {
                 Request::Unsubscribe { req, .. } => {
                     protocol::encode_status_reply(protocol::UNSUBSCRIBE_REPLY, req, status::DONE)
                 }
-                Request::Find { req, .. } if s.find_refused => {
-                    protocol::encode_find_reply::<&[u8]>(req, status::REFUSED, &[])
+                Request::Find { req, cursor, .. } if s.find_refused || (s.find_legacy && cursor.is_some()) => {
+                    s.find_cursors.push(cursor.map(<[u8]>::to_vec));
+                    protocol::encode_find_reply::<&[u8]>(req, status::REFUSED, &[], None)
                 }
-                Request::Find { req, .. } => protocol::encode_find_reply(req, status::DONE, &s.find),
+                // Pages of 16; the cursor is the index of the next result.
+                Request::Find { req, cursor, .. } => {
+                    s.find_cursors.push(cursor.map(<[u8]>::to_vec));
+                    let from = match cursor {
+                        Some(c) if c.len() == 4 && s.refuse_cursors > 0 => {
+                            s.refuse_cursors -= 1;
+                            None
+                        }
+                        Some(c) if c.len() == 4 => Some(u32::from_le_bytes(c.try_into().unwrap()) as usize),
+                        Some([]) | None => Some(0),
+                        Some(_) => None,
+                    };
+                    match from {
+                        Some(from) => {
+                            let page: Vec<&Vec<u8>> = s.find.iter().skip(from).take(MAX_FIND_RESULTS).collect();
+                            let end = from + page.len();
+                            let next = if end < s.find.len() { (end as u32).to_le_bytes().to_vec() } else { Vec::new() };
+                            protocol::encode_find_reply(req, status::DONE, &page, cursor.map(|_| &next[..]))
+                        }
+                        None => protocol::encode_find_reply::<&[u8]>(req, status::REFUSED, &[], Some(&[])),
+                    }
+                }
                 Request::Peer => return Ok(()),
                 // The held program entry of that feed and name with the
                 // highest seq, or the forged reply if one is scripted.
@@ -2766,6 +2976,112 @@ mod tests {
         assert!(matches!(node.find(SCOPE_ENTRIES, b"news"), Done::Found(f) if f.len() == 3));
         sb.lock().unwrap().find_refused = true;
         assert_eq!(node.find(SCOPE_ENTRIES, b"news"), Done::Refused);
+        // A find for one page ends at its query (as before paging).
+        assert!(sa.lock().unwrap().find_cursors.iter().all(Option::is_none));
+    }
+
+    /// NETWORK 4.7, "More results": two relays, pages of up to 16 results
+    /// not shown before, by rank, until no relay has a cursor; each relay
+    /// is sent back its own cursor.
+    #[test]
+    fn search_pages_from_two_relays() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut node = Node::new(BlobStore::open(dir.path(), None).unwrap(), None);
+        let (a, sa) = fake_relay();
+        let (b, sb) = fake_relay();
+        node.add_relay("ws://a", a);
+        node.add_relay("ws://b", b);
+        let (ia, ib) = (Identity::from_seed([40; 32]), Identity::from_seed([41; 32]));
+        let art = |id: &Identity, seq: u32| Entry::article(id.feed_key(), seq, seq, b"x", None, &format!("news {seq}")).sign(id).unwrap().bytes;
+        // A: 40 results; B: 20, of which 5 are A's too.
+        sa.lock().unwrap().find = (1..=40).map(|i| art(&ia, i)).collect();
+        sb.lock().unwrap().find = (1..=15).map(|i| art(&ib, i)).chain((1..=5).map(|i| art(&ia, i))).collect();
+        let Done::Found(first) = node.search(7, SCOPE_ENTRIES, b"news") else { panic!() };
+        assert_eq!(first.len(), 16);
+        assert_eq!(first[0].entry.feed, ia.feed_key());
+        assert_eq!(first[1].entry.feed, ib.feed_key(), "by rank: the first of each relay, then the second");
+        assert_eq!(sa.lock().unwrap().find_cursors, [Some(Vec::new())], "the first page asked with c 0");
+        let mut all = first;
+        let mut pages = 1;
+        while node.search_more(7) == Some(true) {
+            let Done::Found(page) = node.more(7) else { panic!() };
+            assert!(page.len() <= 16);
+            all.extend(page);
+            pages += 1;
+            assert!(pages < 10);
+        }
+        let mut keys: Vec<(FeedKey, u32)> = all.iter().map(|s| (s.entry.feed, s.entry.seq)).collect();
+        assert_eq!(keys.len(), 55, "every result once: 40 of A, 15 of B");
+        keys.sort();
+        keys.dedup();
+        assert_eq!(keys.len(), 55);
+        assert_eq!(node.more(7), Done::NotFound, "nothing more");
+        let a_cursors = sa.lock().unwrap().find_cursors.clone();
+        assert_eq!(a_cursors, [Some(vec![]), Some(16u32.to_le_bytes().to_vec()), Some(32u32.to_le_bytes().to_vec())]);
+        let b_cursors = sb.lock().unwrap().find_cursors.clone();
+        assert_eq!(b_cursors, [Some(vec![]), Some(16u32.to_le_bytes().to_vec())]);
+        assert_eq!(node.more(8), Done::NotFound, "no search under that key");
+    }
+
+    /// A relay that refuses a cursor is asked again from its first page,
+    /// and what was shown is not shown again; a relay from before paging
+    /// is asked once more without `c`, and gives one page.
+    #[test]
+    fn search_refused_cursor_and_old_relay() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut node = Node::new(BlobStore::open(dir.path(), None).unwrap(), None);
+        let (a, sa) = fake_relay();
+        let (b, sb) = fake_relay();
+        node.add_relay("ws://a", a);
+        node.add_relay("ws://b", b);
+        let ia = Identity::from_seed([42; 32]);
+        let ib = Identity::from_seed([43; 32]);
+        let art = |id: &Identity, seq: u32| Entry::article(id.feed_key(), seq, seq, b"x", None, &format!("news {seq}")).sign(id).unwrap().bytes;
+        sa.lock().unwrap().find = (1..=30).map(|i| art(&ia, i)).collect();
+        sb.lock().unwrap().find = (1..=20).map(|i| art(&ib, i)).collect();
+        sb.lock().unwrap().find_legacy = true;
+        let Done::Found(first) = node.search(1, SCOPE_ENTRIES, b"news") else { panic!() };
+        assert_eq!(first.len(), 16);
+        assert_eq!(sb.lock().unwrap().find_cursors, [Some(vec![]), None], "refused with c, asked again without");
+        sa.lock().unwrap().refuse_cursors = 1;
+        let mut all = first;
+        while node.search_more(1) == Some(true) {
+            let Done::Found(page) = node.more(1) else { panic!() };
+            all.extend(page);
+        }
+        let mut keys: Vec<(FeedKey, u32)> = all.iter().map(|s| (s.entry.feed, s.entry.seq)).collect();
+        assert_eq!(keys.len(), 30 + 16, "A's 30, B's one page of 16");
+        keys.sort();
+        keys.dedup();
+        assert_eq!(keys.len(), 46, "none twice");
+        let a_cursors = sa.lock().unwrap().find_cursors.clone();
+        assert_eq!(a_cursors[..3], [Some(vec![]), Some(16u32.to_le_bytes().to_vec()), Some(vec![])], "refused, then the first page again");
+    }
+
+    /// Scope 1 across pages: one result per feed, in order, none twice.
+    #[test]
+    fn search_feeds_pages() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut node = Node::new(BlobStore::open(dir.path(), None).unwrap(), None);
+        let (a, sa) = fake_relay();
+        let (b, sb) = fake_relay();
+        node.add_relay("ws://a", a);
+        node.add_relay("ws://b", b);
+        let mut ids: Vec<Identity> = (0..40u8).map(|i| Identity::from_seed([100 + i; 32])).collect();
+        ids.sort_by_key(|i| i.feed_key());
+        let profile = |id: &Identity| Entry::profile(id.feed_key(), 1, 1, b"listed: yes\n", "Ana").sign(id).unwrap().bytes;
+        // Each relay holds 30 of the 40, in key order (as a relay sorts).
+        sa.lock().unwrap().find = ids[..30].iter().map(profile).collect();
+        sb.lock().unwrap().find = ids[10..].iter().map(profile).collect();
+        let Done::Found(mut all) = node.search(2, SCOPE_FEEDS, b"ana") else { panic!() };
+        while node.search_more(2) == Some(true) {
+            let Done::Found(page) = node.more(2) else { panic!() };
+            assert!(page.len() <= 16);
+            all.extend(page);
+        }
+        let keys: Vec<FeedKey> = all.iter().map(|s| s.entry.feed).collect();
+        let want: Vec<FeedKey> = ids.iter().map(Identity::feed_key).collect();
+        assert_eq!(keys, want, "every feed once, in key order");
     }
 
     fn signed(author: &Identity, seq: u32, data: &[u8], title: &str) -> Vec<u8> {

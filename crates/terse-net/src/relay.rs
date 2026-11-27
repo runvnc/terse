@@ -267,8 +267,9 @@ pub enum RelayReply {
     /// A subscribe succeeded; the relay holds entries up to `seq` `highest`
     /// (0: none).
     Subscribed { highest: u32 },
-    /// A find succeeded: the entries, not yet verified.
-    Found(Vec<Vec<u8>>),
+    /// A find succeeded: the entries, not yet verified, and the cursor of
+    /// the next page (empty: none, NETWORK 4.7).
+    Found(Vec<Vec<u8>>, Vec<u8>),
     /// A lookup found an entry, not yet verified.
     LookedUp(Vec<u8>),
     NotFound,
@@ -344,10 +345,21 @@ impl RelayClient {
         client
     }
 
-    /// Searches the relay's index (NETWORK 4.7).
+    /// Searches the relay's index (NETWORK 4.7): the first page, in the
+    /// find of before paging (it ends at the query, and is answered without
+    /// a cursor).
     pub fn find(&mut self, scope: u8, query: &[u8]) -> u32 {
         let req = self.next_req();
-        self.send(req, protocol::encode_find(req, scope, query));
+        self.send(req, protocol::encode_find(req, scope, query, None));
+        req
+    }
+
+    /// A page of a search (NETWORK 4.7): `cursor` empty for the first page
+    /// (sent as `c` 0, so the reply carries a cursor if there are more),
+    /// else the cursor the relay gave with the page before.
+    pub fn find_page(&mut self, scope: u8, query: &[u8], cursor: &[u8]) -> u32 {
+        let req = self.next_req();
+        self.send(req, protocol::encode_find(req, scope, query, Some(cursor)));
         req
     }
 
@@ -554,7 +566,7 @@ impl RelayClient {
                 Some(Reply::Put { req, status: status::DONE, id: Some(id) }) => (req, RelayReply::Put(id)),
                 Some(Reply::Status { req, status: status::DONE, .. }) => (req, RelayReply::Done),
                 Some(Reply::Subscribed { req, highest }) => (req, RelayReply::Subscribed { highest }),
-                Some(Reply::Found { req, status: status::DONE, entries }) => (req, RelayReply::Found(entries)),
+                Some(Reply::Found { req, status: status::DONE, entries, cursor }) => (req, RelayReply::Found(entries, cursor)),
                 Some(Reply::Found { req, status, .. }) => (req, RelayReply::Refused(Refusal::of_status(status))),
                 Some(Reply::LookedUp { req, entry: Some(entry), .. }) => (req, RelayReply::LookedUp(entry)),
                 Some(Reply::LookedUp { req, status: status::NOT_FOUND, .. }) => (req, RelayReply::NotFound),

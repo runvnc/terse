@@ -99,12 +99,20 @@ fn malformed_requests() {
     assert_eq!(ask(&mut ws, protocol::encode_get(7, &[0; 32])), [GET_REPLY, 7, 0, 0, 0, status::NOT_FOUND]);
     // Find: a bad scope, an empty or long query, a cut message: refused.
     let refused = |req: u8| vec![protocol::FIND_REPLY, req, 0, 0, 0, status::REFUSED, 0];
-    assert_eq!(ask(&mut ws, protocol::encode_find(1, 4, b"a")), refused(1));
-    assert_eq!(ask(&mut ws, protocol::encode_find(2, 1, b"")), refused(2));
-    assert_eq!(ask(&mut ws, protocol::encode_find(3, 2, &[b'a'; 49])), refused(3));
-    assert_eq!(ask(&mut ws, protocol::encode_find(4, 1, &[0xFF])), refused(4), "not UTF-8");
-    assert_eq!(ask(&mut ws, protocol::encode_find(5, 1, b"ab")[..7].to_vec()), refused(5));
+    assert_eq!(ask(&mut ws, protocol::encode_find(1, 4, b"a", None)), refused(1));
+    assert_eq!(ask(&mut ws, protocol::encode_find(2, 1, b"", None)), refused(2));
+    assert_eq!(ask(&mut ws, protocol::encode_find(3, 2, &[b'a'; 49], None)), refused(3));
+    assert_eq!(ask(&mut ws, protocol::encode_find(4, 1, &[0xFF], None)), refused(4), "not UTF-8");
+    assert_eq!(ask(&mut ws, protocol::encode_find(5, 1, b"ab", None)[..7].to_vec()), refused(5));
     // A find carried out is done (status 1) also when nothing matches,
     // with no results (NETWORK 4.7).
-    assert_eq!(ask(&mut ws, protocol::encode_find(6, 1, b"ab")), [protocol::FIND_REPLY, 6, 0, 0, 0, status::DONE, 0]);
+    assert_eq!(ask(&mut ws, protocol::encode_find(6, 1, b"ab", None)), [protocol::FIND_REPLY, 6, 0, 0, 0, status::DONE, 0]);
+    // Paging (NETWORK 4.7): a find with `c` 0 is answered with `c`; a
+    // cursor the relay did not make, or cut short, is refused with c 0.
+    assert_eq!(ask(&mut ws, protocol::encode_find(7, 1, b"ab", Some(&[]))), [protocol::FIND_REPLY, 7, 0, 0, 0, status::DONE, 0, 0]);
+    assert_eq!(
+        ask(&mut ws, protocol::encode_find(8, 1, b"ab", Some(b"cursor"))),
+        [protocol::FIND_REPLY, 8, 0, 0, 0, status::REFUSED, 0, 0]
+    );
+    assert_eq!(ask(&mut ws, protocol::encode_find(9, 1, b"ab", Some(b"cursor"))[..13].to_vec()), refused(9), "cut short");
 }

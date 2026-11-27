@@ -458,7 +458,7 @@ provides the machine's **reading profile**:
   subscriptions (`03h`), timeline (`04h`), names (`09h`), identity
   (`08h`, with the own address's hints), subscribe (`05h`, with the hints
   of a feed address) and unsubscribe (`06h`) (§content.feeds), and
-  may complete any other operation (put, publish, find, set profile,
+  may complete any other operation (put, publish, find, find more, set profile,
   set nickname, programs, and the named records of §content.records) with
   status `05h` (Refused), without asking and without carrying it out (the
   submit itself is as §content.submit says: an invalid request is still

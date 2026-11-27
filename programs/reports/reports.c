@@ -14,9 +14,12 @@
  * and otherwise ignored; a document of another format is ignored. F asks
  * the relays (find, op 0Ah, scope 2: article and document titles) for
  * "performance report", then for "performance report: <host name>" for
- * each of up to three host names already seen, one search every 75 frames
- * (relays limit how often a client searches; each answers at most 16
- * results); what they find is taken like the timeline's entries. A feed
+ * each of up to three host names already seen, one request every 75
+ * frames (relays limit how often a client searches). Each answers at most
+ * 16 results a page; while the host says it has more (content_find_has_more),
+ * the next page is asked for (find more, op 12h), at most FIND_PAGES pages
+ * (256 results) a search, so at most 64 pages a run. What they find is
+ * taken like the timeline's entries. A feed
  * is "followed" if the host is subscribed to it.
  *
  * Counting (RECORD.md 5.5). A report speaks about its host, each
@@ -66,6 +69,7 @@
 #define LABEL_MAX 72
 #define NAME_MAX 48
 #define FIND_GAP 75
+#define FIND_PAGES 16
 #define MIN_REPORTERS 5
 #define ONE_IN 3
 
@@ -160,6 +164,9 @@ static uint32_t tl_next, tl_pos, tl_len, tl_count, tl_total;
 static uint8_t find_buf[16384];
 static content_req find_req;
 static uint8_t find_h, find_on, find_n, find_have, find_queries;
+/* The pages of the current search asked for, whether it has more, and
+ * whether the request out is a find more. */
+static uint8_t find_page, find_more, find_paging;
 static uint32_t find_at, find_pos, find_len, find_count, find_results;
 static char find_q[4][49];
 static uint8_t find_qlen[4];
@@ -1443,6 +1450,16 @@ static void find_step(void)
         scan(find_buf, &find_pos, find_len, 0);
         return;
     }
+    if (find_more && find_page < FIND_PAGES) {
+        if (frame_n < find_at)
+            return;
+        find_h = content_find_more(&find_req, FIND_ENTRIES, find_buf, sizeof find_buf);
+        find_at = frame_n + FIND_GAP;
+        find_page++;
+        find_paging = 1;
+        say("Searching the relays: more\xE2\x80\xA6");
+        return;
+    }
     if (find_n == find_queries) {
         find_on = 0;
         say(find_results ? "Search done: the relays' results are counted under \"all found\"." : "Search done: the relays found no reports.");
@@ -1453,6 +1470,8 @@ static void find_step(void)
     find_h = content_find(&find_req, FIND_ENTRIES, find_q[find_n], find_qlen[find_n], find_buf, sizeof find_buf);
     find_at = frame_n + FIND_GAP;
     find_n++;
+    find_page = 1;
+    find_paging = 0;
     say("Searching the relays\xE2\x80\xA6");
 }
 
@@ -1460,9 +1479,14 @@ static void find_arrived(void)
 {
     find_pos = 0;
     find_len = 0;
+    find_more = 0;
     if (find_req.status == STATUS_DONE) {
         find_len = find_req.length;
         find_results += find_req.size;
+        find_more = content_find_has_more(&find_req);
+    } else if (find_paging) {
+        /* No more after all (the host forgot the search, or the relays
+         * refused a page): the next search. */
     } else if (find_req.status == STATUS_REFUSED) {
         find_on = 0;
         say("Search refused (busy relays, or not on this host).");
@@ -1505,6 +1529,7 @@ static void start_find(void)
     find_on = 1;
     find_at = frame_n;
     find_pos = find_len = 0;
+    find_more = find_paging = 0;
 }
 
 static void gets_step(void)

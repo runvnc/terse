@@ -1030,14 +1030,23 @@ fn profile_show(args: &[String]) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// `terse find [--entries|--programs] <text>`: asks every relay (NETWORK
-/// 4.7).
+/// `terse find [--entries|--programs] [--pages <n>|--all] <text>`: asks
+/// every relay (NETWORK 4.7), a page of up to 16 results at a time: the
+/// first page, or `n` pages, or every page (at most [`MAX_FIND_PAGES`]).
 pub fn find(args: &[String]) -> Result<ExitCode, String> {
-    let args = Args::parse(args, &["--entries", "--programs"])?;
-    known(&args, &["--entries", "--programs"])?;
-    if args.has("--entries") && args.has("--programs") {
+    let args = Args::parse(args, &["--entries", "--programs", "--all"])?;
+    known(&args, &["--entries", "--programs", "--all", "--pages"])?;
+    if args.has("--entries") && args.has("--programs") || args.has("--all") && args.has("--pages") {
         return Err(USAGE.into());
     }
+    let pages = match args.get("--pages") {
+        Some(n) => match n.parse::<usize>() {
+            Ok(n) if (1..=MAX_FIND_PAGES).contains(&n) => n,
+            _ => return Err(format!("--pages is 1 to {MAX_FIND_PAGES}")),
+        },
+        None if args.has("--all") => MAX_FIND_PAGES,
+        None => 1,
+    };
     let text = args.one_positional()?;
     if !(1..=profile::MAX_NAME).contains(&text.len()) {
         return Err("the text to find is 1 to 48 bytes".into());
@@ -1052,24 +1061,45 @@ pub fn find(args: &[String]) -> Result<ExitCode, String> {
         (_, true) => SCOPE_PROGRAMS,
         _ => SCOPE_FEEDS,
     };
-    let Done::Found(found) = node.find(scope, text.as_bytes()) else {
-        return Err("no relay answered".into());
-    };
-    for s in &found {
-        if scope == SCOPE_FEEDS {
-            let nick = node.nicknames().get(&s.entry.feed);
-            let nick = nick.map_or(String::new(), |n| format!("  (your nickname: {})", printable(n, false)));
-            println!("{}  {}{nick}", to_hex(&s.entry.feed), printable(&s.entry.title, false));
-        } else {
-            let name = name_of(&node, &s.entry.feed);
-            println!("{}", entry_line(&s.entry, node.held_article(&s.entry), name.as_deref()));
+    const KEY: u64 = 1;
+    let mut shown = 0;
+    for page in 0..pages {
+        let done = if page == 0 { node.search(KEY, scope, text.as_bytes()) } else { node.more(KEY) };
+        let found = match done {
+            Done::Found(found) => found,
+            _ if page == 0 => return Err("no relay answered".into()),
+            _ => {
+                eprintln!("terse: no relay answered for more");
+                break;
+            }
+        };
+        for s in &found {
+            if scope == SCOPE_FEEDS {
+                let nick = node.nicknames().get(&s.entry.feed);
+                let nick = nick.map_or(String::new(), |n| format!("  (your nickname: {})", printable(n, false)));
+                println!("{}  {}{nick}", to_hex(&s.entry.feed), printable(&s.entry.title, false));
+            } else {
+                let name = name_of(&node, &s.entry.feed);
+                println!("{}", entry_line(&s.entry, node.held_article(&s.entry), name.as_deref()));
+            }
+        }
+        shown += found.len();
+        if node.search_more(KEY) != Some(true) {
+            break;
+        }
+        if page + 1 == pages {
+            let hint = if pages < MAX_FIND_PAGES { format!("--pages {}", pages + 1) } else { "a longer text".into() };
+            eprintln!("terse: {shown} shown; there are more ({hint})");
         }
     }
-    if found.is_empty() {
+    if shown == 0 {
         eprintln!("terse: nothing found");
     }
     Ok(ExitCode::SUCCESS)
 }
+
+/// Most pages `terse find --all` asks for: 64 pages, 1,024 results.
+pub const MAX_FIND_PAGES: usize = 64;
 
 #[cfg(test)]
 mod tests {

@@ -1380,12 +1380,24 @@ impl Relay {
                 drop(state);
                 protocol::encode_status_reply(protocol::UNSUBSCRIBE_REPLY, req, status::DONE)
             }
-            Ok(Request::Find { req, scope, query }) => {
-                let found = if valid_find(scope, query) { self.allow_find(conn).map(|()| self.find(scope, query)) } else { Ok(None) };
+            // NETWORK 4.7: a find that ends at its query is the first page,
+            // answered as before paging (without a cursor, which its client
+            // could not read); every page counts as a find.
+            Ok(Request::Find { req, scope, query, cursor }) => {
+                let page = cursor.unwrap_or(&[]);
+                // A cursor this relay did not make for this find is refused
+                // like a malformed find, without counting it.
+                let made = page.is_empty() || FindCursor::decode(page, scope, find_tag(scope, query)).is_some();
+                let found = if valid_find(scope, query) && made {
+                    self.allow_find(conn).map(|()| self.find_page(scope, query, page))
+                } else {
+                    Ok(None)
+                };
+                let with = |next: &[u8]| cursor.map(|_| next.to_vec());
                 match found {
-                    Ok(Some(found)) => protocol::encode_find_reply(req, status::DONE, &found),
-                    Ok(None) => protocol::encode_find_reply::<&[u8]>(req, status::REFUSED, &[]),
-                    Err(s) => protocol::encode_find_reply::<&[u8]>(req, s, &[]),
+                    Ok(Some((found, next))) => protocol::encode_find_reply(req, status::DONE, &found, with(&next).as_deref()),
+                    Ok(None) => protocol::encode_find_reply::<&[u8]>(req, status::REFUSED, &[], with(&[]).as_deref()),
+                    Err(s) => protocol::encode_find_reply::<&[u8]>(req, s, &[], with(&[]).as_deref()),
                 }
             }
             // NETWORK 4.8: answered for any feed, listed or not; counted
@@ -1417,7 +1429,7 @@ impl Relay {
                 protocol::encode_lookup_reply(req, status::REFUSED, &[])
             }
             Err(Malformed::Refuse { reply: protocol::FIND_REPLY, req }) => {
-                protocol::encode_find_reply::<&[u8]>(req, status::REFUSED, &[])
+                protocol::encode_find_reply::<&[u8]>(req, status::REFUSED, &[], None)
             }
             Err(Malformed::Refuse { reply, req }) => protocol::encode_status_reply(reply, req, status::REFUSED),
             Err(Malformed::Close) => return Answer::Close,
@@ -1855,12 +1867,22 @@ impl Relay {
         Some(highest)
     }
 
-    /// Answers a find from this relay's own index (NETWORK 4.7); `None`
-    /// refuses it.
+    /// Answers a find from this relay's own index (NETWORK 4.7): its first
+    /// page; `None` refuses it.
     pub fn find(&self, scope: u8, query: &[u8]) -> Option<Vec<Vec<u8>>> {
+        self.find_page(scope, query, &[]).map(|(found, _)| found)
+    }
+
+    /// A page of a find (NETWORK 4.7): `cursor` empty for the first, else
+    /// the cursor of the page before. The results, and the cursor of the
+    /// next page (empty if these end the list); `None` refuses the find,
+    /// or a cursor it cannot continue from (see [`FindCursor`]).
+    pub fn find_page(&self, scope: u8, query: &[u8], cursor: &[u8]) -> Option<(Vec<Vec<u8>>, Vec<u8>)> {
         if !valid_find(scope, query) {
             return None;
         }
+        let tag = find_tag(scope, query);
+        let after = if cursor.is_empty() { None } else { Some(FindCursor::decode(cursor, scope, tag)?) };
         let mut profiles = self.profiles.lock().unwrap();
         // A profile whose document is not held (or does not parse) is
         // unlisted, until the document arrives.
@@ -1872,25 +1894,69 @@ impl Relay {
         }
         let listed = profiles.iter().filter(|(k, p)| p.listed == Some(true) && !self.denies_feed(k));
         if scope == SCOPE_FEEDS {
-            let mut hits: Vec<(bool, FeedKey, &Vec<u8>)> = listed
+            // By group (names that start with the query first), then key.
+            let mut hits: Vec<((bool, FeedKey), u32, Vec<u8>)> = listed
                 .filter(|(_, p)| profile::matches(p.name.as_bytes(), query))
-                .map(|(k, p)| (!profile::starts_with(p.name.as_bytes(), query), *k, &p.bytes))
+                .map(|(k, p)| ((!profile::starts_with(p.name.as_bytes(), query), *k), p.seq, p.bytes.clone()))
                 .collect();
-            hits.sort();
-            return Some(hits.into_iter().take(MAX_FIND_RESULTS).map(|h| h.2.clone()).collect());
+            drop(profiles);
+            let mark = match after {
+                // The pages after the first leave out the profiles stored
+                // since it: those after its mark in the arrival log.
+                Some(FindCursor::Feeds { after, mark }) => {
+                    hits.retain(|h| h.0 > after);
+                    if let Some(mark) = mark {
+                        let mut arrivals = self.arrivals.lock().unwrap();
+                        let order = arrivals.order().ok()?;
+                        let at = order.iter().rposition(|(f, s)| f[..MARK_KEY] == mark.0 && *s == mark.1)?;
+                        let since: HashSet<(FeedKey, u32)> = order[at + 1..].iter().copied().collect();
+                        hits.retain(|h| !since.contains(&(h.0.1, h.1)));
+                    }
+                    mark
+                }
+                _ => None,
+            };
+            hits.sort_by(|a, b| a.0.cmp(&b.0));
+            let next = match hits.get(MAX_FIND_RESULTS - 1) {
+                Some(last) if hits.len() > MAX_FIND_RESULTS => {
+                    // The first page's mark: the newest record of the log.
+                    let mark = if after.is_some() {
+                        mark
+                    } else {
+                        let mut arrivals = self.arrivals.lock().unwrap();
+                        arrivals.order().ok().and_then(|o| o.last().map(|(f, s)| (f[..MARK_KEY].try_into().unwrap(), *s)))
+                    };
+                    FindCursor::Feeds { after: last.0, mark }.encode(scope, tag)
+                }
+                _ => Vec::new(),
+            };
+            return Some((hits.into_iter().take(MAX_FIND_RESULTS).map(|h| h.2).collect(), next));
         }
         let listed: HashSet<FeedKey> = listed.map(|(k, _)| *k).collect();
         drop(profiles);
-        // Newest stored first (NETWORK 4.7); pruned entries are skipped.
-        let order: Vec<(FeedKey, u32)> = match self.arrivals.lock().unwrap().order() {
-            Ok(o) => o.iter().rev().filter(|(f, _)| listed.contains(f)).copied().collect(),
-            Err(_) => Vec::new(),
+        // Newest stored first (NETWORK 4.7), from the record before the
+        // last result of the page before; pruned entries are skipped. An
+        // entry stored since the first page is newer than that record.
+        let order: Vec<(FeedKey, u32)> = {
+            let mut arrivals = self.arrivals.lock().unwrap();
+            match arrivals.order() {
+                Ok(o) => {
+                    let end = match after {
+                        Some(FindCursor::Entries { feed, seq }) => o.iter().rposition(|r| *r == (feed, seq))?,
+                        _ => o.len(),
+                    };
+                    o[..end].iter().rev().filter(|(f, _)| listed.contains(f)).copied().collect()
+                }
+                Err(_) if after.is_some() => return None,
+                Err(_) => Vec::new(),
+            }
         };
         // Scope 2: articles and documents.
         let want: &[u8] = if scope == SCOPE_ENTRIES { &[KIND_ARTICLE, KIND_DOCUMENT] } else { &[KIND_PROGRAM] };
         let mut hits = Vec::new();
         for (feed, seq) in order {
-            if hits.len() == MAX_FIND_RESULTS {
+            // One more than a page tells whether the list goes on.
+            if hits.len() > MAX_FIND_RESULTS {
                 break;
             }
             // Stored entries were verified when they arrived.
@@ -1910,10 +1976,90 @@ impl Relay {
                     continue;
                 }
             }
-            hits.push(bytes.clone());
+            hits.push(((feed, seq), bytes.clone()));
         }
-        Some(hits)
+        let next = match hits.get(MAX_FIND_RESULTS - 1) {
+            Some(&((feed, seq), _)) if hits.len() > MAX_FIND_RESULTS => FindCursor::Entries { feed, seq }.encode(scope, tag),
+            _ => Vec::new(),
+        };
+        hits.truncate(MAX_FIND_RESULTS);
+        Some((hits.into_iter().map(|h| h.1).collect(), next))
     }
+}
+
+/// Bytes of a feed key in the mark of a feeds cursor ([`FindCursor`]).
+const MARK_KEY: usize = 16;
+
+/// What a find's cursor holds (NETWORK 4.7: the relay's own; this relay
+/// keeps no state for it). Every cursor starts with the scope and 8 bytes
+/// of the BLAKE3 hash of the scope and query ([`find_tag`]), so a cursor
+/// of another find is refused; then:
+///
+/// - scopes 2 and 3 (45 bytes): the feed key and `seq` (4, LE) of the
+///   page's last result. The next page continues from that entry's record
+///   in the arrival log, which a compaction keeps (in order) while the
+///   entry is kept; once it is not, the cursor is refused.
+/// - scope 1 (62 bytes): the page's last result as its group (1: the name
+///   does not start with the query) and feed key, then the mark: the
+///   first 16 bytes of the feed key and the `seq` of the newest record of
+///   the arrival log when the first page was made (all zero: the log was
+///   empty or unreadable). Profiles recorded after the mark are left out
+///   of the later pages; a mark no longer in the log refuses the cursor.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FindCursor {
+    Feeds { after: (bool, FeedKey), mark: Option<([u8; MARK_KEY], u32)> },
+    Entries { feed: FeedKey, seq: u32 },
+}
+
+impl FindCursor {
+    fn encode(&self, scope: u8, tag: [u8; 8]) -> Vec<u8> {
+        let mut c = vec![scope];
+        c.extend_from_slice(&tag);
+        match *self {
+            FindCursor::Feeds { after: (group, feed), mark } => {
+                c.push(group as u8);
+                c.extend_from_slice(&feed);
+                let (key, seq) = mark.unwrap_or(([0; MARK_KEY], 0));
+                c.extend_from_slice(&key);
+                c.extend_from_slice(&seq.to_le_bytes());
+            }
+            FindCursor::Entries { feed, seq } => {
+                c.extend_from_slice(&feed);
+                c.extend_from_slice(&seq.to_le_bytes());
+            }
+        }
+        debug_assert!(c.len() <= protocol::MAX_FIND_CURSOR);
+        c
+    }
+
+    /// `None` for a cursor this relay did not make for this find.
+    fn decode(c: &[u8], scope: u8, tag: [u8; 8]) -> Option<FindCursor> {
+        let (&s, rest) = c.split_first()?;
+        let (t, rest) = rest.split_at_checked(8)?;
+        if s != scope || t != tag {
+            return None;
+        }
+        let u32_at = |b: &[u8]| u32::from_le_bytes(b.try_into().unwrap());
+        match (scope, rest.len()) {
+            (SCOPE_FEEDS, 53) if rest[0] <= 1 => {
+                let feed: FeedKey = rest[1..33].try_into().unwrap();
+                let key: [u8; MARK_KEY] = rest[33..49].try_into().unwrap();
+                let seq = u32_at(&rest[49..]);
+                let mark = (key != [0; MARK_KEY] || seq != 0).then_some((key, seq));
+                Some(FindCursor::Feeds { after: (rest[0] == 1, feed), mark })
+            }
+            (SCOPE_ENTRIES | SCOPE_PROGRAMS, 36) => {
+                Some(FindCursor::Entries { feed: rest[..32].try_into().unwrap(), seq: u32_at(&rest[32..]) })
+            }
+            _ => None,
+        }
+    }
+}
+
+/// The tag of a find in its cursors: the first 8 bytes of the BLAKE3 hash
+/// of the scope and the query.
+fn find_tag(scope: u8, query: &[u8]) -> [u8; 8] {
+    blob_id(&[&[scope][..], query].concat())[..8].try_into().unwrap()
 }
 
 impl Relay {

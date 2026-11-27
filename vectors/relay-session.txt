@@ -65,7 +65,7 @@ r> 810900000002
 # Find, req 10: scope 1 (feeds by name), "ali"
 c> 060a0000000103616c69
 
-# Find reply, req 10: done, 1 result: the profile in force
+# Find reply, req 10: done, 1 result: the profile in force (no cursor: the find ended at its query)
 r> 860a0000000101b20003a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8020000003cf15365020c0000c87e03f4b03f250e11c1b24a410d44e17d5de105bab331c50483f8ce0369e33e000000000000000000000000000000000000000000000000000000000000000005416c69636506d9d2995b8817278f72f8bad23e05a7f4c9e2a2718ef0864d86c1f23834168dc8dfcb7251b0b9ebf869d42e285777ab09aa124b544e5676456cfe36cbe58f0e
 
 # Find, req 11: scope 2 (titles), "HELLO" (ASCII letters match either case)
@@ -103,6 +103,18 @@ c> 031000000003a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8010
 
 # Publish reply, req 16: refused (kind 255 is reserved: the entry is invalid)
 r> 831000000003
+
+# Find, req 17: scope 2, "hello", c 0: the first page
+c> 0611000000020568656c6c6f00
+
+# Find reply, req 17: done, 1 result, c 0 (the list ends)
+r> 86110000000101b20003a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b80100000000f15365010d0000f47ef1568e6932e823c48e1f5700153ea5c3b96a0cd5b346f60e1a70b3588fe800000000000000000000000000000000000000000000000000000000000000000548656c6c6ffad3de68a1e3ee879d622f7efefc267d0e1778db22ae4fef89f2070b50c892723189587ecfa3cc3dba997633b35eb5793a310578e40d1a4500cceea6ad9f860c00
+
+# Find, req 18: scope 2, "hello", a cursor of 3 bytes the relay did not make
+c> 0612000000020568656c6c6f03616263
+
+# Find reply, req 18: refused, count 0, c 0 (the client starts again from the first page)
+r> 8612000000030000
 
 # Peer (on a connection from another relay; no reply)
 p> 07

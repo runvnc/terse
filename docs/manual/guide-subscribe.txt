@@ -44,7 +44,7 @@ Ana
 73670a…a9ee5f
 ```
 
-Enter on the feed shows its page; S subscribes. In a terminal, `terse find Ana` lists the feeds of that name with their keys. Names are not unique, so check the key with the person.
+Enter on the feed shows its page; S subscribes. In a terminal, `terse find Ana` lists the feeds of that name with their keys, 16 at a time (`--all` lists every page). Names are not unique, so check the key with the person.
 
 ## Nicknames, unsubscribing, syncing
 

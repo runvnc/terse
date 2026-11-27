@@ -16,7 +16,7 @@ use terse_core::{Event, FrameInput, FrameResult, Image, Machine, PageInput, RAM_
 use terse_net::{BlobStore, Consent, ContentService, Draft, FeedKey, Identity, Node, Subscriptions, blob_id, to_hex};
 
 const IMAGE: &[u8] = include_bytes!("../../../programs/reader/reader.terse");
-const RAM_PAGES: u8 = 42;
+const RAM_PAGES: u8 = 45;
 /// 2026-11-17 18:00 UTC: entry times count up from here.
 const T0: u32 = 1_794_938_400;
 /// The article's (and help's) rectangle (reader.c RECT_*).

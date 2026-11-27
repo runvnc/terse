@@ -18,6 +18,7 @@ use terse_core::{
 
 use crate::identity::{FeedKey, valid_feed_key};
 use crate::node::{Done, Draft, FeedEvent, Node, Token};
+use crate::protocol::{SCOPE_ENTRIES, SCOPE_FEEDS, SCOPE_PROGRAMS};
 use crate::records::{Owner, Saved};
 
 /// How long the worker sleeps between reconnection checks while following
@@ -56,6 +57,15 @@ enum Work {
     /// Read a slot's snapshot and get its image, for machine `tag`.
     Restore(u32, Owner, u8),
     DeleteSnapshot(Owner, u8),
+    /// Forget the searches of machine `tag` (it ceased to exist).
+    EndSearches(u32),
+}
+
+/// The key of a machine's search of a scope in the node: a find replaces
+/// the machine's last find of its scope, and a find more continues it
+/// (SPEC §content.feeds).
+fn search_key(tag: u32, scope: u8) -> u64 {
+    u64::from(tag) << 8 | u64::from(scope)
 }
 
 /// How the host answers the requests that need the user's consent
@@ -165,8 +175,9 @@ enum Job {
     Put { handle: u8 },
     /// A program's publish or set profile (SPEC §content.feeds).
     Publish { handle: u8 },
-    /// A program's find, with its buffer size.
-    Find { handle: u8, length: u16 },
+    /// A program's find or find more, with its buffer size and the key of
+    /// its search.
+    Find { handle: u8, length: u16, key: u64 },
     /// `FeedCommand::Publish`, reported as a feed event.
     FeedPublish,
     /// A whole blob for `fetch`.
@@ -253,6 +264,7 @@ impl ContentService {
     pub fn cancel(&mut self, tag: u32) {
         self.prompts.retain(|(p, _)| p.tag != tag);
         self.refused.retain(|(t, _)| *t != tag);
+        let _ = self.jobs.send(Work::EndSearches(tag));
     }
 
     fn receive(&mut self, f: Finished, done: &mut Vec<(u32, Completion)>) {
@@ -785,7 +797,8 @@ fn completion(job: Job, done: Done) -> Completion {
         (Job::Find { handle, .. }, Done::Found(_)) => (handle, Outcome::Failed),
         // NETWORK 4.7: no relay answered and one refused (SPEC §content.feeds).
         (Job::Find { handle, .. }, Done::Refused) => (handle, Outcome::Refused),
-        (Job::Get { handle, .. } | Job::Put { handle } | Job::Publish { handle }, Done::NotFound) => {
+        // A find more with nothing to continue (SPEC §content.feeds).
+        (Job::Get { handle, .. } | Job::Put { handle } | Job::Publish { handle } | Job::Find { handle, .. }, Done::NotFound) => {
             (handle, Outcome::NotFound)
         }
         (Job::Get { handle, .. } | Job::Put { handle } | Job::Publish { handle } | Job::Find { handle, .. }, _) => {
@@ -1104,8 +1117,21 @@ fn worker(mut node: Node, consent: Consent, jobs: Receiver<Work>, finished: Send
                 }
             }
             Some(Work::Content(tag, Request { handle, kind: RequestKind::Find { scope, query, length } }, _)) => {
-                pending.insert(next, (tag, Job::Find { handle, length }));
-                node.start_find(next, scope, &query);
+                let key = search_key(tag, scope);
+                pending.insert(next, (tag, Job::Find { handle, length, key }));
+                node.start_search(next, key, scope, &query);
+            }
+            // SPEC §content.feeds: not found if the machine has no find of
+            // that scope with more results.
+            Some(Work::Content(tag, Request { handle, kind: RequestKind::FindMore { scope, length } }, _)) => {
+                let key = search_key(tag, scope);
+                pending.insert(next, (tag, Job::Find { handle, length, key }));
+                node.start_more(next, key);
+            }
+            Some(Work::EndSearches(tag)) => {
+                for scope in [SCOPE_FEEDS, SCOPE_ENTRIES, SCOPE_PROGRAMS] {
+                    node.end_search(search_key(tag, scope));
+                }
             }
             Some(Work::Feed(FeedCommand::Publish(draft))) => {
                 pending.insert(next, (0, Job::FeedPublish));
@@ -1166,10 +1192,11 @@ fn worker(mut node: Node, consent: Consent, jobs: Receiver<Work>, finished: Send
                         done => FeedEvent::PublishFailed(done),
                     })
                     .is_ok(),
-                Some((tag, Job::Find { handle, length })) if matches!(done, Done::Found(_)) => {
+                Some((tag, Job::Find { handle, length, key })) if matches!(done, Done::Found(_)) => {
                     let Done::Found(found) = done else { unreachable!() };
                     let (total, data) = node.find_records(&found, length);
-                    let outcome = Outcome::Records { total, data };
+                    let more = if node.search_more(key) == Some(true) { terse_core::content::FIND_MORE } else { 0 };
+                    let outcome = Outcome::Records { total: total | more, data };
                     finished.send(Finished::Done(tag, Completion { handle, outcome })).is_ok()
                 }
                 Some((tag, Job::Lookup(program))) => match done {
@@ -1386,7 +1413,8 @@ mod tests {
         }
     }
 
-    /// SPEC §content.feeds ops 09h–0Ch: names records; a find with no relay fails;
+    /// SPEC §content.feeds ops 09h–0Ch and 12h: names records; a find with no relay fails, a
+    /// find more with no find is not found;
     /// set profile and set nickname with consent denied, allowed and asked.
     #[test]
     fn names_find_profile_and_nickname_requests() {
@@ -1407,6 +1435,8 @@ mod tests {
                 RequestKind::SetNickname { feed: [0; 32], name: b"Zero".to_vec() },
                 RequestKind::SetNickname { feed: b, name: Vec::new() },
                 RequestKind::Find { scope: 1, query: b"ana".to_vec(), length: 100 },
+                // No find of that scope to continue: not found.
+                RequestKind::FindMore { scope: 1, length: 100 },
             ]
         };
         let submit = |service: &mut ContentService, kinds: Vec<RequestKind>| {
@@ -1420,7 +1450,7 @@ mod tests {
         let mut service = make(Consent::Deny);
         assert_eq!(
             submit(&mut service, kinds()),
-            [Outcome::Refused, Outcome::Refused, Outcome::Refused, Outcome::Done, Outcome::Failed]
+            [Outcome::Refused, Outcome::Refused, Outcome::Refused, Outcome::Done, Outcome::Failed, Outcome::NotFound]
         );
         assert!(!config.path().join("identity.key").exists());
         drop(service);

@@ -633,6 +633,15 @@ uint32_t content_names(content_req *r, uint32_t first, uint32_t length, void *bu
  * records, replace the query: r->length is the bytes delivered, r->size
  * the number of results (at most 16). */
 uint32_t content_find(content_req *r, uint8_t scope, const void *query, uint32_t qlen, void *buf, uint32_t buflen);
+/* The next results of this machine's last find of `scope` (op 12h,
+ * SPEC §content.feeds): up to 16 results that the find and the find mores
+ * after it did not deliver, as content_find delivers them, in the `buflen`
+ * bytes (1 to 16,384) at `buf` (RAM). After a find or a find more is done,
+ * content_find_has_more(r) is 1 if a find more of that scope has results
+ * (else 0). STATUS_NOT_FOUND: no find of that scope with more results. */
+#define CONTENT_FIND_MORE 0x12
+uint32_t content_find_more(content_req *r, uint8_t scope, void *buf, uint32_t buflen);
+#define content_find_has_more(r) ((r)->id[0])
 /* Publishes a profile for the host's feed with display name `name` (`len`
  * bytes, 1 to 48, no control characters, no leading or trailing space);
  * `listed` lets search find it. The host asks the user; on completion

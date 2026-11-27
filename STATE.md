@@ -158,12 +158,12 @@ Each request record is 53 bytes:
 
 | Offset | Size | Field |
 |---|---|---|
-| 0 | 1 | `op` of the pending request (`01h`–`11h`), or `00h` if the handle is free (then every other field is zero) |
+| 0 | 1 | `op` of the pending request (`01h`–`12h`), or `00h` if the handle is free (then every other field is zero) |
 | 1 | 4 | Address of its request block (u32) |
 | 5 | 32 | Get, subscribe, unsubscribe, publish, set nickname: the `id` read at submit; save, load, delete: the record's name as read at submit (`id`, zero padded). Put: the BLAKE3-256 ID of the bytes copied at submit. Otherwise zero. |
-| 37 | 4 | `offset` read at submit (get, load, subscriptions, timeline, names, programs, records, find; publish: the kind, 0, 1 or 4); set profile: the listed bit, 0 or 1; else zero |
-| 41 | 4 | `length` read at submit (get, load, subscriptions, timeline, names, programs, records, find, publish, set profile, set nickname, subscribe: the hints' length, identity: the hint buffer's, 0 for none), else zero |
-| 45 | 4 | `addr` read at submit (get, load, subscriptions, timeline, names, programs, records, find; identity: the hint buffer's, zero if `length` is 0), else zero |
+| 37 | 4 | `offset` read at submit (get, load, subscriptions, timeline, names, programs, records, find, find more; publish: the kind, 0, 1 or 4); set profile: the listed bit, 0 or 1; else zero |
+| 41 | 4 | `length` read at submit (get, load, subscriptions, timeline, names, programs, records, find, find more, publish, set profile, set nickname, subscribe: the hints' length, identity: the hint buffer's, 0 for none), else zero |
+| 45 | 4 | `addr` read at submit (get, load, subscriptions, timeline, names, programs, records, find, find more; identity: the hint buffer's, zero if `length` is 0), else zero |
 | 49 | 4 | `size` read at submit (put, save; find: the query's length), else zero |
 
 Let `P` be the offset after this section.
@@ -546,7 +546,7 @@ fields:
 |---|---|---|
 | `01h` | Get or load succeeded | size (u32), n (u32), the n bytes delivered |
 | `02h` | Put succeeded | the blob ID (32) |
-| `03h` | Records (subscriptions, timeline, names, programs, records) or find succeeded | the number of records that exist (u32), n (u32), the n bytes delivered |
+| `03h` | Records (subscriptions, timeline, names, programs, records), find or find more succeeded | the number of records that exist (u32; for a find or find more, the number of results, with bit 31 set if the host has more, SPEC §content.feeds), n (u32), the n bytes delivered |
 | `04h` | Done (subscribe, unsubscribe, set nickname, save, delete) | — |
 | `05h` | Publish or set profile succeeded | seq (u32) |
 | `06h` | Identity succeeded | the feed key (32) |
