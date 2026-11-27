@@ -287,8 +287,8 @@ fn transcripts_play_as_written() {
         assert_eq!(g.spilled, 0, "{name}: a frame's work ran into the next");
         // Every frame well inside the budget, start-up, restarts, restores
         // and endings included (their text is spread over two frames).
-        let worst = *g.used.iter().max().unwrap();
-        assert!(common::pct(worst) < 46.0, "{name}: a frame used {worst} units ({:.1}%)", common::pct(worst));
+        let (at, worst) = g.used.iter().copied().enumerate().max_by_key(|&(_, u)| u).unwrap();
+        assert!(common::pct(worst) < 46.0, "{name}: frame {at} used {worst} units ({:.1}%)", common::pct(worst));
         fails.extend(f);
     }
     assert!(fails.is_empty(), "{} failed:\n{}", fails.len(), fails.join("\n"));

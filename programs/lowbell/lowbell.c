@@ -2278,7 +2278,7 @@ static int action_default_run(void)
             dirty_scene = 1;
             say1(M_SWITCHED_ON, o);
             if (!was_lit && lit())
-                look();
+                pending_look = 1; /* described in the next frame */
         }
         return 1;
     case A_TURN_OFF:

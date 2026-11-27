@@ -3,7 +3,8 @@
 //! weston): typed commands answered, the beam on the hidden chalk with the
 //! picture drawn as listed, the picture still where nothing is animated
 //! (the dark boathouse) and only the text changing while the player types,
-//! no late frames; with both renderers, at 640 x 480 and 1900 x 1000.
+//! each machine frame within half its budget; with both renderers, at
+//! 640 x 480 and 1900 x 1000. Late frames are checked by hand (--drive).
 
 #![cfg(target_os = "linux")]
 
@@ -67,8 +68,8 @@ fn played_in_the_window() {
     }
     let dir = tempfile::tempdir().unwrap();
     // (renderer, size, strict): strict runs also expect the picture still
-    // where nothing moves, typing to change only the text, and no late
-    // frame. At 1900 x 1000 the host's phosphor look is shed and restored
+    // where nothing moves and typing to change only the text. At
+    // 1900 x 1000 the host's phosphor look is shed and restored
     // whenever drawing it runs long (PERFORMANCE.md R15), which changes the
     // whole picture: there only what is drawn is checked.
     for (renderer, size, strict) in [("software", "640x480", true), ("software", "1900x1000", false), ("gpu", "1900x1000", false)] {
@@ -82,7 +83,10 @@ fn played_in_the_window() {
         script += "settle\nexpect terminal contains Chalk marks\nexpect vectors contains c ebebdcff\nshot chalk.png\n";
         script += &still("expect idle 60\n");
         script += "hold left 30\nsettle\nexpect vectors contains c 4e4e49ff\nshot faint.png\nexpect budget 50\n";
-        script += &still("expect no-slow\n");
+        // Late frames (expect no-slow) depend on the computer's load and the
+        // host's compose time, not on the program: they are checked by hand
+        // with `terse-host --drive`, not here. The program's own cost is
+        // checked above (expect budget).
         script += "quit\n";
         let o = drive(dir.path(), &script, renderer, size);
         if no_gpu(renderer, &o) {

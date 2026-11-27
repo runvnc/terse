@@ -305,9 +305,10 @@ for an ending) is a list of layers, drawn in order:
 - `faint` draws it at a third of its colour.
 
 **Hidden lines.** A `hidden` layer is drawn only where the lantern's beam
-falls, wider and brighter than the rest of the picture. Every line of it
-the beam has touched is remembered (in the game's state: saved, undone,
-restored with it) and drawn faint from then on. `reveal FLAG "text"`
+falls, dashed (5 units on, 3 off) and wider and brighter than the rest of
+the picture. Every line of it the beam has touched is remembered (in the
+game's state: saved, undone, restored with it) and drawn faint and dashed
+from then on. `reveal FLAG "text"`
 makes the layer hidden and also sets the flag, and says the text, when the
 beam covers its point (`at X Y`, else its middle): rules and `when`
 events then follow from the discovery. In a `dark` place lit only by the
