@@ -32,6 +32,18 @@ fn bad_options_are_refused() {
     assert!(String::from_utf8_lossy(&help.stdout).contains("--public"));
 }
 
+/// `--version` prints the name, the version and the build identifier of
+/// the program's file (PERFORMANCE.md R13), as `terse` and `terse-host`
+/// do, and nothing else, without needing a store.
+#[test]
+fn version() {
+    let out = relay().arg("--version").output().unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let build = terse_perflog::identity::build_of(&std::fs::read(env!("CARGO_BIN_EXE_terse-relay")).unwrap());
+    assert_eq!(String::from_utf8_lossy(&out.stdout), format!("terse-relay {} {build}\n", env!("CARGO_PKG_VERSION")));
+    assert!(out.stderr.is_empty(), "{out:?}");
+}
+
 #[cfg(unix)]
 #[test]
 fn public_relay_and_graceful_stop() {

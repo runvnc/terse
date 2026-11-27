@@ -14,6 +14,7 @@ const USAGE: &str = "usage: terse-relay [--listen <addr:port>] --store <dir> [op
        terse-relay allow <file> feed <key> | blob <id> | address <addr[/bits]>
        terse-relay feeds <store dir> [--by size|arrival] [--limit <n>]
        terse-relay feed <store dir> <key>
+       terse-relay --version
   (deny: adds a line to the deny list, or lists it; allow: removes the item's lines. A
   running relay reads the file again within 2 s. feeds, feed: what the store holds, read
   from its files: no network, safe beside a running relay. README \"Running a public relay\")
@@ -328,6 +329,12 @@ fn run(args: Vec<String>) -> Result<(), String> {
             "--status-file" => policy.status_file = Some(value()?.into()),
             "--help" | "-h" => {
                 println!("{USAGE}");
+                return Ok(());
+            }
+            // The name, the version and the build identifier, as `terse`
+            // and `terse-host` print them (PERFORMANCE.md R13).
+            "--version" => {
+                println!("{}", terse_perflog::Identity::this("terse-relay").line());
                 return Ok(());
             }
             _ => return Err(USAGE.into()),

@@ -573,7 +573,7 @@ driver can say anything). Drivers give it in the HELLO reply (`DEVICES.md`
 1.1, a trailing optional section: an older driver's reply simply ends
 before it, and older cores read past it); a host with built-in devices
 reports its own identity for each; `terse-host`, `terse-bus`, every
-driver, `tcore`, `tersereader` and `terse` print it with `--version`. No
+driver, `tcore`, `tersereader`, `terse-relay` and `terse` print it with `--version`. No
 call of any device returns it: it is the host's, not machine state, and
 a program cannot fingerprint the host by it. Measured: hashing takes
 about 1 ms per MB of program (4 ms for the terminal driver, 12 ms for

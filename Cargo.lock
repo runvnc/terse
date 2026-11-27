@@ -3046,6 +3046,7 @@ dependencies = [
  "tempfile",
  "terse-core",
  "terse-net",
+ "terse-perflog",
  "tungstenite",
 ]
 
