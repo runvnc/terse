@@ -71,6 +71,9 @@ pub fn fault_number(f: &Fault) -> u8 {
     }
 }
 
+/// The most text one `copy` offers the clipboard (SPEC §system).
+pub const MAX_COPY: u32 = 65_536;
+
 /// Call numbers: `a7 = (device slot << 8) | function` (SPEC §calls.table).
 pub mod call {
     pub const WAIT_FRAME: u32 = 0x100;
@@ -83,6 +86,7 @@ pub mod call {
     pub const OPEN: u32 = 0x107;
     pub const ARGUMENT: u32 = 0x108;
     pub const DEVICE: u32 = 0x109;
+    pub const COPY: u32 = 0x10A;
 
     pub const TERM_WRITE: u32 = 0x200;
     pub const TERM_COMMAND: u32 = 0x201;
@@ -239,6 +243,20 @@ pub struct Machine<D: Devices = InProcess> {
     /// The blob ID the shell gave the machine before its first frame
     /// (STATE.md 1.14).
     argument: Option<[u8; 32]>,
+    /// The program read the key-down of a copy key this frame, so `copy`
+    /// may reach the clipboard (SPEC §system). Not machine state: it is
+    /// cleared at the start of every frame and the machine cannot see it.
+    copy_key: bool,
+    /// The text the last accepted `copy` offered the clipboard, for the
+    /// host to take after the frame. Not machine state.
+    copied: Option<Vec<u8>>,
+}
+
+/// The copy keys (SPEC §system `copy`): C, X or Insert with Control held
+/// and neither Alt nor Meta.
+pub fn is_copy_key(e: &Event) -> bool {
+    use crate::modifiers::{ALT, CONTROL, META};
+    e.kind == Event::KEY_DOWN && matches!(e.a, 0x06 | 0x1B | 0x49) && e.b & CONTROL != 0 && e.b & (ALT | META) == 0
 }
 
 impl Machine {
@@ -383,6 +401,8 @@ impl<D: Devices> Machine<D> {
             identity: None,
             in_system: false,
             open_request: None,
+            copy_key: false,
+            copied: None,
             argument: None,
         }
     }
@@ -458,6 +478,12 @@ impl<D: Devices> Machine<D> {
         self.open_request.as_ref()
     }
 
+    /// The text the program offered the user's clipboard in answer to a
+    /// copy key (SPEC §system `copy`), for the host to put there; taken.
+    pub fn take_copied(&mut self) -> Option<Vec<u8>> {
+        self.copied.take()
+    }
+
     /// The shell has been told of the waiting request (SPEC §machines.frames).
     pub fn announce_open_request(&mut self) -> Option<[u8; crate::machines::REQUEST_BYTES]> {
         let (bytes, told) = self.open_request.as_mut()?;
@@ -494,6 +520,7 @@ impl<D: Devices> Machine<D> {
             self.devices.idle_frame();
             return Ok(result);
         }
+        self.copy_key = false;
 
         // Step 1: inputs. The devices' events go among the host's as their
         // positions say (DEVICES.md 1.4).
@@ -627,6 +654,7 @@ impl<D: Devices> Machine<D> {
                     Some(at) => match self.system.pop_event() {
                         None => 0,
                         Some(e) => {
+                            self.copy_key |= is_copy_key(&e);
                             ram[at..at + 4].copy_from_slice(&[e.kind, e.a, e.b, e.c]);
                             units += copy_charge(4);
                             1
@@ -683,6 +711,18 @@ impl<D: Devices> Machine<D> {
                         None => 0,
                     }
                 }
+                // SPEC §system: text for the clipboard, taken only in answer
+                // to the user's copy key; 0 whatever becomes of it.
+                call::COPY => match crate::content::readable(rom, ram, a0, a1 as usize).filter(|_| a1 <= MAX_COPY) {
+                    None => ERR_BUFFER,
+                    Some(text) => {
+                        units += copy_charge(a1 as usize);
+                        if self.copy_key {
+                            self.copied = Some(text.to_vec());
+                        }
+                        0
+                    }
+                },
                 call::ARGUMENT => match ram_range(ram.len(), a0, 32) {
                     None => ERR_BUFFER,
                     Some(at) => match &self.argument {

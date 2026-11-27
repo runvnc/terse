@@ -638,6 +638,15 @@ fn more_functions() {
 #[test]
 fn pasting_cells_and_text() {
     let base = Keys::new().new_sheet().enter("5").enter("=A1*2").goto("A1").press("down shift").press("c ctrl");
+    // Ctrl+C also offers the clipboard the cells as text (SPEC §system
+    // `copy`): values as shown, tabs between cells, a line per row.
+    let mut run = Run::new(&base);
+    run.finish(&base);
+    assert_eq!(run.m.take_copied().as_deref(), Some(&b"5\n10\n"[..]));
+    let k = Keys::new().new_sheet().enter("x").enter("1.5").goto("A1").press("down shift").press("right shift").press("1 ctrl shift").wait(3).press("c ctrl");
+    let mut run = Run::new(&k);
+    run.finish(&k);
+    assert_eq!(run.m.take_copied().as_deref(), Some(&b"x\t\n1.50\t\n"[..]));
     // The sheet's own cells: references adjusted; the clipboard's text ignored.
     let k = Keys { lines: base.lines.clone(), f: base.f }.goto("C3").at("down v ctrl").text("stale\ttext").at("up v ctrl").wait(4).goto("C4");
     let mut run = Run::new(&k);

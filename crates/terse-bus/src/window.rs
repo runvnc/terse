@@ -164,6 +164,10 @@ impl App {
         let start = Instant::now();
         self.bs.system.set_eye(self.eye);
         let done = self.bs.frame(&events, controllers)?;
+        // SPEC §system `copy`: the text for the clipboard, if the user copied.
+        if let Some(text) = self.bs.take_copied() {
+            self.copy_to_clipboard(&text);
+        }
         let emulate = start.elapsed().as_secs_f64() * 1000.0;
         self.comp.ran(&done, &self.bs.system);
         let bus = self.bus_ms() - bus_before;
@@ -382,6 +386,20 @@ impl App {
         }
         if pressed {
             self.pending.extend(terse_host::keymap::typed_text(event.text.as_deref(), self.modifiers).into_iter().map(Event::text));
+        }
+    }
+
+    /// Puts text a machine copied in answer to the user's copy key on the
+    /// clipboard (SPEC §system `copy`); without a clipboard it is dropped.
+    fn copy_to_clipboard(&mut self, text: &[u8]) {
+        if self.clipboard.is_none() {
+            match arboard::Clipboard::new() {
+                Ok(c) => self.clipboard = Some(c),
+                Err(e) => return eprintln!("terse-bus: clipboard: {e}"),
+            }
+        }
+        if let Err(e) = self.clipboard.as_mut().unwrap().set_text(String::from_utf8_lossy(text).into_owned()) {
+            eprintln!("terse-bus: clipboard: {e}");
         }
     }
 

@@ -175,6 +175,7 @@ pub fn run(
         title,
         shell_title: program.image.title_lossy(),
         paste: VecDeque::new(),
+        copied: None,
         paste_key: None,
         swallowed: Vec::new(),
         clipboard: None,
@@ -608,6 +609,8 @@ struct FrameDriver<'a> {
     slow: Option<Slow>,
     /// Each machine's budget use this frame (serial, units).
     used: Vec<(u32, u64)>,
+    /// Text a machine offered the clipboard this frame (SPEC §system `copy`).
+    copied: &'a mut Option<Vec<u8>>,
 }
 
 impl Driver for FrameDriver<'_> {
@@ -663,6 +666,10 @@ impl Driver for FrameDriver<'_> {
             FrameInput { events: &input, unix_time: self.unix_time, random: &io.random, completions: &completions, controllers };
         let result = machine.run_frame(&frame);
         self.used.push((who.serial, result.used));
+        // SPEC §system `copy`: text for the clipboard, if the user copied.
+        if let Some(t) = machine.take_copied() {
+            *self.copied = Some(t);
+        }
         // The test hook (TERSE_HOST_SLOW): this machine's frames take longer.
         if let Some(s @ Slow { what: SlowPart::Machine(h), from, .. }) = self.slow
             && h == who.handle
@@ -752,6 +759,9 @@ struct App {
     shell_title: String,
     /// Pasted text not yet delivered, fed in as the event queue has room.
     paste: VecDeque<char>,
+    /// Text a machine offered the clipboard in answer to the user's copy
+    /// key (SPEC §system `copy`), put there after the frame.
+    copied: Option<Vec<u8>>,
     /// The paste key (HID usage) while its press has reached the program:
     /// its release, which brackets the paste (SPEC §events), waits until
     /// the pasted text has gone; `true` once the user has let go.
@@ -938,12 +948,16 @@ impl App {
             watch: &mut self.watch,
             slow: self.slow,
             used: Vec::new(),
+            copied: &mut self.copied,
         };
         // Panels are hit as the eye now sees them (SPEC §machines.input).
         self.system.set_eye(self.eye);
         self.system.frame(&self.pending, controllers, &mut driver);
         let ran = driver.ran;
         self.used = driver.used;
+        if let Some(text) = self.copied.take() {
+            self.copy_to_clipboard(&text);
+        }
         if let Some(mut d) = self.drive.take() {
             d.after_frame(&*self, &self.used);
             self.drive = Some(d);
@@ -1280,6 +1294,20 @@ impl App {
 
     /// Queues the clipboard's text for delivery as text events (SPEC §events):
     /// tabs and newlines kept, other control characters dropped.
+    /// Puts text a machine copied in answer to the user's copy key on the
+    /// clipboard (SPEC §system `copy`); without a clipboard it is dropped.
+    fn copy_to_clipboard(&mut self, text: &[u8]) {
+        if self.clipboard.is_none() {
+            match arboard::Clipboard::new() {
+                Ok(c) => self.clipboard = Some(c),
+                Err(e) => return eprintln!("terse-host: clipboard: {e}"),
+            }
+        }
+        if let Err(e) = self.clipboard.as_mut().unwrap().set_text(String::from_utf8_lossy(text).into_owned()) {
+            eprintln!("terse-host: clipboard: {e}");
+        }
+    }
+
     fn paste_clipboard(&mut self) {
         if self.clipboard.is_none() {
             match arboard::Clipboard::new() {

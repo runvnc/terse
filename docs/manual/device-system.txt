@@ -4,7 +4,8 @@ The system device is the machine's link to time and input: it ends
 frames, hands out events, reads the clock, random bytes and game
 controllers, stops the machine, lets a machine that a shell started
 ask the shell to open something and read the argument the shell gave it,
-and tells a program which devices it has.
+tells a program which devices it has, and puts text on the user's
+clipboard when the user copies.
 It is slot 1, version 0. Every machine has it: an image need not list it
 (listing (1, 0) is allowed too), and it cannot be absent. The exact rules are in SPEC.md, the core machine (§system, §events, §controllers).
 
@@ -33,6 +34,7 @@ It is slot 1, version 0. Every machine has it: an image need not list it
 | `107h` | `open` | `a0` = address of an open request (read) | 1 passed to the shell, 0 not | 4, plus 1 per 4 bytes read |
 | `108h` | `argument` | `a0` = buffer (32 bytes, written) | 1, or 0 if the machine has none | 4, plus 8 when written |
 | `109h` | `device` | `a0` = device slot | the device's version, or `FFFF_FFFFh` if the machine does not have it | 4 |
+| `10Ah` | `copy` | `a0` = text (read), `a1` = length, at most 65,536 | 0 | 4, plus 1 per 4 bytes |
 
 The charge is in budget units on top of the `ecall` instruction itself (1
 from ROM, 4 from RAM). A call that fails is charged 4 and copies nothing.
@@ -256,3 +258,16 @@ int main(void)
 
 The charges of all devices are listed together in
 [charges](terse:{charges}).
+
+## copy: the user's copy key
+
+`copy` offers the user's system clipboard the text at `a0`, `a1` bytes of
+UTF-8 (at most 65,536, wholly in ROM or wholly in RAM, else `FFFF_FFFEh`).
+The host takes it only for the user's own copy: only if, in the frame of
+the call, the program has read the key-down of a copy key with
+`next_event` (C, X or Insert with Control, without Alt or Meta). At any
+other time, and on a host without a clipboard, the text is dropped, so a
+program cannot fill the clipboard on its own. The call returns 0 either
+way, and the machine never reads the clipboard: what the user pastes
+comes as text events between the paste key's down and up. A spreadsheet
+copies its cells as tab-separated lines; in C, `terse_copy(text, n)`.

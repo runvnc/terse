@@ -95,8 +95,10 @@
  * text, its up (SPEC §events): with cells copied, the text is ignored;
  * else it goes into cells from the selection's top left, a tab to the
  * next cell and a line break to the next row (at most 16 KiB); while an
- * entry is typed it joins the entry. The sheet cannot put its copied
- * cells on the system clipboard (no call does that). Text that arrives
+ * entry is typed it joins the entry. Ctrl+C and Ctrl+X also offer the
+ * system clipboard the copied cells as text (SPEC §system `copy`: a line
+ * per row, cells as shown, separated by tabs), which the host takes in
+ * answer to the user's copy key. Text that arrives
  * while Control (without Alt) or Alt (without Control) is held is not
  * typing.
  *
@@ -109,7 +111,8 @@
  * chart's range follows. What an insertion would push off the sheet must
  * be empty. A job: JOB_PUTS cells a frame.
  *
- * Sorting. Ctrl+Shift+A (A to Z) and Ctrl+Shift+D (Z to A) sort the
+ * Sorting. The Data menu's Sort A to Z and Sort Z to A (with Ctrl+Shift+A
+ * and Ctrl+Shift+D, shown there, as shortcuts) sort the
  * selection, or the block of filled cells around the active cell, by the
  * active cell's column: numbers (and TRUE, FALSE) by value, then text
  * without regard to case, then errors; empty cells last either way; equal
@@ -2299,7 +2302,7 @@ static void build_doc(void)
             "F2 or double-click: edit \xC2\xB7 Enter, Tab: keep \xC2\xB7 Esc: cancel, or forget a copy \xC2\xB7 F4: $A$1",
             "Ctrl+C, X, V: copy, cut, paste \xC2\xB7 Ctrl+Z, Y: undo, redo \xC2\xB7 Delete: clear \xC2\xB7 Ctrl+D, R: fill",
             "Ctrl+Plus, Minus: insert, delete the selected rows (columns: select them by their letters)",
-            "Ctrl+Shift+A, D: sort A to Z, Z to A by the active cell's column \xC2\xB7 Ctrl+A: all",
+            "Data menu (F10, then Right): sort the selection by the active cell's column \xC2\xB7 Ctrl+A: all",
             "Ctrl+Shift+1, 5, ~: number, percent, general \xC2\xB7 Ctrl+period, comma: more, fewer decimals",
             "Ctrl+G, L: bar, line chart \xC2\xB7 Ctrl+S: save \xC2\xB7 Ctrl+P: publish \xC2\xB7 Ctrl+N twice: new \xC2\xB7 F1: close",
         };
@@ -2343,8 +2346,8 @@ static void build_doc(void)
             doc_colour(130, 130, 130);
         }
         if (rmin() != rmax() || cmin() != cmax())
-            text(whole_rows() || whole_cols() ? "Ctrl+Plus inserts, Ctrl+Minus deletes them \xC2\xB7 Ctrl+Shift+A/D sort \xC2\xB7 F1 all keys"
-                                              : "Ctrl+Shift+A/D sort \xC2\xB7 Ctrl+Shift+1/5 number/percent, Ctrl+period/comma decimals \xC2\xB7 "
+            text(whole_rows() || whole_cols() ? "Ctrl+Plus inserts, Ctrl+Minus deletes them \xC2\xB7 the Data menu sorts \xC2\xB7 F1 all keys"
+                                              : "the Data menu sorts it \xC2\xB7 Ctrl+Shift+1/5 number/percent, Ctrl+period/comma decimals \xC2\xB7 "
                                                 "Ctrl+G/L chart \xC2\xB7 F1 all keys");
         else
             text("Type to fill a cell, = to start a formula \xC2\xB7 F2 or double-click edits \xC2\xB7 F1 all keys \xC2\xB7 Ctrl+Z undo \xC2\xB7 "
@@ -2601,6 +2604,7 @@ static void jump(int dr, int dc, int extend)
  * log is walked both ways; when it is full the oldest groups go. A single
  * change too large for it cannot be undone (and the log is emptied). */
 #define ULOG 32768
+#define MARK 20 /* a group's mark, in bytes */
 static uint8_t ulog[ULOG] __attribute__((aligned(4)));
 static uint32_t u_cur, u_end, u_group;
 static uint8_t u_off;
@@ -2611,7 +2615,7 @@ static uint32_t rec_size(uint32_t at)
 {
     uint32_t ol, nl;
     if (is_mark(at))
-        return 8;
+        return MARK;
     ol = ulog[at + 4];
     nl = ulog[at + 5 + ol];
     return (4 + 1 + ol + 1 + nl + 2 + 3) & ~3u;
@@ -2646,13 +2650,18 @@ static int make_room(uint32_t size)
     return 1;
 }
 
-/* A new group: the mark, with the selection to show when it is undone. */
+/* The chart before a change (kind and range), when the change moves it
+ * (an insertion or deletion); the mark keeps it and the chart after. */
+static uint8_t chart_before[5], chart_set;
+
+/* A new group: the mark (FFFFh, the selection to show when it is undone,
+ * the chart before and after the change, the size). */
 static void ubegin(void)
 {
     u_end = u_cur;
     u_off = 0;
     u_group = u_end;
-    if (!make_room(8))
+    if (!make_room(MARK))
         return;
     uint8_t *w = ulog + u_end;
     w[0] = w[1] = 0xFF;
@@ -2660,9 +2669,20 @@ static void ubegin(void)
     w[3] = (uint8_t)sc;
     w[4] = (uint8_t)ar;
     w[5] = (uint8_t)ac;
-    w[6] = 8;
-    w[7] = 0;
-    u_end += 8;
+    w[11] = chart_kind;
+    w[12] = ch_r0;
+    w[13] = ch_c0;
+    w[14] = ch_r1;
+    w[15] = ch_c1;
+    if (chart_set)
+        memcpy(w + 6, chart_before, 5);
+    else
+        memcpy(w + 6, w + 11, 5);
+    chart_set = 0;
+    w[16] = w[17] = 0;
+    w[MARK - 2] = MARK;
+    w[MARK - 1] = 0;
+    u_end += MARK;
     u_cur = u_end;
 }
 
@@ -3242,7 +3262,7 @@ static void undo(int redo)
             mark -= (uint32_t)(ulog[mark - 2] | ulog[mark - 1] << 8);
         while (mark && !is_mark(mark));
         j_pos = u_cur;
-        j_stop = mark + 8;
+        j_stop = mark + MARK;
         u_cur = mark;
     } else {
         if (u_cur >= u_end) {
@@ -3250,12 +3270,24 @@ static void undo(int redo)
             return;
         }
         mark = u_cur;
-        j_pos = j_stop = mark + 8;
+        j_pos = j_stop = mark + MARK;
         while (j_stop < u_end && !is_mark(j_stop))
             j_stop += rec_size(j_stop);
         u_cur = j_stop;
     }
     job = redo ? JOB_REDO : JOB_UNDO;
+    {
+        /* The chart as it was before (undo) or after (redo) the change. */
+        const uint8_t *ch = ulog + mark + (redo ? 11 : 6);
+        if (ch[0] != chart_kind || ch[1] != ch_r0 || ch[2] != ch_c0 || ch[3] != ch_r1 || ch[4] != ch_c1) {
+            chart_kind = ch[0];
+            ch_r0 = ch[1];
+            ch_c0 = ch[2];
+            ch_r1 = ch[3];
+            ch_c1 = ch[4];
+            doc_dirty = 1;
+        }
+    }
     sr = ulog[mark + 2];
     sc = ulog[mark + 3];
     ar = ulog[mark + 4];
@@ -3290,6 +3322,8 @@ static void clear_range(void)
     start_job(JOB_CLEAR, 0, 0, 1, 1, rmin(), cmin(), rmax() - rmin() + 1, cmax() - cmin() + 1, "");
 }
 
+static void clipboard_text(void);
+
 static void copy(int cut)
 {
     clip_on = 1;
@@ -3298,6 +3332,7 @@ static void copy(int cut)
     cl_c0 = (uint8_t)cmin();
     cl_r1 = (uint8_t)rmax();
     cl_c1 = (uint8_t)cmax();
+    clipboard_text();
     say(cut ? "Cut: Ctrl+V moves it to the selected cell (Esc forgets it)"
             : "Copied: Ctrl+V pastes it at the selected cell (Esc forgets it; then Ctrl+V pastes text from other programs)");
 }
@@ -4009,7 +4044,14 @@ static void insert_delete(int del)
                 return;
             }
         }
-    /* The chart's range follows; a chart whose range is deleted goes. */
+    /* The chart's range follows; a chart whose range is deleted goes (undo
+     * brings it back). */
+    chart_before[0] = chart_kind;
+    chart_before[1] = ch_r0;
+    chart_before[2] = ch_c0;
+    chart_before[3] = ch_r1;
+    chart_before[4] = ch_c1;
+    chart_set = 1;
     if (chart_kind) {
         int32_t a = moved(j_axis ? ch_c0 : ch_r0, del), b = moved(j_axis ? ch_c1 : ch_r1, del);
         if (del) {
@@ -4204,6 +4246,46 @@ static void paste_text_start(void)
     j_msg2 = pbuf_cut ? "Pasted (cut at 16 KiB, Z or row 99)" : "Pasted";
     ubegin();
     job = JOB_TEXT;
+}
+
+/* --- The clipboard --- */
+
+/* The copied cells as other programs take them (SPEC §system `copy`): a
+ * line per row, the cells' values as shown (in their formats, at full
+ * width) separated by tabs. The host keeps it only when the copy came
+ * from the user's copy key in this frame. */
+static void clipboard_text(void)
+{
+    uint32_t n = 0, r, c;
+    for (r = cl_r0; r <= cl_r1; r++) {
+        for (c = cl_c0; c <= cl_c1; c++) {
+            uint16_t i = idx(r, c);
+            uint8_t b[48];
+            const uint8_t *p = b;
+            uint32_t len = 0;
+            value v = cell_value(i);
+            if (c > cl_c0)
+                pbuf[n++] = '\t';
+            if (v.k == K_NUM)
+                len = format_num(v.v, c_fmt[i], c_flag[i] & F_PCT, 0, b);
+            else if (v.k == K_STR) {
+                p = str_p(v.v);
+                len = STR_LEN(v.v);
+            } else if (v.k == K_BOOL || v.k == K_ERR) {
+                const char *w = v.k == K_BOOL ? (v.v ? "TRUE" : "FALSE") : err_text[v.v];
+                while (w[len])
+                    len++;
+                p = (const uint8_t *)w;
+            }
+            if (n + len + 2 > PBUF_MAX)
+                goto done;
+            memcpy(pbuf + n, p, len);
+            n += len;
+        }
+        pbuf[n++] = '\n';
+    }
+done:
+    terse_copy(pbuf, n);
 }
 
 /* --- The jobs --- */

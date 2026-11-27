@@ -575,7 +575,8 @@ fn rows_and_columns() {
     );
 }
 
-/// Ctrl+Shift+A sorts the items by amount with the header kept;
+/// The Data menu (a click on its title, Enter on Sort A to Z) sorts the
+/// items by amount with the header kept;
 /// Ctrl+Shift+5 shows a percentage; each undone with Ctrl+Z. (Apart from
 /// the rows and columns so that each script ends before a slow-frame
 /// notice of a loaded machine, shown from its start, times out.)
@@ -587,7 +588,10 @@ fn sorting_and_formats() {
             "settle max 300",
             "drag 360 96 120 206",
             "wait 5",
-            "press a ctrl shift",
+            "click 130 8",
+            "wait 3",
+            "expect terminal contains Sort A to Z",
+            "press enter",
             "wait 40",
             "expect page contains kept as the header",
             "click 120 118",

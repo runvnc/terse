@@ -47,9 +47,9 @@ document. A **program-profile host** (§profiles) implements:
 
 - **The machine** (§profile): RV32IMC in user mode, ROM and RAM, the frame
   loop and its budget, stopping and faults; the image format (§image).
-- **25 calls** (§calls.table): 10 of System (`wait_frame`,
+- **26 calls** (§calls.table): 11 of System (`wait_frame`,
   `next_event`, `frame_count`, `unix_time`, `random`, `controller`,
-  `exit`, `open`, `argument`, `device`), 10 of the Terminal (`write`,
+  `exit`, `open`, `argument`, `device`, `copy`), 10 of the Terminal (`write`,
   `command`, `set_cursor`, `get_cursor`, `set_colours`, `get_colours`,
   `cells_read`, `cells_write`, `palette_set`, `size`) and 5 of the 2D
   vector display (`submit`, `clear`, `style`, `persistence`, `fill`).
@@ -60,7 +60,8 @@ document. A **program-profile host** (§profiles) implements:
   them all as not connected.
 - `open` and `argument` are trivial on a host without a shell: `open`
   checks its request and returns 0 (or `FFFF_FFFEh` for a bad one), and
-  `argument` checks its buffer and returns 0.
+  `argument` checks its buffer and returns 0. `copy` is trivial on a host
+  without a clipboard: it checks its buffer, charges for it and returns 0.
 - The data tables the machine's state depends on: UTF-8 decoding and the
   East Asian Width property for the terminal's wide characters
   (§terminal.cells), the xterm palette (§terminal.reset), and the
@@ -539,6 +540,7 @@ buffers it is said to write. `pc` continues after the `ecall`.
 | `107h` | `open` | `a0` = address of an open request (read) | 1 passed to the shell, 0 not | core |
 | `108h` | `argument` | `a0` = buffer (32 bytes, written) | 1, or 0 if the machine has none | core |
 | `109h` | `device` | `a0` = device slot | the device's version, or `FFFF_FFFFh` if the machine does not have it | core |
+| `10Ah` | `copy` | `a0` = text (read), `a1` = length, at most 65,536 | 0 | core |
 | `200h` | `write` | `a0` = buffer (read), `a1` = length, at most 4,096 | the length | deferred |
 | `201h` | `command` | `a0` = command | 0 | deferred |
 | `202h` | `set_cursor` | `a0` = column, `a1` = row | 0 | deferred |
@@ -629,6 +631,19 @@ machine's own and cost 4.
   on its command line), which a shell opens as it would a machine's
   request to open that blob. The argument never changes and is part of the
   machine's state (`STATE.md` 1.14).
+- **`copy`** offers the user's system clipboard `a1` bytes of UTF-8
+  text at `a0` (at most 65,536, wholly in ROM or wholly in RAM, else
+  `FFFF_FFFEh`), for the user's copy key: the host puts the text on the
+  clipboard only if, in the frame of the call, the program has read with
+  `next_event` the key-down of a copy key (key C, X or Insert with
+  Control held and neither Alt nor Meta; §events). Otherwise, and on a
+  host that has no clipboard for it, the text is dropped. So a program
+  cannot fill the clipboard on its own, only answer the user's copy. Of
+  several accepted calls in a frame the last counts. A host that finds
+  the text is not valid UTF-8 may replace what is not, or drop it. The
+  call returns 0 whatever the host does with the text: what reaches the
+  clipboard is not machine state, and the machine cannot read the
+  clipboard (pasted text comes only as §events says).
 - **`device`** returns the version of device `a0` if the machine has it:
   device 1, every device its image requires, and every optional device
   it was granted (§image); 8 only for a shell (§machines.shell). The
@@ -1211,7 +1226,7 @@ the call runs and may take it below zero (§frames).
 | An unknown call, a call to a device the machine does not have, and a call whose `a7` is above `FFFFh` (§calls.convention) | 4 |
 | `write`: each byte of the buffer | 2 |
 | A clear, scroll up or scroll down done by `command` (`01h`–`03h`) | 150 |
-| Bytes copied between memory and a device: `next_event` (4 when an event is written), `random`, `controller` (8), `cells_read`, `cells_write`, `palette_set` and an accepted vector `submit`, each when it is carried out; `open` (33, or 34 + n, when the request is read: whenever it is valid, also when the call returns 0) and the system's `argument` (32, when written) | 1 per 4 bytes, rounded up, per call |
+| Bytes copied between memory and a device: `next_event` (4 when an event is written), `random`, `controller` (8), `cells_read`, `cells_write`, `palette_set` and an accepted vector `submit`, each when it is carried out; `open` (33, or 34 + n, when the request is read: whenever it is valid, also when the call returns 0), the system's `argument` (32, when written) and `copy` (its length, whenever the buffer is valid) | 1 per 4 bytes, rounded up, per call |
 
 The other devices are charged in the same terms; each device's document
 lists its charges (§content.charges, §sound.charges, §page.charges,
@@ -1430,6 +1445,7 @@ the same.
 | `107h` | `open` | `a0` = address of an open request (read) | 1 passed to the shell, 0 not | core |
 | `108h` | `argument` | `a0` = buffer (32 bytes, written) | 1, or 0 if the machine has none | core |
 | `109h` | `device` | `a0` = device slot | the device's version, or `FFFF_FFFFh` if the machine does not have it | core |
+| `10Ah` | `copy` | `a0` = text (read), `a1` = length, at most 65,536 | 0 | core |
 | `200h` | `write` | `a0` = buffer (read), `a1` = length, at most 4,096 | the length | deferred |
 | `201h` | `command` | `a0` = command | 0 | deferred |
 | `202h` | `set_cursor` | `a0` = column, `a1` = row | 0 | deferred |
