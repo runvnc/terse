@@ -30,7 +30,7 @@ shown hall_gate_shut
 < split along one seam
 > mend bellows with ribbon
 < surveyor's hitch
-> untie ribbon
+> untie bellows
 < honest work
 > pump bellows
 < FWOOF. A fine gust

@@ -205,7 +205,7 @@ on use ribbon on bellows
 on tie ribbon to any
   say: The ribbon would hold {the2}, but {the2} doesn't need holding.
 
-on untie ribbon if mended
+on untie bellows if mended
   say: And split the bellows again? No: the ribbon is doing honest work.
 
 on pump bellows at gate if mended and not gate_open

@@ -221,6 +221,7 @@ enum { Q_NONE, Q_WHICH, Q_WHAT, Q_RESTART, Q_QUIT };
 static uint8_t question;
 /* The scene (more below, before the actions). */
 static uint8_t keys_held;            /* 1 left, 2 right, 4 up, 8 down */
+static uint8_t text_busy;            /* text written this frame: a new scene waits a frame */
 static void arrive(uint8_t from);
 static void scene_retry(void);
 static void stop_walking(void);
@@ -1758,6 +1759,7 @@ static void run_text(const uint8_t *s, uint8_t n, uint8_t echoed)
     memcpy(input, s, n);
     input_len = n;
     replaying = 1;
+    text_busy = 1; /* a new scene, if it goes to one, in the next frame */
     if (!echoed)
         page_top = nlines;
     line();
@@ -3012,7 +3014,6 @@ static void line(void)
 
 /* --- Input -------------------------------------------------------------------------------------------- */
 
-static uint8_t text_busy;
 
 static void submit(void)
 {
@@ -3165,7 +3166,7 @@ static void probe_frame(void)
     uint8_t s = slot_of(G.room), fetching = 0;
     for (uint8_t i = 0; i < N_SLOTS; i++)
         fetching |= slots[i].state == SL_LOADING;
-    probe.busy = walking || pending_len || (has_content && (shown_room != G.room || !layers_live) && !(s != 0xFF && slots[s].state == SL_FAILED));
+    probe.busy = walking || pending_len || (dirty_scene && layers_live) || (has_content && (shown_room != G.room || !layers_live) && !(s != 0xFF && slots[s].state == SL_FAILED));
     probe.room = G.room, probe.shown_room = shown_room, probe.facing = G.facing, probe.pose = pose_now, probe.scale = scale_now;
     probe.layers_live = layers_live, probe.fetching = fetching;
     probe.x = G.px / U, probe.y = G.py / U;

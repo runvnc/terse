@@ -14,14 +14,14 @@ near 220 300
 @ click 150 240
 settle
 < A boulder the size of a haycart
-@ click 600 260
+@ click 560 240
 settle
-near 600 260
+near 560 240
 @ down right
 wait 60
 @ up right
 settle
-< The track east goes down to the mere
+screen The track east goes down to the mere
 scene meadow
 @ click 456 226
 settle

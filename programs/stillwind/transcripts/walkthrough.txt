@@ -80,4 +80,4 @@ shown hall_gate_open
 hidden hall_gate_shut
 > up
 < You have won
-< score 10 out of 10
+< scored 10 out of 10
