@@ -1,0 +1,70 @@
+# The clock: looking, examining, reading and the inventory take no time,
+# walking 6 minutes, ringing the bell 2, the rest 5. Warnings come before
+# the deadline, then the story is lost; UNDO goes back. PLACEHOLDER STORY.
+status 9:30 pm
+> look
+> x box
+> read note
+< PLACEHOLDER STORY
+> inventory
+< You are carrying a storm lantern.
+status 9:30 pm
+> wait
+status 9:35 pm
+> n
+status 9:41 pm
+> ring bell
+< at no particular hour
+status 9:43 pm
+> s
+status 9:49 pm
+> z
+> z
+! strike
+> z
+< Far off, a clock begins to strike the hour.
+status 10:04 pm
+> z
+> z
+< The hour has passed in silence.
+> z
+> z
+> z
+> z
+> z
+> z
+> z
+> z
+> z
+> z
+> z
+> z
+> z
+> z
+> z
+> z
+> z
+> z
+> z
+< Out on the lake the ferry sounds its horn
+status 11:49 pm
+> z
+> z
+< It will reach the shore in about 20 minutes.
+> z
+> z
+> z
+< It will reach the shore in about 5 minutes.
+> z
+< Nobody relit the lamp in time.
+< *** You have lost ***
+> look
+< Type RESTART, RESTORE, UNDO or QUIT.
+> undo
+< Undone
+status 12:14 am
+> restart
+< Start again from the beginning?
+> y
+< Night has fallen on the lake.
+status 9:30 pm

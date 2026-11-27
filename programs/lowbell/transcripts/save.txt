@@ -1,0 +1,37 @@
+# SAVE and RESTORE (named records), UNDO more than once. PLACEHOLDER STORY.
+> open box
+> save
+< Saved as "game".
+> take brass key
+< Taken.
+> restore
+< Restored "game".
+> i
+! brass key
+> take key
+> save evening2
+< Saved as "evening2".
+> restore nosuch
+< There is no saved game called "nosuch".
+> save my game!
+< Names of saved games are letters and digits
+> drop key
+< Dropped.
+> take coin
+< Taken.
+> undo
+< Undone
+> undo
+< Undone
+> i
+< brass key
+! coin
+> drop key
+> restore evening2
+< Restored "evening2".
+> i
+< brass key
+> undo
+< Undone
+> i
+! brass key

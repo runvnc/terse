@@ -1,0 +1,45 @@
+# A dark place: nothing to see without a light; the lantern lights it
+# (the picture only where the beam falls); hints for the open puzzle,
+# one more each time. PLACEHOLDER STORY.
+> hint
+< The boathouse door is locked.
+> hint
+< The box on the jetty is closed. OPEN BOX.
+> open box
+> take brass key
+> unlock door
+> open door
+> e
+< It is pitch dark.
+> x coat
+< It is too dark to see that.
+> take flask
+< It is too dark to see that.
+> hint
+< It is too dark to see in here.
+> i
+< You are carrying a storm lantern and a brass key.
+> light lantern
+< You light the storm lantern.
+< Inside the Boathouse
+< An oilskin coat hangs from a hook
+# Lit only by the lantern: the workbench, outside the beam, is not drawn.
+novectors line 2880 2592 4672 2592
+> hint
+< Your lantern's beam reveals things.
+> hint
+< SHINE LANTERN AT WALL.
+> hint
+< (That is the last hint for this.)
+> take flask
+< Taken.
+> put flask on bench
+< You put the flask of oil on the workbench.
+> look under bench
+< On the workbench you find a flask of oil.
+> turn off lantern
+< You put out the storm lantern.
+> look
+< It is pitch dark.
+> out
+< The Jetty

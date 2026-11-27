@@ -1,0 +1,106 @@
+# The placeholder story's solution, from the start to the win.
+#
+# Transcript format (crates/terse-cli/tests/lowbell.rs runs every file here):
+#   > command        typed, then Enter; a "-- more --" prompt is answered with Space
+#   < text           the reply holds this text (spaces and line breaks count as one space)
+#   ! text           the reply does not hold it
+#   @ script line    one line of input as `terse run --events` takes it (press right, pointer 260 96)
+#   status text      the status line holds it
+#   screen text      the text on the screen holds it
+#   vectors text     the scene's display list (as --dump-vectors prints it) holds it
+#   novectors text   it does not
+#   wait N           N frames pass
+
+screen Low Bell (placeholder story)
+status The Jetty
+status 9:30 pm
+status bell in 30 min
+status score 0/10
+vectors c aa8250ff
+> north
+< The Square
+< The warden is here
+status 9:36 pm
+> ask warden about lamp
+< The hatch is locked
+> ask her about the key
+< chalk marks
+> talk to the warden
+< "Evening," says the warden.
+> examine bell
+< A bronze bell
+status 9:51 pm
+> wait
+< Time passes.
+! strike the hour
+> wait
+< Far off, a clock begins to strike the hour.
+status 10:01 pm
+> ring bell
+< the hour, on the hour.
+< [You rang the bell on the hour]
+! hisses
+status score 2/10
+> s
+< The Jetty
+< You can see a wooden box and a note here.
+> light lantern
+< You light the storm lantern.
+! The warden arrives.
+> open box
+< The warden arrives.
+< You open the wooden box, revealing a brass key and a copper coin.
+status score 3/10
+> take key
+< Taken.
+> take coin
+< Taken.
+> give coin to warden
+< The warden bites the coin
+> unlock door
+< (with the brass key)
+< You unlock the boathouse door.
+> open it
+< You open the boathouse door.
+> e
+< Inside the Boathouse
+< An oilskin coat hangs from a hook
+< On the workbench you see a flask of oil.
+> shine lantern at wall
+< Chalk marks leap out of the dark
+< [You found the chalk marks]
+vectors c ebebdc
+vectors w 32
+> lift board
+< lies an iron key
+> x key
+< Which key do you mean, the brass key or the iron key?
+> iron
+< Its bow is shaped like a little flame.
+> take iron key
+< Taken.
+> take flask
+< Taken.
+> wear coat
+< You put on the oilskin coat.
+< [Dressed for the weather]
+> i
+< You are carrying a storm lantern (lit), a brass key, a flask of oil, an oilskin coat (worn) and an iron key.
+> w
+< The Jetty
+> n
+< The Square
+> unlock lamp with iron key
+< You unlock the street lamp.
+> open lamp
+< You open the street lamp.
+> pour oil into lamp
+< You tip the flask into the reservoir
+> light lamp
+< the lamp throws its light across the square
+< *** You have won ***
+< You have scored 10 out of 10
+screen Type RESTART, RESTORE, UNDO or QUIT.
+vectors c ffb028
+> north
+< Type RESTART, RESTORE, UNDO or QUIT.
