@@ -1,8 +1,10 @@
 //! The system's `copy` (SPEC §system): text a program offers the user's
-//! clipboard reaches the host only in a frame in which the program read the
-//! key-down of a copy key (C, X or Insert with Control, without Alt or
-//! Meta); the call returns 0 either way and is charged for its bytes, and a
-//! buffer out of range or longer than 65,536 bytes is a bad buffer.
+//! clipboard reaches the host only in a frame in which the program read one
+//! of the user's copy gestures: the key-down of a copy key (C, X or Insert
+//! with Control, without Alt or Meta), of Enter (without Control, Alt or
+//! Meta), or a pointer press (the user choosing Copy in the program's menu);
+//! the call returns 0 either way and is charged for its bytes, and a buffer
+//! out of range or longer than 65,536 bytes is a bad buffer.
 
 use terse_core::{Event, FrameInput, Image, Machine, modifiers};
 
@@ -86,10 +88,31 @@ fn only_the_users_copy_key_reaches_the_clipboard() {
         assert_eq!(frame(&mut m, &[Event::key_down(key, mods)]).as_deref(), Some(TEXT), "key {key:#x} mods {mods}");
         assert_eq!(frame(&mut m, &[]), None, "only in the frame of the key");
     }
-    for (key, mods) in [(0x06, 0), (0x06, CONTROL | ALT), (0x06, CONTROL | META), (0x19, CONTROL)] {
+    for (key, mods) in [(0x06, 0), (0x06, CONTROL | ALT), (0x06, CONTROL | META), (0x19, CONTROL), (0x28, CONTROL), (0x28, ALT), (0x2C, 0)] {
         assert_eq!(frame(&mut m, &[Event::key_down(key, mods)]), None, "key {key:#x} mods {mods}");
     }
     assert_eq!(frame(&mut m, &[Event::key_up(0x06, CONTROL), Event::text('c')]), None, "a key-up or text is no copy key");
+    assert_eq!(frame(&mut m, &[Event::key_up(0x28, 0)]), None, "Enter's key-up is not a choice");
+}
+
+/// Enter and a pointer press are how a user chooses Copy in a program's
+/// own menu: in their frame the text goes through, in the next it does not;
+/// a pointer event with the button still down (a drag), or one that lets it
+/// go, is no press.
+#[test]
+fn enter_and_a_press_are_the_users_choice() {
+    let mut m = machine();
+    for key in [0x28, 0x58] {
+        assert_eq!(frame(&mut m, &[Event::key_down(key, modifiers::SHIFT)]).as_deref(), Some(TEXT), "Enter {key:#x}");
+        assert_eq!(frame(&mut m, &[]), None, "only in Enter's frame");
+    }
+    let pointer = |x: u16, buttons: u8| Event::pointer(x, 100, buttons);
+    assert_eq!(frame(&mut m, &[pointer(10, 1)]).as_deref(), Some(TEXT), "a press");
+    assert_eq!(frame(&mut m, &[pointer(20, 1)]), None, "the button still down: a drag");
+    assert_eq!(frame(&mut m, &[pointer(20, 0)]), None, "the button let go");
+    assert_eq!(frame(&mut m, &[pointer(30, 0)]), None, "a move");
+    assert_eq!(frame(&mut m, &[pointer(30, 2)]).as_deref(), Some(TEXT), "another button pressed");
+    assert_eq!(frame(&mut m, &[]), None, "nothing in the next frame");
 }
 
 /// What reaches the clipboard is not machine state: two machines that read

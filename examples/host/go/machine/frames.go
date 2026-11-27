@@ -30,6 +30,8 @@ const (
 	nextEvent  = 1
 	frameCount = 2
 	exit       = 6
+	copyText   = 10
+	maxCopy    = 65536
 )
 
 func (m *Machine) RunFrame() {
@@ -47,7 +49,7 @@ func (m *Machine) RunFrame() {
 		slot, fn := m.X[A7]>>8, m.X[A7]&0xff
 		result, charge := uint32(UnknownCall), int64(BaseCharge)
 		if slot == System {
-			result = m.system(fn)
+			result, charge = m.system(fn)
 		} else if m.Devices != nil {
 			result, charge = m.Devices(slot, fn)
 		}
@@ -61,20 +63,28 @@ func (m *Machine) RunFrame() {
 	m.Frame++
 }
 
-func (m *Machine) system(fn uint32) uint32 {
+func (m *Machine) system(fn uint32) (uint32, int64) {
 	switch fn {
 	case waitFrame:
-		return m.Frame + 1
+		return m.Frame + 1, BaseCharge
 	case nextEvent:
 		if m.Memory(m.X[A0], eventSize, true) == nil {
-			return BadBuffer
+			return BadBuffer, BaseCharge
 		}
-		return 0
+		return 0, BaseCharge
 	case frameCount:
-		return m.Frame
+		return m.Frame, BaseCharge
 	case exit:
 		m.Stopped, m.ExitCode = Exited, byte(m.X[A0])
-		return 0
+		return 0, BaseCharge
+	case copyText:
+		// No clipboard: check, charge, drop.
+		n := m.X[A1]
+		text := m.Memory(m.X[A0], n, false)
+		if n > maxCopy || (n > 0 && text == nil) {
+			return BadBuffer, BaseCharge
+		}
+		return 0, BaseCharge + int64(n+3)/4
 	}
-	return UnknownCall
+	return UnknownCall, BaseCharge
 }

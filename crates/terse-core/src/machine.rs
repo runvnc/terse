@@ -243,20 +243,28 @@ pub struct Machine<D: Devices = InProcess> {
     /// The blob ID the shell gave the machine before its first frame
     /// (STATE.md 1.14).
     argument: Option<[u8; 32]>,
-    /// The program read the key-down of a copy key this frame, so `copy`
-    /// may reach the clipboard (SPEC §system). Not machine state: it is
-    /// cleared at the start of every frame and the machine cannot see it.
+    /// The program read a copy gesture this frame (a copy key, Enter, a
+    /// pointer press), so `copy` may reach the clipboard (SPEC §system).
+    /// Not machine state: it is cleared at the start of every frame and
+    /// the machine cannot see it.
     copy_key: bool,
+    /// The buttons of the last pointer event the program read, to tell a
+    /// press. Not machine state (after a restore a held button may count
+    /// once as a press: it only decides whether a copy reaches the host).
+    read_buttons: u8,
     /// The text the last accepted `copy` offered the clipboard, for the
     /// host to take after the frame. Not machine state.
     copied: Option<Vec<u8>>,
 }
 
 /// The copy keys (SPEC §system `copy`): C, X or Insert with Control held
-/// and neither Alt nor Meta.
+/// and neither Alt nor Meta; and Enter without Control, Alt or Meta (how
+/// a user chooses Copy in a program's menu).
 pub fn is_copy_key(e: &Event) -> bool {
     use crate::modifiers::{ALT, CONTROL, META};
-    e.kind == Event::KEY_DOWN && matches!(e.a, 0x06 | 0x1B | 0x49) && e.b & CONTROL != 0 && e.b & (ALT | META) == 0
+    e.kind == Event::KEY_DOWN
+        && ((matches!(e.a, 0x06 | 0x1B | 0x49) && e.b & CONTROL != 0 && e.b & (ALT | META) == 0)
+            || (matches!(e.a, 0x28 | 0x58) && e.b & (CONTROL | ALT | META) == 0))
 }
 
 impl Machine {
@@ -402,6 +410,7 @@ impl<D: Devices> Machine<D> {
             in_system: false,
             open_request: None,
             copy_key: false,
+            read_buttons: 0,
             copied: None,
             argument: None,
         }
@@ -655,6 +664,12 @@ impl<D: Devices> Machine<D> {
                         None => 0,
                         Some(e) => {
                             self.copy_key |= is_copy_key(&e);
+                            if e.kind == Event::POINTER {
+                                // A press: a button down that was up before.
+                                let buttons = e.c >> 3 & 7;
+                                self.copy_key |= buttons & !self.read_buttons != 0;
+                                self.read_buttons = buttons;
+                            }
                             ram[at..at + 4].copy_from_slice(&[e.kind, e.a, e.b, e.c]);
                             units += copy_charge(4);
                             1

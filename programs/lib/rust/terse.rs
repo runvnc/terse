@@ -211,7 +211,8 @@ pub fn device(slot: u32) -> Option<u32> {
 /// The user's copy (SPEC §system `copy`): offers the system clipboard the
 /// text (at most 65,536 bytes). The host takes it only in the frame in
 /// which the program read the key-down of a copy key (Ctrl+C, Ctrl+X or
-/// Ctrl+Insert), and drops it otherwise or without a clipboard.
+/// Ctrl+Insert), of Enter, or a pointer press (the user choosing Copy in
+/// the program's menu), and drops it otherwise or without a clipboard.
 pub fn copy(text: &str) {
     unsafe {
         call(CALL_COPY, text.as_ptr() as u32, text.len() as u32, 0);

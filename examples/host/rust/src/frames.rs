@@ -1,4 +1,4 @@
-use crate::cpu::{A0, A7, Cpu, Fault, UNKNOWN_CALL};
+use crate::cpu::{A0, A1, A7, Cpu, Fault, UNKNOWN_CALL};
 
 pub const FRAME_BUDGET: i64 = 125_000;
 
@@ -24,6 +24,8 @@ const WAIT_FRAME: u32 = 0;
 const NEXT_EVENT: u32 = 1;
 const FRAME_COUNT: u32 = 2;
 const EXIT: u32 = 6;
+const COPY: u32 = 10;
+const MAX_COPY: u32 = 65_536;
 
 impl Machine {
     pub fn new(cpu: Cpu) -> Machine {
@@ -60,7 +62,7 @@ impl Machine {
             let (slot, function) = (a7 >> 8, a7 & 0xff);
             let budget = self.budget;
             let (result, charge) = if slot == SYSTEM {
-                (self.system(function), BASE_CHARGE)
+                self.system(function)
             } else {
                 devices(&mut self.cpu, budget, slot, function)
             };
@@ -74,10 +76,10 @@ impl Machine {
         self.frame += 1;
     }
 
-    fn system(&mut self, function: u32) -> u32 {
+    fn system(&mut self, function: u32) -> (u32, i64) {
         let a0 = self.cpu.x[A0];
         let event = self.cpu.memory(a0, EVENT_SIZE, true);
-        match function {
+        let result = match function {
             WAIT_FRAME => self.frame + 1,
             NEXT_EVENT if event.is_none() => BAD_BUFFER,
             NEXT_EVENT => 0,
@@ -86,7 +88,17 @@ impl Machine {
                 self.status = Status::Exited(a0 as u8);
                 0
             }
+            COPY => {
+                // No clipboard: check, charge, drop.
+                let n = self.cpu.x[A1];
+                let text = self.cpu.memory(a0, n, false);
+                if n > MAX_COPY || (n > 0 && text.is_none()) {
+                    return (BAD_BUFFER, BASE_CHARGE);
+                }
+                return (0, BASE_CHARGE + (n as i64 + 3) / 4);
+            }
             _ => UNKNOWN_CALL,
-        }
+        };
+        (result, BASE_CHARGE)
     }
 }

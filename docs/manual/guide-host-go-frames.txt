@@ -41,6 +41,8 @@ const (
     nextEvent  = 1
     frameCount = 2
     exit       = 6
+    copyText   = 10
+    maxCopy    = 65536
 )
 ```
 
@@ -60,7 +62,7 @@ func (m *Machine) RunFrame() {
         slot, fn := m.X[A7]>>8, m.X[A7]&0xff
         result, charge := uint32(UnknownCall), int64(BaseCharge)
         if slot == System {
-            result = m.system(fn)
+            result, charge = m.system(fn)
         } else if m.Devices != nil {
             result, charge = m.Devices(slot, fn)
         }
@@ -79,29 +81,37 @@ In order:
 
 - The frame adds 125,000 to the budget and runs instructions while the budget is above zero. Each costs what `Step` said: 1 if fetched from ROM, 4 from RAM.
 - An instruction that starts with budget left always runs to its end, so the budget can end below zero. That debt is carried into the next frame: the carry rule. What is left above zero is dropped (`min(m.Budget, 0)`). When the budget runs out the program is simply paused, and the next frame goes on with its next instruction.
-- An `ecall` costs its own 1 (or 4) plus the call's charge: 4 for a call of the System device (slot 1), and for a call the machine does not have.
+- An `ecall` costs its own 1 (or 4) plus the call's charge, which `system` returns with the result: 4 for a call of the System device (slot 1) and for a call the machine does not have, more for `copy`.
 - `wait_frame` ends the frame early: the program has finished this frame's work.
 - A fault or `exit` stops the machine. The frame still counts.
 
-## Four calls
+## Five calls
 
 ```go from examples/host/go/machine/frames.go
-func (m *Machine) system(fn uint32) uint32 {
+func (m *Machine) system(fn uint32) (uint32, int64) {
     switch fn {
     case waitFrame:
-        return m.Frame + 1
+        return m.Frame + 1, BaseCharge
     case nextEvent:
         if m.Memory(m.X[A0], eventSize, true) == nil {
-            return BadBuffer
+            return BadBuffer, BaseCharge
         }
-        return 0
+        return 0, BaseCharge
     case frameCount:
-        return m.Frame
+        return m.Frame, BaseCharge
     case exit:
         m.Stopped, m.ExitCode = Exited, byte(m.X[A0])
-        return 0
+        return 0, BaseCharge
+    case copyText:
+        // No clipboard: check, charge, drop.
+        n := m.X[A1]
+        text := m.Memory(m.X[A0], n, false)
+        if n > maxCopy || (n > 0 && text == nil) {
+            return BadBuffer, BaseCharge
+        }
+        return 0, BaseCharge + int64(n+3)/4
     }
-    return UnknownCall
+    return UnknownCall, BaseCharge
 }
 ```
 
@@ -109,6 +119,7 @@ func (m *Machine) system(fn uint32) uint32 {
 - `101h`, `next_event`: the next input event. This host has no input, so the queue is always empty: check that the 4 bytes at `a0` are in RAM (else `FFFF_FFFEh`) and return 0. `hello`, in the next step, calls it every frame and never waits for the next frame without it.
 - `102h`, `frame_count`: the frame counter, N all through frame N.
 - `106h`, `exit`: the machine stops with exit code `a0` & `FFh`. Like every call it writes its result, 0, to `a0`.
+- `10Ah`, `copy`: text for the user's clipboard, `a1` bytes at `a0`. This host has no clipboard, so it drops the text: check that the bytes lie wholly in ROM or wholly in RAM and that there are at most 65,536 (else `FFFF_FFFEh`), charge 1 more per 4 bytes, and return 0. (A host with a clipboard takes the text only in a frame in which the program read the user's copy key, Enter or a pointer press.)
 
 ## The program
 
@@ -181,7 +192,7 @@ prints `6`, as `terse run frames.terse --frames 10` does. Each pass of the loop 
 
 ## What you have now
 
-A machine that runs programs at exactly the reference's speed: `frames.go`, 80 lines, and `step2/main.go`, 32. Next, give it a screen: [Make a host in Go, step 3: a driver shows hello](terse:{guide-host-go-driver}).
+A machine that runs programs at exactly the reference's speed: `frames.go`, 90 lines, and `step2/main.go`, 32. Next, give it a screen: [Make a host in Go, step 3: a driver shows hello](terse:{guide-host-go-driver}).
 
 - The same step in Rust: [Make a host in Rust, step 2: frames and the budget](terse:{guide-host-rust-frames}).
 - Full implementations: `native/core-c/main.c` (the frame loop) and `machine.c` (all ten System calls); the reference's `crates/terse-core/src/machine.rs` and `system.rs`.

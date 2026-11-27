@@ -20,7 +20,7 @@ device's state). System and Machines calls cost 4.
 | `107h` | `open` | `a0` = address of an open request (read) | 1 passed to the shell, 0 not |
 | `108h` | `argument` | `a0` = buffer (32 bytes, written) | 1, or 0 if the machine has none |
 | `109h` | `device` | `a0` = device slot | its version, or `FFFF_FFFFh` if absent |
-| `10Ah` | `copy` | `a0` = text (read), `a1` = length, at most 65,536 | 0 (the host takes it only for the user's copy key) |
+| `10Ah` | `copy` | `a0` = text (read), `a1` = length, at most 65,536 | 0 (the host takes it only for the user's copy key, Enter or press) |
 
 [The terminal](terse:{device-terminal}), slot 2:
 

@@ -647,6 +647,12 @@ fn pasting_cells_and_text() {
     let mut run = Run::new(&k);
     run.finish(&k);
     assert_eq!(run.m.take_copied().as_deref(), Some(&b"x\t\n1.50\t\n"[..]));
+    // The Edit menu's Copy, chosen with Enter, reaches the clipboard too.
+    let k = Keys::new().new_sheet().enter("7").press("up").wait(2).press("f10").press("right").press("down").press("down").press("down").press("enter").wait(2);
+    let mut run = Run::new(&k);
+    run.finish(&k);
+    assert!(run.status().starts_with("Copied"), "{}", run.status());
+    assert_eq!(run.m.take_copied().as_deref(), Some(&b"7\n"[..]));
     // The sheet's own cells: references adjusted; the clipboard's text ignored.
     let k = Keys { lines: base.lines.clone(), f: base.f }.goto("C3").at("down v ctrl").text("stale\ttext").at("up v ctrl").wait(4).goto("C4");
     let mut run = Run::new(&k);

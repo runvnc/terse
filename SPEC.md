@@ -633,12 +633,19 @@ machine's own and cost 4.
   machine's state (`STATE.md` 1.14).
 - **`copy`** offers the user's system clipboard `a1` bytes of UTF-8
   text at `a0` (at most 65,536, wholly in ROM or wholly in RAM, else
-  `FFFF_FFFEh`), for the user's copy key: the host puts the text on the
+  `FFFF_FFFEh`), for the user's copy: the host puts the text on the
   clipboard only if, in the frame of the call, the program has read with
-  `next_event` the key-down of a copy key (key C, X or Insert with
-  Control held and neither Alt nor Meta; §events). Otherwise, and on a
+  `next_event` one of the user's gestures that can mean "copy": the
+  key-down of a copy key (key C, X or Insert with Control held and
+  neither Alt nor Meta), the key-down of Enter (`28h`, or the keypad's
+  `58h`) with neither Control, Alt nor Meta, or a pointer event in which
+  a button is down that was up in the pointer event read before it (a
+  press) (§events). Enter and a press count because they are how a user
+  chooses an item of a program's own menu, and a Copy or Cut the user
+  chose there is their copy as much as the key is. Otherwise, and on a
   host that has no clipboard for it, the text is dropped. So a program
-  cannot fill the clipboard on its own, only answer the user's copy. Of
+  cannot fill the clipboard on its own, only in the frame of something
+  the user did, and only for that frame. Of
   several accepted calls in a frame the last counts. A host that finds
   the text is not valid UTF-8 may replace what is not, or drop it. The
   call returns 0 whatever the host does with the text: what reaches the

@@ -251,9 +251,10 @@ static inline uint32_t terse_device(uint32_t slot) { return terse_call(CALL_DEVI
 static inline int terse_has_device(uint32_t slot) { return terse_device(slot) != TERSE_ERR_UNKNOWN; }
 /* The user's copy (SPEC §system `copy`): offers the system clipboard n
  * bytes of UTF-8 text (at most 65,536). The host takes it only in the frame
- * in which the program read the key-down of a copy key (Ctrl+C, Ctrl+X or
- * Ctrl+Insert) from its events, and drops it otherwise or without a
- * clipboard; 0 either way, TERSE_ERR_BUFFER for a bad buffer. */
+ * in which the program read from its events the key-down of a copy key
+ * (Ctrl+C, Ctrl+X or Ctrl+Insert), of Enter, or a pointer press (the user
+ * choosing Copy in the program's menu), and drops it otherwise or without
+ * a clipboard; 0 either way, TERSE_ERR_BUFFER for a bad buffer. */
 static inline uint32_t terse_copy(const void *text, uint32_t n) { return terse_call(CALL_COPY, (uint32_t)text, n, 0); }
 /* Full text (SPEC §terminal.text): device 10, a capability with no calls.
  * Every host draws the basic repertoire in the terminal (ASCII, the
