@@ -81,4 +81,4 @@ The heading is the title, so the reader shows it once. A shortcut for trying thi
 
 ## What you have now
 
-A feed with an article in it, and a reader that shows it. Next, the reader itself: [Read articles and follow links](terse:d33a6d27898a5efeb0309a5344a3bdce0041ffb96475b172546ea9935f2e4baf).
+A feed with an article in it, and a reader that shows it. Next, the reader itself: [Read articles and follow links](terse:f4f00c3a6585d88d3f9610bd845fef69db778ace8a51672d3c2101b8eaaf1448).

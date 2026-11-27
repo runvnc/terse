@@ -60,4 +60,4 @@ That puts the three programs in `~/.cargo/bin`. On Linux the window needs the ud
 
 ## What you have now
 
-Tersenet installed. Next, start it: [Run Tersenet](terse:387bd673d62062154e7bf634fe531a24c2b228211d88d4daa8ae667fec2757d8).
+Tersenet installed. Next, start it: [Run Tersenet](terse:f53b7577d5cc1f2d348c63bdc5bbd785faffed44d7ca6f4fe5a56fdb7a175099).

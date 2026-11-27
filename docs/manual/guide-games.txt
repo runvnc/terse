@@ -39,7 +39,7 @@ reader asks to start Sparks by Ana from choir 73670a…a9ee5f.
 
 Y starts it in a tile of its own. A program from someone you do not know is still boxed in: it sees only its own screen, keyboard and the few things the window lets it ask for, and every request to publish or to follow a feed comes to you as a prompt. Say N to anything you did not expect.
 
-There is not much to find yet, though. Tersenet has no public relay and no catalogue of games, so for now you find programs the same way as feeds: through people you share a relay with.
+There is not much to find yet, though. Tersenet has no catalogue of games, so for now you find programs the same way as feeds: through people you share a relay with, such as the public relay (`terse relay add relay.tersenet.org`).
 
 ## Keeping your place
 

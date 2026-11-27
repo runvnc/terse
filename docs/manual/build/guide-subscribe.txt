@@ -16,7 +16,7 @@ The other adds it once, with the first one's computer name or address on your ne
 terse relay add ws://their-computer:7878
 ```
 
-A relay has no accounts: anyone who can reach it can read what is on it, but nobody can publish in your name. A relay reached with `wss://` (over TLS) also hides from the network what you read; a name alone, as in `terse relay add relay.example.org`, means `wss://relay.example.org`. Tersenet has no public relay yet; once there is one, adding it is the same command.
+A relay has no accounts: anyone who can reach it can read what is on it, but nobody can publish in your name. A relay reached with `wss://` (over TLS) also hides from the network what you read; a name alone, as in `terse relay add relay.example.org`, means `wss://relay.example.org`. The project runs a public relay that anyone may read from and publish to: `terse relay add relay.tersenet.org`.
 
 ## From an address
 
@@ -54,6 +54,6 @@ While the window is open it keeps up by itself. From a terminal, `terse feed syn
 
 ## What you have now
 
-Someone else's articles in your timeline, and yours in theirs once they subscribe to you. Next, the optional side of Tersenet: [Find and play a game](terse:69567cb591d9b9df5ccb31ca387069237faed4cbae39dbc3c629cb7c8e8fcd9d).
+Someone else's articles in your timeline, and yours in theirs once they subscribe to you. Next, the optional side of Tersenet: [Find and play a game](terse:18cbaa89ea5737825f068edf3dc37fa7f26d57c20681f511f86ad8766b3c04eb).
 
 Relays, addresses and how feeds are kept in sync are in [The network](terse:9777caa3f5b86a3198a8fc5c69a8f3c0968315f5bed3a70dc291cee1187ff278).

@@ -18,9 +18,10 @@ commands may still change before 1.0.
   (`tersereader`) and the website.
 - **The shell**: the window you start in, with the reader, the manual and
   the built-in programs side by side in tiles.
-- **The relay** at `wss://relay.tersenet.org`, the default, now open to
-  publishing: `terse feed publish` puts your articles there. `terse-relay`
-  runs your own.
+- **The public relay** at `wss://relay.tersenet.org`, open to reading and
+  publishing: add it with `terse relay add relay.tersenet.org`, and
+  `terse feed publish` puts your articles there. `terse-relay` runs your
+  own.
 - **The machine** (Terse32, machine profile 1): 32-bit RISC-V, ROM up to
   256 KiB, RAM up to 768 KiB, a fixed budget of work per frame, and devices
   for a terminal, vector graphics, a page, sound and content.
