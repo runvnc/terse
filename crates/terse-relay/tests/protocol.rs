@@ -108,3 +108,34 @@ fn malformed_requests() {
     // with no results (NETWORK 4.7).
     assert_eq!(ask(&mut ws, protocol::encode_find(6, 1, b"ab")), [protocol::FIND_REPLY, 6, 0, 0, 0, status::DONE, 0]);
 }
+
+/// A held blob whose file is there but cannot be read is refused, never
+/// answered "not found" (on Windows a file another program has open
+/// unshared, or one being deleted, fails to open; a directory in its place
+/// fails the same way everywhere). Once it can be read it is served again.
+#[test]
+fn unreadable_held_blob_is_not_not_found() {
+    let dir = tempfile::tempdir().unwrap();
+    let policy = terse_relay::Policy { unreferenced_ttl: Some(Duration::from_secs(3600)), ..terse_relay::Policy::unlimited(1024) };
+    let relay = Relay::with_policy(BlobStore::open(dir.path(), None).unwrap(), policy).unwrap();
+    let owner = terse_net::Identity::from_seed([7; 32]);
+    let watched = b"the article everyone reads".to_vec();
+    relay.put_blob(&watched, None).unwrap();
+    let entry = terse_net::Entry::article(owner.feed_key(), 1, 1, &watched, None, "read me").sign(&owner).unwrap();
+    assert_eq!(relay.publish(&entry.bytes), status::DONE);
+    let c = relay.connect();
+    let get = |req| {
+        let terse_relay::Answer::Reply(r) = relay.respond(&c, &protocol::encode_get(req, &blob_id(&watched))) else { panic!("no reply") };
+        protocol::decode_reply(&r).unwrap()
+    };
+    let reply = |req, status, data: &[u8]| protocol::Reply::Get { req, status, data: data.to_vec() };
+    assert_eq!(get(1), reply(1, status::DONE, &watched));
+    let path = relay.blobs().path(&blob_id(&watched));
+    let aside = dir.path().join("aside");
+    std::fs::rename(&path, &aside).unwrap();
+    std::fs::create_dir(&path).unwrap();
+    assert_eq!(get(2), reply(2, status::REFUSED, &[]));
+    std::fs::remove_dir(&path).unwrap();
+    std::fs::rename(&aside, &path).unwrap();
+    assert_eq!(get(3), reply(3, status::DONE, &watched));
+}

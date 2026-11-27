@@ -1,6 +1,13 @@
 //! The local blob store (NETWORK 2): a directory with one file per blob, named
 //! by its hex ID. Writes go to a temporary file that is renamed into place, so
 //! a reader never sees a partial blob.
+//!
+//! On Windows a file another program has open without sharing it (a virus
+//! scanner or the search indexer looking at a file just written, a backup),
+//! or one being deleted while something still has it open, cannot be opened,
+//! renamed over or removed for a moment. Every operation on a blob's file is
+//! tried again briefly while it fails that way ([`retry_in_use`]), and an
+//! error left after that is an error, never an absent blob.
 
 use std::fs;
 use std::io::{self, Write};
@@ -42,6 +49,44 @@ pub struct BlobStore {
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+/// The waits between tries of [`retry_in_use`], in milliseconds: about a
+/// quarter of a second in all.
+const IN_USE_WAITS_MS: [u64; 8] = [1, 2, 4, 8, 16, 32, 64, 128];
+
+/// Whether `e` is how Windows fails an operation on a file that is in use:
+/// open in another program without sharing (ERROR_SHARING_VIOLATION,
+/// ERROR_LOCK_VIOLATION), or deleted while still open (ERROR_DELETE_PENDING,
+/// or ERROR_ACCESS_DENIED, which opening or renaming over such a file
+/// gives). The same operation may succeed a moment later. Never true on
+/// other systems, where a file in use can be read, renamed over and removed.
+pub fn in_use(e: &io::Error) -> bool {
+    cfg!(windows) && e.raw_os_error().is_some_and(windows_in_use)
+}
+
+/// The Windows error codes of [`in_use`].
+fn windows_in_use(code: i32) -> bool {
+    // ERROR_ACCESS_DENIED, ERROR_SHARING_VIOLATION, ERROR_LOCK_VIOLATION,
+    // ERROR_DELETE_PENDING.
+    matches!(code, 5 | 32 | 33 | 303)
+}
+
+/// Runs a file operation, and again (for about a quarter of a second at
+/// most) while it fails because the file is in use ([`in_use`]); returns
+/// the last outcome.
+pub fn retry_in_use<T>(op: impl FnMut() -> io::Result<T>) -> io::Result<T> {
+    retry_while(op, in_use)
+}
+
+fn retry_while<T>(mut op: impl FnMut() -> io::Result<T>, transient: impl Fn(&io::Error) -> bool) -> io::Result<T> {
+    for ms in IN_USE_WAITS_MS {
+        match op() {
+            Err(e) if transient(&e) => std::thread::sleep(std::time::Duration::from_millis(ms)),
+            r => return r,
+        }
+    }
+    op()
+}
+
 impl BlobStore {
     /// Opens (creating if needed) the store in `dir`.
     pub fn open(dir: impl Into<PathBuf>, limit: Option<u64>) -> io::Result<Self> {
@@ -75,9 +120,12 @@ impl BlobStore {
     }
 
     /// The stored bytes for `id`, unverified (callers that do not trust the
-    /// disk check the hash themselves).
+    /// disk check the hash themselves). `None` only if there is no such
+    /// file: one that is there but cannot be read (after [`retry_in_use`])
+    /// is an error.
     pub fn read(&self, id: &BlobId) -> io::Result<Option<Vec<u8>>> {
-        match fs::read(self.path(id)) {
+        let path = self.path(id);
+        match retry_in_use(|| fs::read(&path)) {
             Ok(bytes) => Ok(Some(bytes)),
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(e),
@@ -127,7 +175,8 @@ impl BlobStore {
             if sync {
                 f.sync_all()?;
             }
-            fs::rename(&temp, &path)
+            drop(f);
+            retry_in_use(|| fs::rename(&temp, &path))
         })();
         if let Err(e) = written {
             let _ = fs::remove_file(&temp);
@@ -141,8 +190,8 @@ impl BlobStore {
     pub fn remove(&self, id: &BlobId) -> io::Result<()> {
         let mut used = self.used.lock().unwrap();
         let path = self.path(id);
-        let len = fs::metadata(&path)?.len();
-        fs::remove_file(path)?;
+        let len = retry_in_use(|| fs::metadata(&path))?.len();
+        retry_in_use(|| fs::remove_file(&path))?;
         *used = used.saturating_sub(len);
         Ok(())
     }
@@ -198,5 +247,57 @@ mod tests {
         store.remove(&id).unwrap();
         assert_eq!(store.read(&id).unwrap(), None);
         assert_eq!(store.used_bytes(), 0);
+    }
+
+    /// A file operation failing because the file is in use (fault-injected
+    /// here with the Windows codes) is tried again until it succeeds; any
+    /// other error is returned at once, and one that persists is returned
+    /// after about a quarter of a second.
+    #[test]
+    fn in_use_is_tried_again() {
+        let transient = |e: &io::Error| e.raw_os_error().is_some_and(windows_in_use);
+        for code in [5, 32, 33, 303] {
+            let mut calls = 0;
+            let r = retry_while(
+                || {
+                    calls += 1;
+                    if calls < 4 { Err(io::Error::from_raw_os_error(code)) } else { Ok(calls) }
+                },
+                transient,
+            );
+            assert_eq!(r.unwrap(), 4, "code {code}");
+        }
+        let mut calls = 0;
+        let r: io::Result<()> = retry_while(
+            || {
+                calls += 1;
+                Err(io::Error::from_raw_os_error(32))
+            },
+            transient,
+        );
+        assert_eq!((r.unwrap_err().raw_os_error(), calls), (Some(32), IN_USE_WAITS_MS.len() + 1));
+        let mut calls = 0;
+        let r: io::Result<()> = retry_while(
+            || {
+                calls += 1;
+                Err(io::ErrorKind::NotFound.into())
+            },
+            transient,
+        );
+        assert_eq!((r.unwrap_err().kind(), calls), (io::ErrorKind::NotFound, 1));
+        // Only Windows reports a file in use this way.
+        assert_eq!(in_use(&io::Error::from_raw_os_error(32)), cfg!(windows));
+        assert!(!windows_in_use(2), "ERROR_FILE_NOT_FOUND is an absent file");
+    }
+
+    /// A blob file that is there but cannot be read is an error, not an
+    /// absent blob (a directory in its place stands for a file in use).
+    #[test]
+    fn unreadable_is_not_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = BlobStore::open(dir.path(), None).unwrap();
+        let id = blob_id(b"held");
+        fs::create_dir(store.path(&id)).unwrap();
+        assert!(store.read(&id).is_err());
     }
 }

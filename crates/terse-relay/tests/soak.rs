@@ -34,14 +34,35 @@ fn rss_kib() -> Option<u64> {
     s.lines().find(|l| l.starts_with("VmRSS:"))?.split_whitespace().nth(1)?.parse().ok()
 }
 
-/// Waits for the answer to `req`.
+/// Waits for the answer to `req`. A failed request says how long it took
+/// and whether the connection is still up: a request that timed out
+/// (`DEFAULT_TIMEOUT`) on a connection still up, or one whose connection
+/// failed.
 fn wait(c: &mut RelayClient, req: u32) -> RelayReply {
-    let deadline = Instant::now() + DEFAULT_TIMEOUT;
+    let asked = Instant::now();
+    let deadline = asked + DEFAULT_TIMEOUT;
     loop {
         if let Some((_, r)) = c.poll().into_iter().find(|(q, _)| *q == req) {
+            if r == RelayReply::Failed {
+                eprintln!("soak: request {req} failed after {:?}; connected: {}", asked.elapsed(), c.connected());
+            }
             return r;
         }
         assert!(Instant::now() < deadline, "no answer");
+    }
+}
+
+/// Ends the observer when the soak fails: set to stop and joined before
+/// the store's directory is removed, so that a failure is not followed
+/// by gets of a store that is gone.
+struct Observer(Arc<AtomicBool>, Option<std::thread::JoinHandle<(Duration, u32, u32)>>);
+
+impl Drop for Observer {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Relaxed);
+        if let Some(h) = self.1.take() {
+            let _ = h.join();
+        }
     }
 }
 
@@ -83,9 +104,9 @@ fn soak() {
     // before that.
     let soaked = Arc::new(AtomicBool::new(false));
     let (first_tx, first_rx) = std::sync::mpsc::channel();
-    let observer = {
+    let mut observer = Observer(stop.clone(), {
         let (url, stop, soaked, watched) = (url.clone(), stop.clone(), soaked.clone(), watched.clone());
-        std::thread::spawn(move || {
+        Some(std::thread::spawn(move || {
             let mut c = RelayClient::websocket(&url, DEFAULT_TIMEOUT);
             c.connect().unwrap();
             let (mut worst, mut gets, mut during) = (Duration::ZERO, 0u32, 0u32);
@@ -104,8 +125,8 @@ fn soak() {
                 std::thread::sleep(Duration::from_millis(2));
             }
             (worst, gets, during)
-        })
-    };
+        }))
+    });
     // The observer is connected and served before the soak starts.
     first_rx.recv_timeout(Duration::from_secs(60)).expect("the observer's first get");
     let started = Instant::now();
@@ -185,7 +206,7 @@ fn soak() {
     relay.compact();
     stop.store(true, Ordering::Relaxed);
     ticker.join().unwrap();
-    let (worst_get, gets, during) = observer.join().unwrap();
+    let (worst_get, gets, during) = observer.1.take().unwrap().join().unwrap();
     let rss_after = rss_kib();
     let (requests, refused): (usize, usize) = results.iter().fold((0, 0), |(a, b), (d, r)| (a + d + r, b + r));
     let published: usize = relay.feeds().feeds().unwrap().iter().map(|f| relay.feeds().highest(f).unwrap() as usize).sum();

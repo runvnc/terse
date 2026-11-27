@@ -1347,7 +1347,10 @@ impl Relay {
         }
         Answer::Reply(match protocol::decode_request(message) {
             Ok(Request::Get { req, id }) => match self.served(&id) {
-                Some(data) => protocol::encode_get_reply(req, status::DONE, &data),
+                Ok(Some(data)) => protocol::encode_get_reply(req, status::DONE, &data),
+                // A blob that is here but could not be read is refused,
+                // never "not found".
+                Err(()) => protocol::encode_get_reply(req, status::REFUSED, &[]),
                 // NETWORK 5: a client's get is asked of the peers; a peer's
                 // is answered from this store only.
                 _ if !peer && self.pull(conn, req, id) => return Answer::Nothing,
@@ -1450,19 +1453,29 @@ impl Relay {
     }
 
     /// A blob to serve to a get: one this relay holds and, if blobs no
-    /// entry names expire here, that an entry names (NETWORK 5.3).
-    fn served(&self, id: &BlobId) -> Option<Vec<u8>> {
+    /// entry names expire here, that an entry names (NETWORK 5.3). An
+    /// error if its file is there but cannot be read (after the store's
+    /// tries: Windows reports a file another program has open, or one
+    /// being deleted, that way): such a blob is not "not found".
+    fn served(&self, id: &BlobId) -> Result<Option<Vec<u8>>, ()> {
         if self.denies_blob(id) {
-            return None;
+            return Ok(None);
         }
-        let data = self.blobs.read(id).ok()??;
+        let data = match self.blobs.read(id) {
+            Ok(Some(data)) => data,
+            Ok(None) => return Ok(None),
+            Err(e) => {
+                eprintln!("terse-relay: reading blob {}: {e}", terse_net::to_hex(id));
+                return Err(());
+            }
+        };
         if self.policy.unreferenced_ttl.is_some()
             && let Some(h) = &self.holdings
             && !h.lock().unwrap().held(id, data.len() as u32)
         {
-            return None;
+            return Ok(None);
         }
-        Some(data)
+        Ok(Some(data))
     }
 
     /// Stores a blob put by a client counted as `group` (`None`: a peer

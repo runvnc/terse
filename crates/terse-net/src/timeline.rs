@@ -55,7 +55,8 @@ impl Arrivals {
         let mut record = [0u8; RECORD];
         record[..32].copy_from_slice(feed);
         record[32..].copy_from_slice(&seq.to_le_bytes());
-        fs::OpenOptions::new().create(true).append(true).open(&self.path)?.write_all(&record)
+        // Windows: the log may be in use for a moment (`store::in_use`).
+        crate::store::retry_in_use(|| fs::OpenOptions::new().create(true).append(true).open(&self.path))?.write_all(&record)
     }
 
     /// The log's file.
@@ -202,7 +203,9 @@ impl Compaction {
     /// [`sync_finished`] (without holding up the log's other users), which
     /// makes the records copied since [`Self::sync`] durable too.
     pub fn finish(self, log: &mut Arrivals) -> io::Result<(fs::File, PathBuf)> {
-        fs::rename(&self.temp, &log.path)?;
+        // Windows: renaming over a log something has open, unshared, fails
+        // for a moment (`store::in_use`).
+        crate::store::retry_in_use(|| fs::rename(&self.temp, &log.path))?;
         log.read = (self.kept.len() * RECORD) as u64;
         log.seen = self.kept.iter().copied().collect();
         log.order = self.kept;
