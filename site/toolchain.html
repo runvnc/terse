@@ -7,7 +7,7 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Contents</a></nav></header>
+<header class="site"><nav><a href="index.html" class="home">Tersenet</a> <a href="index.html#download">Download</a> <a href="manual.html" aria-current="page">Manual</a> <a href="try.html">Try in browser</a> <a href="https://github.com/runvnc/terse">Source on GitHub</a></nav></header>
 <main>
 <article>
 <h1 id="building-a-program">Building a program</h1>
@@ -104,7 +104,8 @@ RAM (rw) : ORIGIN = 0x00100000, LENGTH = 768K
 <p>A program that prints characters outside the basic repertoire (ASCII, Latin-1, dashes, quotes, <code>•</code>, <code>…</code>, <code>−</code>, box drawing and blocks) lists device 10, full text: <code>--optional 10:0</code> if a placeholder box will do on a host without it, <code>--device 10:0</code> if not (see the terminal&#39;s article). Full text promises the full repertoire (Latin, Greek, Cyrillic, punctuation and common symbols); other scripts show only where the user added a font. A program meant to run on every host requires only the program profile, devices 2 and 3 (<code>terse run --profile program</code> runs it with exactly those), and lists the rest as optional. <code>terse info</code> shows both lists.</p>
 <p>Next: <a href="toolchain-c.html">The C library</a>.</p>
 </article>
+<nav class="pn"><a rel="prev" href="how-it-works.html">← How Tersenet works</a><a rel="next" href="toolchain-c.html">The C library →</a></nav>
 </main>
-<footer><nav class="pn"><a rel="prev" href="how-it-works.html">← How Tersenet works</a><a rel="next" href="toolchain-c.html">The C library →</a></nav></footer>
+<footer class="site"><p>Tersenet is free software under the <a href="https://github.com/runvnc/terse/blob/main/LICENSE">Apache License 2.0</a>. <a href="https://github.com/runvnc/terse">Source on GitHub</a>. Public relay: <code>relay.tersenet.org</code>. No cookies, no tracking.</p></footer>
 </body>
 </html>

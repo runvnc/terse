@@ -7,7 +7,7 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Contents</a></nav></header>
+<header class="site"><nav><a href="index.html" class="home">Tersenet</a> <a href="index.html#download">Download</a> <a href="manual.html" aria-current="page">Manual</a> <a href="try.html">Try in browser</a> <a href="https://github.com/runvnc/terse">Source on GitHub</a></nav></header>
 <main>
 <article>
 <h1 id="screens-panels-and-input-device-8">Screens, panels and input (device 8)</h1>
@@ -60,7 +60,8 @@
 <p>A pointer event that sets a button bit clear in the previous pointer event (wherever that went) over a flat picture, or over a panel while the view does not move, also gives the shell a machine pressed event, at the pointer event&#39;s place in the shell&#39;s input, whatever the machine&#39;s state.</p>
 <p>The home key is one input the host reserves (F12 in <code>terse-host</code>, the <code>home</code> script line in <code>terse run</code>). It never reaches a machine as a key; it sets the focus to 0 and queues a home event for the shell. A single machine run alone has no home key. See <a href="events.html">events</a>.</p>
 </article>
+<nav class="pn"><a rel="prev" href="device-machines-frame.html">← The system frame, snapshots and state (device 8)</a><a rel="next" href="content-blobs.html">Content: blobs, requests and statuses (device 4) →</a></nav>
 </main>
-<footer><nav class="pn"><a rel="prev" href="device-machines-frame.html">← The system frame, snapshots and state (device 8)</a><a rel="next" href="content-blobs.html">Content: blobs, requests and statuses (device 4) →</a></nav></footer>
+<footer class="site"><p>Tersenet is free software under the <a href="https://github.com/runvnc/terse/blob/main/LICENSE">Apache License 2.0</a>. <a href="https://github.com/runvnc/terse">Source on GitHub</a>. Public relay: <code>relay.tersenet.org</code>. No cookies, no tracking.</p></footer>
 </body>
 </html>

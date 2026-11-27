@@ -7,7 +7,7 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Contents</a></nav></header>
+<header class="site"><nav><a href="index.html" class="home">Tersenet</a> <a href="index.html#download">Download</a> <a href="manual.html" aria-current="page">Manual</a> <a href="try.html">Try in browser</a> <a href="https://github.com/runvnc/terse">Source on GitHub</a></nav></header>
 <main>
 <article>
 <h1 id="the-terse32-machine">The Terse32 machine</h1>
@@ -139,7 +139,8 @@
 <h2 id="screen-units">Screen units</h2>
 <p>Every device that draws, and the pointer, uses one coordinate system: the screen is 640 units wide and 480 high, (0, 0) at the top left, x to the right and y down. Units are square; the host shows the screen at a 4:3 shape, so a circle is round. A terminal cell is 8 units wide and 16 high: the cell at (column, row) starts at x = column × 8, y = row × 16. The vector displays use sixteenths of a unit for finer positions.</p>
 </article>
+<nav class="pn"><a rel="prev" href="performance-reports.html">← Performance reports</a><a rel="next" href="machine-calls.html">The call table →</a></nav>
 </main>
-<footer><nav class="pn"><a rel="prev" href="performance-reports.html">← Performance reports</a><a rel="next" href="machine-calls.html">The call table →</a></nav></footer>
+<footer class="site"><p>Tersenet is free software under the <a href="https://github.com/runvnc/terse/blob/main/LICENSE">Apache License 2.0</a>. <a href="https://github.com/runvnc/terse">Source on GitHub</a>. Public relay: <code>relay.tersenet.org</code>. No cookies, no tracking.</p></footer>
 </body>
 </html>

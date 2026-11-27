@@ -1,4 +1,4 @@
-/* The Tersenet manual. System fonts, no external resources. */
+/* The Tersenet website and manual. System fonts, no external resources. */
 :root {
   color-scheme: light dark;
   --bg: #fbfaf7; --fg: #1f1f1d; --mute: #6b6a66; --link: #1d5aa6;
@@ -19,10 +19,19 @@ body {
   font: 1.0625rem/1.6 system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", "Helvetica Neue", Arial, sans-serif;
 }
 header, main, footer { max-width: 40em; margin: 0 auto; padding: 0 1rem; }
-header nav { display: flex; gap: 1.25em; padding: 1em 0; border-bottom: 1px solid var(--rule); font-size: .9375em; }
+header nav { display: flex; flex-wrap: wrap; gap: .25em 1.25em; padding: 1em 0; border-bottom: 1px solid var(--rule); font-size: .9375em; }
 header a { color: var(--mute); text-decoration: none; }
 header a.home { color: var(--fg); font-weight: 600; }
-header a:hover { color: var(--link); }
+header a:hover, header a[aria-current] { color: var(--link); }
+/* The site's header and footer, on every page (one template). */
+header.site, footer.site { max-width: none; padding: 0; background: var(--head); }
+header.site nav, footer.site p { max-width: 40em; margin: 0 auto; padding: .8em 1rem; }
+header.site nav { border: 0; font-size: 1em; }
+header.site a { font-size: .9375em; }
+header.site a.home { margin-right: auto; }
+footer.site { margin-top: 2em; }
+footer.site p { padding: 1.2em 1rem 2em; color: var(--mute); font-size: .875em; }
+footer.site a { color: inherit; }
 main { padding-top: .5em; padding-bottom: 1em; }
 h1, h2 { line-height: 1.25; margin: 1.6em 0 .6em; }
 h1 { font-size: 1.6em; }
@@ -56,6 +65,21 @@ th:last-child, td:last-child { padding-right: 0; }
 .ac { text-align: center; }
 .ae { text-align: right; }
 hr { border: 0; border-top: 1px solid var(--rule); margin: 2em 0; }
-main.landing { padding-top: 3em; }
-footer .pn { display: flex; justify-content: space-between; gap: 1em; padding: 1em 0 2em; border-top: 1px solid var(--rule); font-size: .9375em; }
-footer a[rel=next] { margin-left: auto; text-align: right; }
+main.landing { padding-top: 1.5em; }
+.pn { display: flex; justify-content: space-between; gap: 1em; margin-top: 2em; padding: 1em 0 2em; border-top: 1px solid var(--rule); font-size: .9375em; }
+a[rel=next] { margin-left: auto; text-align: right; }
+/* The front page. */
+.front h1 { font-size: 2.2em; margin: .8em 0 .3em; }
+.front .lede { font-size: 1.125em; }
+.small, .downloads span { color: var(--mute); font-size: .9375em; }
+.cmd { display: flex; gap: .5em; align-items: stretch; margin: 0 0 1em; }
+.cmd pre { flex: 1; margin: 0; }
+.cmd button { font: inherit; font-size: .875em; padding: 0 1em; border: 1px solid var(--rule); border-radius: 4px; background: var(--head); color: var(--fg); cursor: pointer; }
+.shot { margin: 1.5em 0; }
+.shot img { max-width: 100%; height: auto; border: 1px solid var(--rule); border-radius: 4px; vertical-align: top; }
+.downloads { display: grid; grid-template-columns: repeat(auto-fit, minmax(16em, 1fr)); gap: 0 1.5em; }
+.downloads h3 { margin: .8em 0 .3em; font-size: 1em; }
+.downloads ul { list-style: none; padding: 0; margin: 0 0 .4em; }
+.downloads a { overflow-wrap: anywhere; }
+.downloads p { font-size: .875em; margin: 0 0 1em; }
+.downloads code { overflow-wrap: anywhere; }

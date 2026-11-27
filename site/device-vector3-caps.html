@@ -7,7 +7,7 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Contents</a></nav></header>
+<header class="site"><nav><a href="index.html" class="home">Tersenet</a> <a href="index.html#download">Download</a> <a href="manual.html" aria-current="page">Manual</a> <a href="try.html">Try in browser</a> <a href="https://github.com/runvnc/terse">Source on GitHub</a></nav></header>
 <main>
 <article>
 <h1 id="caps-presentation-and-state-device-9">Caps, presentation and state (device 9)</h1>
@@ -41,7 +41,8 @@
 <p>Every call costs 4; an accepted <code>submit</code> also costs 1 per 4 bytes of the list, rounded up. Nothing else is charged: projection, hiding and the caps are the host&#39;s work. See <a href="charges.html">charges</a>.</p>
 <p>The device sends no events and takes no input from the host: the eye is the host&#39;s, so what faces hide from it is not state. Which Screens are in effect depends on the shell&#39;s device 8 records, and only for what is shown; <code>face</code> reads the list as decoded. Its state is the copy of the list: its length m (4 bytes, 0 to 16,384) then the m bytes of the last accepted submit. This section of the state exists only for a machine that has device 9. The style and persistence are held once, in the 2D display&#39;s state section, which is present when the machine has device 3 or device 9.</p>
 </article>
+<nav class="pn"><a rel="prev" href="device-vector3.html">← The 3D vector display (device 9)</a><a rel="next" href="device-vector3-surfaces.html">Surfaces: a program&#39;s own screen in its 3D scene →</a></nav>
 </main>
-<footer><nav class="pn"><a rel="prev" href="device-vector3.html">← The 3D vector display (device 9)</a><a rel="next" href="device-vector3-surfaces.html">Surfaces: a program&#39;s own screen in its 3D scene →</a></nav></footer>
+<footer class="site"><p>Tersenet is free software under the <a href="https://github.com/runvnc/terse/blob/main/LICENSE">Apache License 2.0</a>. <a href="https://github.com/runvnc/terse">Source on GitHub</a>. Public relay: <code>relay.tersenet.org</code>. No cookies, no tracking.</p></footer>
 </body>
 </html>

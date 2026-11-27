@@ -7,7 +7,7 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Contents</a></nav></header>
+<header class="site"><nav><a href="index.html" class="home">Tersenet</a> <a href="index.html#download">Download</a> <a href="manual.html" aria-current="page">Manual</a> <a href="try.html">Try in browser</a> <a href="https://github.com/runvnc/terse">Source on GitHub</a></nav></header>
 <main>
 <article>
 <h1 id="rust-programs">Rust programs</h1>
@@ -117,7 +117,8 @@ rustflags = [<span class=s>&quot;-C&quot;</span>, <span class=s>&quot;link-arg=-
 <p>The linker script&#39;s path is relative to the package&#39;s root, where cargo runs the linker. This gives the same ROM as <code>terse build</code> for the same source (checked with hello.rs). A debug build (<code>opt-level = 0</code>) works but is far larger and slower: 11,701 bytes of ROM for hello instead of 1,716, and a larger program may not fit in 256 KiB of ROM or in a frame&#39;s budget.</p>
 <p>Next: <a href="toolchain-other.html">Building by hand, and other languages</a>.</p>
 </article>
+<nav class="pn"><a rel="prev" href="toolchain-c.html">← The C library</a><a rel="next" href="toolchain-other.html">Building by hand, and other languages →</a></nav>
 </main>
-<footer><nav class="pn"><a rel="prev" href="toolchain-c.html">← The C library</a><a rel="next" href="toolchain-other.html">Building by hand, and other languages →</a></nav></footer>
+<footer class="site"><p>Tersenet is free software under the <a href="https://github.com/runvnc/terse/blob/main/LICENSE">Apache License 2.0</a>. <a href="https://github.com/runvnc/terse">Source on GitHub</a>. Public relay: <code>relay.tersenet.org</code>. No cookies, no tracking.</p></footer>
 </body>
 </html>

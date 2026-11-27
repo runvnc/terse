@@ -7,7 +7,7 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Contents</a></nav></header>
+<header class="site"><nav><a href="index.html" class="home">Tersenet</a> <a href="index.html#download">Download</a> <a href="manual.html" aria-current="page">Manual</a> <a href="try.html">Try in browser</a> <a href="https://github.com/runvnc/terse">Source on GitHub</a></nav></header>
 <main>
 <article>
 <h1 id="content-blobs-requests-and-statuses-device-4">Content: blobs, requests and statuses (device 4)</h1>
@@ -191,7 +191,8 @@ done:
 }</pre>
 <p><code>content_get</code> fills the block and calls <code>content_submit</code>. A program with other work polls <code>req.status</code> or handles the event in its main loop instead of waiting. Note that <code>content_submit</code> returns <code>uint8_t</code>, so on an image without device 4 the <code>FFFF_FFFFh</code> result reads as 255, not 0.</p>
 </article>
+<nav class="pn"><a rel="prev" href="device-machines-screens.html">← Screens, panels and input (device 8)</a><a rel="next" href="content-feeds.html">Content: feeds, names, search and publishing →</a></nav>
 </main>
-<footer><nav class="pn"><a rel="prev" href="device-machines-screens.html">← Screens, panels and input (device 8)</a><a rel="next" href="content-feeds.html">Content: feeds, names, search and publishing →</a></nav></footer>
+<footer class="site"><p>Tersenet is free software under the <a href="https://github.com/runvnc/terse/blob/main/LICENSE">Apache License 2.0</a>. <a href="https://github.com/runvnc/terse">Source on GitHub</a>. Public relay: <code>relay.tersenet.org</code>. No cookies, no tracking.</p></footer>
 </body>
 </html>

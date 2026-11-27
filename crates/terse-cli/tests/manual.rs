@@ -200,8 +200,10 @@ fn site_dir() -> PathBuf {
 #[test]
 fn site_is_up_to_date() {
     let built = manual::build(&manual::read_sources(&dir()).unwrap()).unwrap();
-    let mut files = terse_net::manual_site::site(&built);
-    // The extra files (docs/manual/site-files: the install script) are copied as they are.
+    let mut files: Vec<(String, Vec<u8>)> =
+        terse_net::manual_site::site(&built).into_iter().map(|(n, d)| (n, d.into_bytes())).collect();
+    // The extra files (docs/manual/site-files: the install script, the
+    // front page's picture) are copied as they are.
     files.extend(terse_net::manual_site::extra_files(&dir()).unwrap());
     let stale = "site/ is stale: run `terse manual site --out site`";
     let mut on_disk: Vec<String> =
@@ -211,7 +213,7 @@ fn site_is_up_to_date() {
     names.sort();
     assert_eq!(on_disk, names, "{stale}");
     for (name, data) in &files {
-        assert!(std::fs::read_to_string(site_dir().join(name)).unwrap() == *data, "{name}: {stale}");
+        assert!(std::fs::read(site_dir().join(name)).unwrap() == *data, "{name}: {stale}");
     }
     // Every manifest article has a page.
     for b in &built {
@@ -221,7 +223,7 @@ fn site_is_up_to_date() {
     let out = terse(&["manual", "site", "--dir", dir().to_str().unwrap(), "--out", tmp.path().to_str().unwrap()]);
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     for (name, data) in &files {
-        assert_eq!(std::fs::read_to_string(tmp.path().join(name)).unwrap(), *data, "{name}");
+        assert!(std::fs::read(tmp.path().join(name)).unwrap() == *data, "{name}");
     }
 }
 
@@ -305,41 +307,71 @@ fn well_formed_catches_mistakes() {
     assert!(well_formed("<svg>a > b</svg>").is_err());
 }
 
+/// The site's pages and stylesheet (its text files), by name; the
+/// pictures are left out.
+fn site_pages() -> Vec<(String, String)> {
+    let mut files: Vec<(String, String)> = std::fs::read_dir(site_dir())
+        .unwrap()
+        .map(|e| e.unwrap())
+        .filter(|e| {
+            let n = e.file_name().to_string_lossy().into_owned();
+            n.ends_with(".html") || n.ends_with(".css")
+        })
+        .map(|e| (e.file_name().to_string_lossy().into_owned(), std::fs::read_to_string(e.path()).unwrap()))
+        .collect();
+    files.sort();
+    files
+}
+
 /// The site is self-contained: every link leads to a page of it (and a
-/// fragment to an id there), nothing is loaded from elsewhere, there is
-/// no script and no web address, and every figure is well-formed SVG.
+/// fragment to an id there) or to the project on GitHub, nothing is
+/// loaded from elsewhere, the only script is the front page's copy
+/// button, and every figure is well-formed SVG.
 #[test]
 fn site_is_self_contained() {
-    let files: Vec<(String, String)> = std::fs::read_dir(site_dir())
-        .unwrap()
-        .map(|e| {
-            let e = e.unwrap();
-            (e.file_name().to_string_lossy().into_owned(), std::fs::read_to_string(e.path()).unwrap())
-        })
-        .collect();
+    use terse_net::manual_site::{HOME_PAGE, MANUAL_PAGE, REPO, TRY_PAGE};
+    let files = site_pages();
     let page = |name: &str| files.iter().find(|(n, _)| n == name).map(|(_, d)| d.as_str());
+    let exists = |name: &str| site_dir().join(name).is_file();
     let css = page("style.css").unwrap();
     assert!(css.len() < 8192, "a small stylesheet");
     let mut figures = 0;
-    let extra: Vec<String> = terse_net::manual_site::extra_files(&dir()).unwrap().into_iter().map(|(n, _)| n).collect();
     for (name, html) in &files {
-        if extra.contains(name) {
-            continue; // copied as they are, not pages (the install script names its download address)
-        }
         let lower = html.to_lowercase();
-        for bad in ["<script", "javascript:", "http://", "https://", "@import", "url(", " src=", "<iframe", "<object", "<embed", "<img", "<link rel=\"pre"] {
+        for bad in ["javascript:", "http://", "@import", "url(", "<iframe", "<object", "<embed", "<link rel=\"pre"] {
             assert!(!lower.contains(bad), "{name} contains {bad}");
         }
         if !name.ends_with(".html") {
             continue;
         }
+        // Scripts: only the front page's, inline.
+        let scripts = lower.matches("<script").count();
+        if name == HOME_PAGE {
+            assert_eq!(scripts, 1, "{name}: the copy button's script");
+            assert!(lower.contains("<script>"), "{name}: inline");
+        } else {
+            assert_eq!(scripts, 0, "{name} has a script");
+        }
+        // Web addresses only in links to the project.
+        let repo_links = attrs(html, "href").iter().filter(|h| h.starts_with(REPO)).count();
+        assert_eq!(lower.matches("https://").count(), repo_links, "{name}: a web address other than {REPO}");
+        // Pictures only from the site.
+        for src in attrs(html, "src") {
+            assert!(!src.contains(':') && !src.contains('/') && exists(src), "{name}: {src}");
+        }
         assert!(html.starts_with("<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">"), "{name}");
         assert!(html.contains("<meta name=\"viewport\"") && html.contains("<title>"), "{name}");
         assert_eq!(attrs(html, "href").iter().filter(|h| h.ends_with(".css")).count(), 1, "{name}: one stylesheet");
         for href in attrs(html, "href") {
+            if href.starts_with(REPO) {
+                continue;
+            }
             assert!(!href.contains(':') && !href.starts_with('/') && !href.contains("//"), "{name}: {href} is not relative");
             let (file, fragment) = href.split_once('#').unwrap_or((href, ""));
             let file = if file.is_empty() { name.as_str() } else { file };
+            if file == TRY_PAGE && page(file).is_none() {
+                continue; // made in another branch; linked from every header already
+            }
             let target = page(file).unwrap_or_else(|| panic!("{name}: {href} leads nowhere"));
             if !fragment.is_empty() {
                 assert!(target.contains(&format!(" id=\"{fragment}\"")), "{name}: {href}: no such id");
@@ -362,21 +394,25 @@ fn site_is_self_contained() {
         builtin::MANUAL.iter().map(|(_, _, t)| std::str::from_utf8(t).unwrap().matches("\n```path ").count()).sum();
     assert!(sources >= 4);
     assert_eq!(figures, sources, "every figure is drawn");
-    // The landing page is the index article alone: its heading, the
+    // The manual's first page is the index article alone: its heading, the
     // paragraph and three links (the user guide's first page, the
-    // implementation guide's, then the contents); no navigation and no
-    // list of articles.
-    let index = page("index.html").unwrap();
+    // implementation guide's, then the contents); no list of articles.
+    let first = page(MANUAL_PAGE).unwrap();
     let (name, title, _) = builtin::MANUAL[0];
     assert_eq!(name, "index");
-    assert!(index.contains(&format!(">{title}</h1>")), "{index}");
-    let links: Vec<&str> = attrs(index, "href").into_iter().filter(|h| h.ends_with(".html")).collect();
+    let article = &first[first.find("<article>").unwrap()..first.find("</article>").unwrap()];
+    assert!(article.contains(&format!(">{title}</h1>")), "{article}");
+    let links: Vec<&str> = attrs(article, "href").into_iter().collect();
     assert_eq!(
         links,
         ["guide-install.html", "guide-reader.html", "contents.html"],
-        "index.html links to the two guides and the contents only"
+        "the manual's first page links to the two guides and the contents only"
     );
-    assert!(!index.contains("<header>") && !index.contains("<footer>") && !index.contains("<li>"), "{index}");
+    assert!(!article.contains("<li>") && !first.contains("rel=\"next\""), "{first}");
+    // The front page opens with the same paragraph.
+    let index = std::str::from_utf8(builtin::MANUAL[0].2).unwrap();
+    let paragraph = index.split("\n\n").nth(1).unwrap().replace('\n', " ");
+    assert!(page(HOME_PAGE).unwrap().contains(&format!("<p class=\"lede\">{}</p>", paragraph.trim())), "the project's paragraph");
     // The contents page lists every other article, the guide first.
     let contents = page("contents.html").unwrap();
     let listed: Vec<&str> = attrs(contents, "href").into_iter().filter(|h| h.ends_with(".html")).collect();
@@ -388,4 +424,68 @@ fn site_is_self_contained() {
     let at = |h: &str| contents.find(&format!("href=\"{h}\">")).unwrap();
     assert!(at("guide-install.html") < at("guide-reader.html"), "the user guide comes before the implementation guide");
     assert!(at("guide-reader.html") < at("how-it-works.html"), "the guides come before the reference");
+}
+
+/// Every page has the site's header (its navigation) and footer.
+#[test]
+fn every_page_has_the_header() {
+    use terse_net::manual_site::{HOME_PAGE, MANUAL_PAGE, REPO, Section, TRY_PAGE, footer, header};
+    let nav = header(Section::Other);
+    let pages: Vec<(String, String)> = site_pages().into_iter().filter(|(n, _)| n.ends_with(".html")).collect();
+    assert!(pages.len() > 50);
+    for (name, html) in &pages {
+        let plain = html.replace(" aria-current=\"page\"", "");
+        assert!(plain.contains(&nav), "{name}: the header");
+        assert!(html.contains(&footer()), "{name}: the footer");
+        let hrefs = attrs(html, "href");
+        for want in [HOME_PAGE.to_string(), format!("{HOME_PAGE}#download"), MANUAL_PAGE.into(), TRY_PAGE.into(), REPO.into()] {
+            assert!(hrefs.contains(&want.as_str()), "{name}: no link to {want}");
+        }
+    }
+}
+
+/// The front page's downloads are this version's files, at the release's
+/// address on GitHub; the install command and the picture are there.
+#[test]
+fn front_page_downloads_this_version() {
+    use terse_net::manual_site::{HOME_PAGE, REPO, SHOT, VERSION};
+    // The workspace's version, read from Cargo.toml itself.
+    let cargo = std::fs::read_to_string(common::workspace().join("Cargo.toml")).unwrap();
+    let v = cargo
+        .lines()
+        .skip_while(|l| l.trim() != "[workspace.package]")
+        .find_map(|l| l.strip_prefix("version = \""))
+        .and_then(|l| l.strip_suffix('"'))
+        .unwrap();
+    assert_eq!(v, VERSION);
+    let html = std::fs::read_to_string(site_dir().join(HOME_PAGE)).unwrap();
+    let base = format!("{REPO}/releases/download/v{v}/");
+    for file in [
+        format!("terse-{v}-windows-x86_64.zip"),
+        format!("terse-{v}-macos.zip"),
+        format!("terse-{v}-linux-x86_64.tar.gz"),
+        format!("terse-{v}-linux-aarch64.tar.gz"),
+        format!("tersereader-{v}-linux-amd64.tar.gz"),
+        format!("tersereader-{v}-linux-arm64.tar.gz"),
+        format!("tersereader-{v}-macos-amd64.tar.gz"),
+        format!("tersereader-{v}-macos-arm64.tar.gz"),
+        "SHA256SUMS.txt".to_string(),
+    ] {
+        assert!(html.contains(&format!("href=\"{base}{file}\">{file}</a>")), "no download of {file}");
+    }
+    // Every download is of this version.
+    for href in attrs(&html, "href").into_iter().filter(|h| h.contains("/releases/download/")) {
+        assert!(href.starts_with(&base), "{href} is not of {v}");
+        let file = &href[base.len()..];
+        assert!(file == "SHA256SUMS.txt" || file.contains(&format!("-{v}-")), "{href}");
+    }
+    assert!(html.contains(&format!("href=\"{REPO}/releases\">All releases</a>")));
+    assert!(html.contains("<code id=\"install-cmd\">curl -fsSL https&#58;//tersenet.org/install.sh | sh</code>"));
+    assert!(html.contains("<button type=\"button\" data-copy=\"install-cmd\" hidden>"), "the copy button is hidden without scripts");
+    assert!(site_dir().join(SHOT.0).is_file() && html.contains(&format!("<img src=\"{}\"", SHOT.0)));
+    // Small: the page, the stylesheet and the picture.
+    let weight = html.len()
+        + std::fs::metadata(site_dir().join("style.css")).unwrap().len() as usize
+        + std::fs::metadata(site_dir().join(SHOT.0)).unwrap().len() as usize;
+    assert!(weight < 120_000, "the front page weighs {weight} bytes");
 }

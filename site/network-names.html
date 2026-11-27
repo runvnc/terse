@@ -7,7 +7,7 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Contents</a></nav></header>
+<header class="site"><nav><a href="index.html" class="home">Tersenet</a> <a href="index.html#download">Download</a> <a href="manual.html" aria-current="page">Manual</a> <a href="try.html">Try in browser</a> <a href="https://github.com/runvnc/terse">Source on GitHub</a></nav></header>
 <main>
 <article>
 <h1 id="profiles-names-and-search">Profiles, names and search</h1>
@@ -37,7 +37,8 @@
 <h2 id="lookup">Lookup</h2>
 <p>A lookup&#39;s kind must be 3 (program) and the name a valid display name, else it is refused (3). The relay answers with the current version it holds of that feed&#39;s program (1), or 2 if none, listed or not; it may refuse a client that asks too often. A client asks all connected relays, keeps the valid matching entry with the highest <code>seq</code> (stored, not subscribed), then gets the image (a machine host, when a shell starts a program it holds no entry for).</p>
 </article>
+<nav class="pn"><a rel="prev" href="network.html">← The network</a><a rel="next" href="relay-settings.html">Relays: encryption and trust →</a></nav>
 </main>
-<footer><nav class="pn"><a rel="prev" href="network.html">← The network</a><a rel="next" href="relay-settings.html">Relays: encryption and trust →</a></nav></footer>
+<footer class="site"><p>Tersenet is free software under the <a href="https://github.com/runvnc/terse/blob/main/LICENSE">Apache License 2.0</a>. <a href="https://github.com/runvnc/terse">Source on GitHub</a>. Public relay: <code>relay.tersenet.org</code>. No cookies, no tracking.</p></footer>
 </body>
 </html>

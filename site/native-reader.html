@@ -7,7 +7,7 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Contents</a></nav></header>
+<header class="site"><nav><a href="index.html" class="home">Tersenet</a> <a href="index.html#download">Download</a> <a href="manual.html" aria-current="page">Manual</a> <a href="try.html">Try in browser</a> <a href="https://github.com/runvnc/terse">Source on GitHub</a></nav></header>
 <main>
 <article>
 <h1 id="writing-a-reader-without-the-machine">Writing a reader without the machine</h1>
@@ -60,7 +60,8 @@
 <p>Every machine host carries this manual in its store, and the articles use every construct of the format, so they make a good first test: publish them to a feed with <code>terse manual publish</code>, subscribe your reader to it, and compare with the built-in reader. Lines will break differently and fonts will differ; what each construct is, which text is a link and where it leads must not.</p>
 <p>The details of the network are in <a href="network.html">the network</a>; how the built-in reader lays articles out on the machine is in <a href="device-page.html">the page device</a>, which you do not need to follow.</p>
 </article>
+<nav class="pn"><a rel="prev" href="writing-articles.html">← Writing an article</a><a rel="next" href="state.html">State, replay and conformance →</a></nav>
 </main>
-<footer><nav class="pn"><a rel="prev" href="writing-articles.html">← Writing an article</a><a rel="next" href="state.html">State, replay and conformance →</a></nav></footer>
+<footer class="site"><p>Tersenet is free software under the <a href="https://github.com/runvnc/terse/blob/main/LICENSE">Apache License 2.0</a>. <a href="https://github.com/runvnc/terse">Source on GitHub</a>. Public relay: <code>relay.tersenet.org</code>. No cookies, no tracking.</p></footer>
 </body>
 </html>

@@ -7,7 +7,7 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Contents</a></nav></header>
+<header class="site"><nav><a href="index.html" class="home">Tersenet</a> <a href="index.html#download">Download</a> <a href="manual.html" aria-current="page">Manual</a> <a href="try.html">Try in browser</a> <a href="https://github.com/runvnc/terse">Source on GitHub</a></nav></header>
 <main>
 <article>
 <h1 id="the-system-frame-snapshots-and-state-device-8">The system frame, snapshots and state (device 8)</h1>
@@ -29,7 +29,8 @@
 <h2 id="charges">Charges</h2>
 <p>Each call costs 4 (plus the <code>ecall</code> instruction), and copies cost 1 per 4 bytes, rounded up: <code>start</code> 8 (when the ID is read), <code>start_program</code> (33 + n) / 4 up, <code>info</code> 12, <code>builtin</code> 8, <code>identity</code> 21, <code>request</code> 21, <code>argument</code> 8 (when the ID is read), <code>snapshot_info</code> 31 and <code>experimental</code> 8, each when written. <code>face</code> and <code>unface</code> copy nothing; drawing the scene is the host&#39;s work. See <a href="charges.html">charges</a>.</p>
 </article>
+<nav class="pn"><a rel="prev" href="device-machines.html">← The Machines device (device 8)</a><a rel="next" href="device-machines-screens.html">Screens, panels and input (device 8) →</a></nav>
 </main>
-<footer><nav class="pn"><a rel="prev" href="device-machines.html">← The Machines device (device 8)</a><a rel="next" href="device-machines-screens.html">Screens, panels and input (device 8) →</a></nav></footer>
+<footer class="site"><p>Tersenet is free software under the <a href="https://github.com/runvnc/terse/blob/main/LICENSE">Apache License 2.0</a>. <a href="https://github.com/runvnc/terse">Source on GitHub</a>. Public relay: <code>relay.tersenet.org</code>. No cookies, no tracking.</p></footer>
 </body>
 </html>
