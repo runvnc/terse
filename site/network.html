@@ -7,7 +7,7 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Contents</a></nav></header>
+<header class="site"><nav><a href="index.html" class="home">Tersenet</a> <a href="index.html#download">Download</a> <a href="manual.html" aria-current="page">Manual</a> <a href="try.html">Try in browser</a> <a href="https://github.com/runvnc/terse">Source on GitHub</a></nav></header>
 <main>
 <article>
 <h1 id="the-network">The network</h1>
@@ -113,7 +113,8 @@
 <h2 id="for-machine-hosts">For machine hosts</h2>
 <p>Programs never see this protocol, nor any secret key: they use the content device, and the host speaks the protocol for them. A program may ask to subscribe, unsubscribe, publish, set the profile or a nickname, and the host asks the user first; the timeline above is what the timeline operation reads. A host may start a program by image ID, checking that the blob is a valid image. Completions arrive as events (<a href="events.html">events</a>) and cost budget (<a href="charges.html">charges</a>).</p>
 </article>
+<nav class="pn"><a rel="prev" href="experimental.html">← Experimental devices</a><a rel="next" href="network-names.html">Profiles, names and search →</a></nav>
 </main>
-<footer><nav class="pn"><a rel="prev" href="experimental.html">← Experimental devices</a><a rel="next" href="network-names.html">Profiles, names and search →</a></nav></footer>
+<footer class="site"><p>Tersenet is free software under the <a href="https://github.com/runvnc/terse/blob/main/LICENSE">Apache License 2.0</a>. <a href="https://github.com/runvnc/terse">Source on GitHub</a>. Public relay: <code>relay.tersenet.org</code>. No cookies, no tracking.</p></footer>
 </body>
 </html>

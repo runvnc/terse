@@ -113,6 +113,12 @@ Tersenet" and the README) runs `docs/manual/site-files/install.sh`, which
 `terse manual site --out site` copies into `site/`; the site is then deployed
 as usual. After changing the script, regenerate `site/` and deploy it.
 
+The front page's download links name the workspace's version, so after the
+version changes in `Cargo.toml`, regenerate `site/` (`terse manual site --out
+site`; `--test manual` fails until then) and deploy it once the release's files
+are up. A new minor version also needs a new status line (`STATUS` in
+`crates/terse-net/src/manual_site.rs`).
+
 It relies on what this page describes, so keep them in step:
 
 - `SHA256SUMS.txt` among the release's files, in `sha256sum` format

@@ -7,7 +7,7 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Contents</a></nav></header>
+<header class="site"><nav><a href="index.html" class="home">Tersenet</a> <a href="index.html#download">Download</a> <a href="manual.html" aria-current="page">Manual</a> <a href="try.html">Try in browser</a> <a href="https://github.com/runvnc/terse">Source on GitHub</a></nav></header>
 <main>
 <article>
 <h1 id="fonts">Fonts</h1>
@@ -30,7 +30,8 @@
 <h2 id="where-the-settings-live">Where the settings live</h2>
 <p><code>terse fonts</code> writes <code>fonts</code> in the configuration directory (<code>~/.config/terse</code>, or <code>$XDG_CONFIG_HOME/terse</code>; `~/Library/Application Support/terse<code> on macOS, </code>%APPDATA%\terse` on Windows), one line per font: <code>mono</code>, <code>sans</code>, <code>bold</code> or <code>extra</code>, then the file. `terse-host --version` lists the fonts it would use. Every font is opened when <code>terse-host</code> starts and never again: it never waits for a font while a program runs.</p>
 </article>
+<nav class="pn"><a rel="prev" href="using-reader.html">← Using the reader</a><a rel="next" href="writing-articles.html">Writing an article →</a></nav>
 </main>
-<footer><nav class="pn"><a rel="prev" href="using-reader.html">← Using the reader</a><a rel="next" href="writing-articles.html">Writing an article →</a></nav></footer>
+<footer class="site"><p>Tersenet is free software under the <a href="https://github.com/runvnc/terse/blob/main/LICENSE">Apache License 2.0</a>. <a href="https://github.com/runvnc/terse">Source on GitHub</a>. Public relay: <code>relay.tersenet.org</code>. No cookies, no tracking.</p></footer>
 </body>
 </html>

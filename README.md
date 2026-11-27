@@ -1237,26 +1237,38 @@ content operation and status of the machine specification (SPEC.md and spec/), a
 
 ### The website
 
-`site/` is the manual as a static website, published at <https://tersenet.org>,
-so that it can be read before installing Tersenet: one HTML page per article (the manual's first page, the
-paragraph at the top of this README with a link to the guide and one to the
-contents, is `index.html`,
-with no navigation or list of articles; the contents, guide then reference, is
-`contents.html`), made from the same sources by
-the reference article parser, with figures as inline SVG. It is plain static files:
-no JavaScript, nothing loaded from anywhere else (no fonts, no images, no
-analytics), one small `style.css`, light and dark following the system. Any file
-host can serve the directory as it is, and it reads straight from disk too. Links
-between articles of the manual lead to their pages; other `terse:` links (feeds,
-programs, articles outside the manual) cannot be followed on the web and are shown
-as their address. After changing the manual, regenerate it (the output is
-deterministic, and it is checked in):
+`site/` is the website, published at <https://tersenet.org>, so that Tersenet
+can be read about and downloaded before installing it. `index.html` is the front
+page: the paragraph at the top of this README, a picture of the reader, the
+install command (with a copy button, the only script on the site, a few lines
+inline; without scripts the button is hidden and nothing else changes) and the
+downloads of the current release, per system, addressed to its files on GitHub.
+Their version is the workspace's (`Cargo.toml`), so after a version change
+regenerate the site before deploying it, and write the front page's status line
+(`STATUS` in `crates/terse-net/src/manual_site.rs`) for a new minor version.
+The rest is the manual, one HTML page per article: its first page (the same
+paragraph with a link to each guide and one to the contents) is `manual.html`;
+the contents, guide then reference, `contents.html`. Every page comes from one
+template (`page_shell` in `manual_site.rs`): the same header (Download, Manual,
+Try in browser, Source on GitHub) and footer (licence, source, the public relay).
+An `.html` file in `docs/manual/site-files/` that is not a whole document is
+written inside the same template.
+
+The pages are made from the same sources by the reference article parser, with
+figures as inline SVG. It is plain static files: nothing loaded from anywhere
+else (system fonts, no analytics), one small `style.css`, light and dark following
+the system. Any file host can serve the directory as it is, and it reads straight
+from disk too. Links between articles of the manual lead to their pages; other
+`terse:` links (feeds, programs, articles outside the manual) cannot be followed
+on the web and are shown as their address. After changing the manual, regenerate
+it (the output is deterministic, and it is checked in):
 
     cargo run -p terse-cli --bin terse -- manual site --out site
 
 `cargo test -p terse-cli --test manual` checks that `site/` is up to date, that
-every link resolves to a page of it, and that no page holds a script or a web
-address.
+every link resolves to a page of it or to the project on GitHub, that every page
+has the header and footer, that no page but the front page holds a script, and
+that the downloads are of the current version.
 
 #### Any feed as a website
 

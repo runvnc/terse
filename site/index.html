@@ -3,18 +3,68 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Tersenet</title>
+<title>Tersenet: signed plain-text articles, read without a browser</title>
+<meta name="description" content="Tersenet is a small network of signed plain-text articles, with tables and diagrams, that you read in a program that runs no scripts and cannot load anything from the web.">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<main class="landing">
-<article>
-<h1 id="tersenet">Tersenet</h1>
-<p>First and foremost, Tersenet is a way to share information: formatted text, with diagrams where they help, without the bloat of web browsers (JavaScript, ads, tracking) and without the centralised control of websites like Reddit. Secondly, and completely optionally, it can be used to share very lightweight programs, at most 1 MiB of memory each, that run on tiny isolated virtual machines.</p>
-<p><a href="guide-install.html">Install and try Tersenet</a></p>
-<p><a href="guide-reader.html">Write your own Tersenet reader</a></p>
-<p><a href="contents.html">Contents</a></p>
-</article>
+<header class="site"><nav><a href="index.html" class="home" aria-current="page">Tersenet</a> <a href="index.html#download">Download</a> <a href="manual.html">Manual</a> <a href="try.html">Try in browser</a> <a href="https://github.com/runvnc/terse">Source on GitHub</a></nav></header>
+<main class="front">
+<h1>Tersenet</h1>
+<p class="lede">First and foremost, Tersenet is a way to share information: formatted text, with diagrams where they help, without the bloat of web browsers (JavaScript, ads, tracking) and without the centralised control of websites like Reddit. Secondly, and completely optionally, it can be used to share very lightweight programs, at most 1 MiB of memory each, that run on tiny isolated virtual machines.</p>
+<p><a href="try.html">Try it in your browser</a>: the reader and a few articles, nothing to install.</p>
+<p id="install">Install on Linux or macOS:</p>
+<div class="cmd"><pre class="sh"><code id="install-cmd">curl -fsSL https&#58;//tersenet.org/install.sh | sh</code></pre><button type="button" data-copy="install-cmd" hidden>Copy</button></div>
+<p>Download: <a href="https://github.com/runvnc/terse/releases/download/v0.9.0/terse-0.9.0-windows-x86_64.zip">Windows (zip)</a> &#183; <a href="https://github.com/runvnc/terse/releases/download/v0.9.0/terse-0.9.0-macos.zip">macOS (zip)</a> &#183; <a href="https://github.com/runvnc/terse/releases/download/v0.9.0/terse-0.9.0-linux-x86_64.tar.gz">Linux x86_64</a> &#183; <a href="https://github.com/runvnc/terse/releases/download/v0.9.0/terse-0.9.0-linux-aarch64.tar.gz">Linux ARM64</a> &#183; <a href="#dl-reader">terminal reader</a></p>
+<p class="small">Version 0.9.0. The <a href="guide-install.html">install guide</a> says what the script does and how to open the unsigned files.</p>
+<figure class="shot"><img src="shot-reader.webp" width="800" height="600" alt="A Tersenet article in the reader: a paragraph, a line diagram and a table."></figure>
+<p>Something to read now: <a href="manual.html">the manual</a>, itself written as Tersenet articles, the same pages the reader shows.</p>
+<h2 id="download">Download 0.9.0</h2>
+<div class="downloads">
+<section id="dl-windows">
+<h3>Windows</h3>
+<ul>
+<li><a href="https://github.com/runvnc/terse/releases/download/v0.9.0/terse-0.9.0-windows-x86_64.zip">terse-0.9.0-windows-x86_64.zip</a><br><span>Windows 10 or newer, 64-bit</span></li>
+</ul>
+<p>Extract all, then double-click <code>terse-host.exe</code>. It is not signed, so SmartScreen may say &#8220;Windows protected your PC&#8221;: click <b>More info</b>, then <b>Run anyway</b>.</p>
+</section>
+<section id="dl-macos">
+<h3>macOS</h3>
+<ul>
+<li><a href="https://github.com/runvnc/terse/releases/download/v0.9.0/terse-0.9.0-macos.zip">terse-0.9.0-macos.zip</a><br><span>macOS 11 or newer, Apple silicon and Intel</span></li>
+</ul>
+<p>It is not notarised by Apple, so macOS blocks it the first time. Unzip it, run <code>xattr -dr com.apple.quarantine ~/Downloads/terse-0.9.0-macos</code> in Terminal, then double-click <code>Terse.app</code>. Or Control-click <code>Terse.app</code> and choose Open (on macOS 15: try once, then System Settings, Privacy &amp; Security, Open Anyway).</p>
+</section>
+<section id="dl-linux">
+<h3>Linux</h3>
+<ul>
+<li><a href="https://github.com/runvnc/terse/releases/download/v0.9.0/terse-0.9.0-linux-x86_64.tar.gz">terse-0.9.0-linux-x86_64.tar.gz</a><br><span>x86_64</span></li>
+<li><a href="https://github.com/runvnc/terse/releases/download/v0.9.0/terse-0.9.0-linux-aarch64.tar.gz">terse-0.9.0-linux-aarch64.tar.gz</a><br><span>aarch64 (64-bit ARM)</span></li>
+</ul>
+<p>Ubuntu 22.04, Debian 12, Fedora 36 or newer (glibc 2.35), on Wayland or X11. Unpack it with <code>tar xzf</code> and run <code>terse-host</code>, or use the install command above.</p>
+</section>
+<section id="dl-reader">
+<h3>Terminal reader</h3>
+<ul>
+<li><a href="https://github.com/runvnc/terse/releases/download/v0.9.0/tersereader-0.9.0-linux-amd64.tar.gz">tersereader-0.9.0-linux-amd64.tar.gz</a><br><span>Linux x86_64</span></li>
+<li><a href="https://github.com/runvnc/terse/releases/download/v0.9.0/tersereader-0.9.0-linux-arm64.tar.gz">tersereader-0.9.0-linux-arm64.tar.gz</a><br><span>Linux ARM 64-bit</span></li>
+<li><a href="https://github.com/runvnc/terse/releases/download/v0.9.0/tersereader-0.9.0-macos-amd64.tar.gz">tersereader-0.9.0-macos-amd64.tar.gz</a><br><span>macOS Intel</span></li>
+<li><a href="https://github.com/runvnc/terse/releases/download/v0.9.0/tersereader-0.9.0-macos-arm64.tar.gz">tersereader-0.9.0-macos-arm64.tar.gz</a><br><span>macOS Apple silicon</span></li>
+</ul>
+<p><code>tersereader</code> reads Tersenet in a terminal: one static program, nothing else to install. There is no Windows build.</p>
+</section>
+<section id="dl-checksums">
+<h3>Checksums</h3>
+<ul>
+<li><a href="https://github.com/runvnc/terse/releases/download/v0.9.0/SHA256SUMS.txt">SHA256SUMS.txt</a><br><span>the SHA-256 of every file above</span></li>
+</ul>
+<p>Check a download with <code>sha256sum -c --ignore-missing SHA256SUMS.txt</code> (Linux), <code>shasum -a 256 -c --ignore-missing SHA256SUMS.txt</code> (macOS) or <code>Get-FileHash</code> in PowerShell (Windows).</p>
+</section>
+</div>
+<p>0.9 is the first public release. It works and is tested; formats may still change before 1.0. <a href="https://github.com/runvnc/terse/releases/tag/v0.9.0#known-limits">Known limits</a>.</p>
+<p><a href="https://github.com/runvnc/terse/releases/tag/v0.9.0">What is new in 0.9.0</a> &#183; <a href="https://github.com/runvnc/terse/releases">All releases</a></p>
 </main>
+<footer class="site"><p>Tersenet is free software under the <a href="https://github.com/runvnc/terse/blob/main/LICENSE">Apache License 2.0</a>. <a href="https://github.com/runvnc/terse">Source on GitHub</a>. Public relay: <code>relay.tersenet.org</code>. No cookies, no tracking.</p></footer>
+<script>for(const b of document.querySelectorAll("button[data-copy]")){b.hidden=false;b.onclick=()=>navigator.clipboard.writeText(document.getElementById(b.dataset.copy).textContent).then(()=>{b.textContent="Copied";setTimeout(()=>b.textContent="Copy",1500)})}</script>
 </body>
 </html>

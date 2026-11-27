@@ -7,7 +7,7 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header><nav><a href="index.html" class="home">Tersenet</a> <a href="contents.html">Contents</a></nav></header>
+<header class="site"><nav><a href="index.html" class="home">Tersenet</a> <a href="index.html#download">Download</a> <a href="manual.html" aria-current="page">Manual</a> <a href="try.html">Try in browser</a> <a href="https://github.com/runvnc/terse">Source on GitHub</a></nav></header>
 <main>
 <article>
 <h1 id="relays-encryption-and-trust">Relays: encryption and trust</h1>
@@ -39,7 +39,8 @@ ws&#58;<span class=c>//192.168.1.20:7878</span></pre>
 <p>The pin stands for an authority and for the name check, so the certificate needs no particular name.</p>
 <p>When a relay cannot be used, the programs say why: &quot;the relay&#39;s certificate is not trusted&quot;, &quot;is for another name&quot;, &quot;does not match the key pinned for it&quot;, &quot;is not from the authority pinned for it&quot;, &quot;this relay requires TLS (try wss&#58;//)&quot;, &quot;this relay does not speak TLS (try ws&#58;//)&quot;.</p>
 </article>
+<nav class="pn"><a rel="prev" href="network-names.html">← Profiles, names and search</a><a rel="next" href="signatures.html">Signatures and valid entries →</a></nav>
 </main>
-<footer><nav class="pn"><a rel="prev" href="network-names.html">← Profiles, names and search</a><a rel="next" href="signatures.html">Signatures and valid entries →</a></nav></footer>
+<footer class="site"><p>Tersenet is free software under the <a href="https://github.com/runvnc/terse/blob/main/LICENSE">Apache License 2.0</a>. <a href="https://github.com/runvnc/terse">Source on GitHub</a>. Public relay: <code>relay.tersenet.org</code>. No cookies, no tracking.</p></footer>
 </body>
 </html>
