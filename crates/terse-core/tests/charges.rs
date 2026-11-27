@@ -115,9 +115,10 @@ fn cases() -> Vec<Case> {
             4,
         ),
         c(
-            "content put 1 MiB - 8 KiB",
-            call_loop(&block(2, 1040384), "    li a0, 0x100000\n    addi s0, s0, 1\n    li t0, 0x101000\n    sb s0, 0(t0)\n", 0x400),
-            128,
+            // The largest RAM (96 pages) less 8 KiB: the block, and the stack.
+            "content put 768 KiB - 8 KiB",
+            call_loop(&block(2, 778_240), "    li a0, 0x100000\n    addi s0, s0, 1\n    li t0, 0x101000\n    sb s0, 0(t0)\n", 0x400),
+            96,
         ),
         c(
             "content get (delivered 16384)",

@@ -109,8 +109,8 @@ impl Builder {
         // The code needs the ROM's end and the table's address in RAM.
         let len = rom.len() as u32;
         patch(&mut rom, len, RAM + table_at);
-        let pages = (rom.len().div_ceil(8192) + 1).min(128) as u8;
-        assert!(rom.len() <= 131_072, "ROM of {} bytes", rom.len());
+        let pages = (rom.len().div_ceil(8192) + 1).min(crate::image::RAM_PAGES_MAX as usize) as u8;
+        assert!(rom.len() <= crate::image::ROM_MAX, "ROM of {} bytes", rom.len());
         Image::build(title, pages, devices, &rom)
     }
 }

@@ -37,6 +37,7 @@
 <tr><td>everything else</td><td>nothing</td><td>any access faults</td></tr>
 </tbody></table></div>
 <p>So address 0 faults, a store to ROM faults, and so does fetching an instruction any part of which lies outside ROM and RAM (for example a 32-bit instruction whose second half would be past the end of ROM). Code may run from RAM; an instruction fetched from RAM is decoded when it is executed, so code written to RAM takes effect at once, but each such instruction costs 4 units instead of 1.</p>
+<p>ROM is at most 262,144 bytes, so it ends by <code>0005_0000h</code>; RAM is at most 96 pages, so it ends by <code>001C_0000h</code>: ROM and RAM together are at most 1 MiB. Both start at the same address whatever their size, and a program&#39;s addresses depend only on its own <code>ram_pages</code>.</p>
 <h2 id="reset-state">Reset state</h2>
 <ul>
 <li><code>pc</code> = <code>0001_0000h</code>, the first byte of ROM.</li>
@@ -92,8 +93,8 @@
 <tr><td>0</td><td>4</td><td>Magic: <code>54h 45h 52h 53h</code> (<code>TERS</code>)</td></tr>
 <tr><td>4</td><td>1</td><td>Format version: 0</td></tr>
 <tr><td>5</td><td>1</td><td>Machine profile: 1</td></tr>
-<tr><td>6</td><td>3</td><td><code>rom_len</code>: 1 to 131,072</td></tr>
-<tr><td>9</td><td>1</td><td><code>ram_pages</code>: 8 KiB pages of RAM, 1 to 128</td></tr>
+<tr><td>6</td><td>3</td><td><code>rom_len</code>: 1 to 262,144</td></tr>
+<tr><td>9</td><td>1</td><td><code>ram_pages</code>: 8 KiB pages of RAM, 1 to 96</td></tr>
 <tr><td>10</td><td>1</td><td><code>n_dev</code>: device entries, 0 to 16</td></tr>
 <tr><td>11</td><td>5</td><td>Reserved, zero</td></tr>
 <tr><td>16</td><td>16</td><td>Title, UTF-8, padded with <code>00h</code></td></tr>

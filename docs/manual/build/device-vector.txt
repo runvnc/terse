@@ -109,7 +109,7 @@ Not a requirement, the reference hosts' look: in the phosphor style `terse-host`
 | Any call, also a rejected one | 4 |
 | An accepted `submit` | 1 per 4 bytes of the list, rounded up |
 
-A rejected submit copies nothing and costs only the 4. Drawing, decoding and the ink cap are the host's work and are not charged. A full 16,384-byte list costs 4 + 4,096 units. See [charges](terse:0cd6940cd27ae344118a79142e415ac92d9df31c5938bdee4e8ef2249cdd8620).
+A rejected submit copies nothing and costs only the 4. Drawing, decoding and the ink cap are the host's work and are not charged. A full 16,384-byte list costs 4 + 4,096 units. See [charges](terse:700aa265f5d0ae8141b841e6eeecb0b6146ac6935da3121441ee039db69ecf7c).
 
 ## State
 
@@ -142,4 +142,4 @@ int main(void)
 }
 ```
 
-The list is 41 bytes, so each submit costs 4 + 11 units. The list stays on the screen until the next submit; a program whose picture does not change need not submit again. The next article, [the 3D vector display](terse:b8036cb712412df5d6bb1bad9c8fb0cb804128928ed38976eb33b5d21faf3007), shares this display's style and layers.
+The list is 41 bytes, so each submit costs 4 + 11 units. The list stays on the screen until the next submit; a program whose picture does not change need not submit again. The next article, [the 3D vector display](terse:9e84506e6417d9d5d78e4d0c00da386055aeb5a4fa111ab34d8bfbbbfedbcf2e), shares this display's style and layers.

@@ -39,7 +39,7 @@ import tempfile
 import time
 import mmap
 
-ROM_BASE, RAM_BASE, RAM_FILE_OFF = 0x10000, 0x100000, 131072
+ROM_BASE, RAM_BASE, RAM_FILE_OFF = 0x10000, 0x100000, 262144
 ERR_BUFFER, ERR_UNKNOWN = 0xFFFFFFFE, 0xFFFFFFFF
 AREA = 4 << 20
 VERSION = 1
@@ -76,7 +76,7 @@ class Entry:
 
 
 class Memory:
-    """An instance's memory file (DEVICES.md 4.1): ROM at 0, RAM at 131,072."""
+    """An instance's memory file (DEVICES.md 4.1): ROM at 0, RAM at 262,144."""
 
     def __init__(self, path, rom, ram_len):
         self.path, self.rom, self.ram_len = path, rom, ram_len

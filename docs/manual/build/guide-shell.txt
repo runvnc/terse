@@ -1,6 +1,6 @@
 # Make a shell
 
-When `terse-host` opens, the first thing you see, the launcher with its tiles, is not part of the host. It is a Terse32 program like any other, the shell, with one device the others lack: Machines, device 8, which starts other machines and says where their screens go. You can write your own, in C here or in Rust on [the next page](terse:86e0271b98c677cedd0592921ff875a5c6cc96b013753db412eca9617305d748).
+When `terse-host` opens, the first thing you see, the launcher with its tiles, is not part of the host. It is a Terse32 program like any other, the shell, with one device the others lack: Machines, device 8, which starts other machines and says where their screens go. You can write your own, in C here or in Rust on [the next page](terse:07e190ee46fb867f7e1fe3f81f08ed6b912e01eee641aa2ea3480f807e945132).
 
 ## The smallest shell
 
@@ -57,6 +57,6 @@ From here a shell is a matter of taste: a list of programs to choose from (`mach
 
 ## What you have now
 
-A system of machines under your own shell. It is `examples/program/c/myshell.c` in the Tersenet sources. Next, [the same in Rust](terse:86e0271b98c677cedd0592921ff875a5c6cc96b013753db412eca9617305d748), or a device nobody has specified yet: [Invent a device](terse:38fc629ebeffe8e1bf0109aaefd7826daf11e5ada3b858ddf16de3ffe5aa1a15).
+A system of machines under your own shell. It is `examples/program/c/myshell.c` in the Tersenet sources. Next, [the same in Rust](terse:07e190ee46fb867f7e1fe3f81f08ed6b912e01eee641aa2ea3480f807e945132), or a device nobody has specified yet: [Invent a device](terse:d613f25466ceee884d567e2d0451fd40133eba37b69d5a79dcf927b845558f1d).
 
-Every call of device 8 is in [The Machines device](terse:33ed430f396ea25e394d85add3d613e351acdbf0900294bcc9e22080cc12ec24), and panels, the 3D view and input routing in [Screens, panels and input](terse:b980033957b3d45202da6bbfb254ecaa63ec6cfec80b9f2fa4a202c88d72f77f).
+Every call of device 8 is in [The Machines device](terse:90fe2f90b2cf0e4241e8e642ac485d82e04cd85b01721315ab238700a6877be8), and panels, the 3D view and input routing in [Screens, panels and input](terse:ba8400be642cc0f5ec88432fd49d0639690be9c24645bd3a578c4199ee420f7d).
