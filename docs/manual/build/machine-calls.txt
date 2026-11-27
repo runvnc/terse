@@ -6,7 +6,7 @@ Class sets the base charge: 4 for a deferred call (its result and charge
 follow from its arguments), 64 for an answered one (they depend on the
 device's state). System and Machines calls cost 4.
 
-[The system device](terse:81d1c876ae9c23111795061076a161d6d06fb50e9efb806ae43f4029ffbe9ff9), slot 1, always present:
+[The system device](terse:65aa289e4c4fe3a2fffe74d82470b46ea37d343e88af96407cb5d0ae48314723), slot 1, always present:
 
 | `a7` | Call | Arguments | Result |
 |---|---|---|---|
@@ -20,7 +20,7 @@ device's state). System and Machines calls cost 4.
 | `107h` | `open` | `a0` = address of an open request (read) | 1 passed to the shell, 0 not |
 | `108h` | `argument` | `a0` = buffer (32 bytes, written) | 1, or 0 if the machine has none |
 | `109h` | `device` | `a0` = device slot | its version, or `FFFF_FFFFh` if absent |
-| `10Ah` | `copy` | `a0` = text (read), `a1` = length, at most 65,536 | 0 (the host takes it only for the user's copy key) |
+| `10Ah` | `copy` | `a0` = text (read), `a1` = length, at most 65,536 | 0 (the host takes it only for the user's copy key, Enter or press) |
 
 [The terminal](terse:efa4fedc95f0b89f2003f8056d57ea8339ecf479eec1d9af97234ae8e6f6bfc7), slot 2:
 

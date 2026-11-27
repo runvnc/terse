@@ -27,7 +27,7 @@ Links are in colour. Tab moves to the next one (Shift+Tab to the one before), wh
 
 - another article, which opens in place: Esc comes back, up to 8 articles deep, each where you left it;
 - a feed, whose page shows its name and key and offers to subscribe (the next page);
-- a program, which the launcher starts in a tile of its own, after asking you if it is not one of the built-in ones ([Find and play a game](terse:c93727197ccf1f6993c75c3b0165e7dbe83f914f948a3b66ebbb6b28073bf9fc)).
+- a program, which the launcher starts in a tile of its own, after asking you if it is not one of the built-in ones ([Find and play a game](terse:13b3a64abf7f42a117cb851152934577546e3725f330ccea6629c31cbd77a201)).
 
 There are no links to web pages: an address such as `https://example.org` in an article is plain text. Links are written `terse:` and a long number, and a reader shows them by their text or shortened.
 
@@ -43,6 +43,6 @@ M on the timeline opens the first page of this manual. It is part of every Terse
 
 ## What you have now
 
-The timeline, articles, links and search. The timeline is only as good as the feeds you follow, so next: [Subscribe to someone's feed](terse:b8dc19fd8befa51a4c926e51a80b81e70499f2195aef83cf4c8d3f1b70dfb0a1).
+The timeline, articles, links and search. The timeline is only as good as the feeds you follow, so next: [Subscribe to someone's feed](terse:687931ab88cbba5c23605b792459f48a7ead20e46d9dc25ae07baff3e11de437).
 
 Every view and key of the reader is in [Using the reader](terse:2a952553a0a4a7eafb5e4e16e4cf2da8e84ba716d7374ff96e7a888b33def192).

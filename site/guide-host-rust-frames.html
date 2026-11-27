@@ -37,7 +37,9 @@
 <span class=k>const</span> WAIT_FRAME: <span class=t>u32</span> = <span class=n>0</span>;
 <span class=k>const</span> NEXT_EVENT: <span class=t>u32</span> = <span class=n>1</span>;
 <span class=k>const</span> FRAME_COUNT: <span class=t>u32</span> = <span class=n>2</span>;
-<span class=k>const</span> EXIT: <span class=t>u32</span> = <span class=n>6</span>;</pre>
+<span class=k>const</span> EXIT: <span class=t>u32</span> = <span class=n>6</span>;
+<span class=k>const</span> COPY: <span class=t>u32</span> = <span class=n>10</span>;
+<span class=k>const</span> MAX_COPY: <span class=t>u32</span> = <span class=n>65_536</span>;</pre>
 <pre>    <span class=k>pub</span> <span class=k>fn</span> run_frame&lt;D&gt;(&amp;<span class=k>mut</span> <span class=k>self</span>, <span class=k>mut</span> devices: D)
     <span class=k>where</span>
         D: <span class=t>FnMut</span>(&amp;<span class=k>mut</span> <span class=t>Cpu</span>, <span class=t>i64</span>, <span class=t>u32</span>, <span class=t>u32</span>) -&gt; (<span class=t>u32</span>, <span class=t>i64</span>),
@@ -59,7 +61,7 @@
             <span class=k>let</span> (slot, function) = (a7 &gt;&gt; <span class=n>8</span>, a7 &amp; <span class=n>0xff</span>);
             <span class=k>let</span> budget = <span class=k>self</span>.budget;
             <span class=k>let</span> (result, charge) = <span class=k>if</span> slot == SYSTEM {
-                (<span class=k>self</span>.system(function), BASE_CHARGE)
+                <span class=k>self</span>.system(function)
             } <span class=k>else</span> {
                 devices(&amp;<span class=k>mut</span> <span class=k>self</span>.cpu, budget, slot, function)
             };
@@ -76,15 +78,15 @@
 <ul>
 <li>The frame adds 125,000 to the budget and runs instructions while the budget is above zero. Each costs what <code>step</code> said: 1 if fetched from ROM, 4 from RAM.</li>
 <li>An instruction that starts with budget left always runs to its end, so the budget can end below zero. That debt is carried into the next frame: the carry rule. What is left above zero is dropped (<code>min(0)</code>). When the budget runs out the program is simply paused, and the next frame goes on with its next instruction.</li>
-<li>An <code>ecall</code> costs its own 1 (or 4) plus the call&#39;s charge: 4 for a call of the System device (slot 1). A call to any other slot goes to <code>devices</code>, which gives the result and the charge; here it is a closure that answers every call as one the machine does not have.</li>
+<li>An <code>ecall</code> costs its own 1 (or 4) plus the call&#39;s charge, which <code>system</code> returns with the result: 4 for a call of the System device (slot 1), more for <code>copy</code>. A call to any other slot goes to <code>devices</code>, which gives the result and the charge; here it is a closure that answers every call as one the machine does not have.</li>
 <li><code>wait_frame</code> ends the frame early: the program has finished this frame&#39;s work.</li>
 <li>A fault or <code>exit</code> stops the machine. The frame still counts.</li>
 </ul>
-<h2 id="four-calls">Four calls</h2>
-<pre>    <span class=k>fn</span> system(&amp;<span class=k>mut</span> <span class=k>self</span>, function: <span class=t>u32</span>) -&gt; <span class=t>u32</span> {
+<h2 id="five-calls">Five calls</h2>
+<pre>    <span class=k>fn</span> system(&amp;<span class=k>mut</span> <span class=k>self</span>, function: <span class=t>u32</span>) -&gt; (<span class=t>u32</span>, <span class=t>i64</span>) {
         <span class=k>let</span> a0 = <span class=k>self</span>.cpu.x[A0];
         <span class=k>let</span> event = <span class=k>self</span>.cpu.memory(a0, EVENT_SIZE, <span class=k>true</span>);
-        <span class=k>match</span> function {
+        <span class=k>let</span> result = <span class=k>match</span> function {
             WAIT_FRAME =&gt; <span class=k>self</span>.frame + <span class=n>1</span>,
             NEXT_EVENT <span class=k>if</span> event.is_none() =&gt; BAD_BUFFER,
             NEXT_EVENT =&gt; <span class=n>0</span>,
@@ -93,14 +95,25 @@
                 <span class=k>self</span>.status = <span class=t>Status</span>::<span class=t>Exited</span>(a0 <span class=k>as</span> <span class=t>u8</span>);
                 <span class=n>0</span>
             }
+            COPY =&gt; {
+                <span class=c>// No clipboard: check, charge, drop.</span>
+                <span class=k>let</span> n = <span class=k>self</span>.cpu.x[A1];
+                <span class=k>let</span> text = <span class=k>self</span>.cpu.memory(a0, n, <span class=k>false</span>);
+                <span class=k>if</span> n &gt; MAX_COPY || (n &gt; <span class=n>0</span> &amp;&amp; text.is_none()) {
+                    <span class=k>return</span> (BAD_BUFFER, BASE_CHARGE);
+                }
+                <span class=k>return</span> (<span class=n>0</span>, BASE_CHARGE + (n <span class=k>as</span> <span class=t>i64</span> + <span class=n>3</span>) / <span class=n>4</span>);
+            }
             _ =&gt; UNKNOWN_CALL,
-        }
+        };
+        (result, BASE_CHARGE)
     }</pre>
 <ul>
 <li><code>100h</code>, <code>wait_frame</code>: returns the number of the frame in which the program goes on, one more than the counter.</li>
 <li><code>101h</code>, <code>next_event</code>: the next input event. This host has no input, so the queue is always empty: check that the 4 bytes at <code>a0</code> are in RAM (else <code>FFFF_FFFEh</code>) and return 0. <code>hello</code>, in the next step, calls it every frame and never waits for the next frame without it.</li>
 <li><code>102h</code>, <code>frame_count</code>: the frame counter, N all through frame N.</li>
 <li><code>106h</code>, <code>exit</code>: the machine stops with exit code <code>a0</code> &amp; <code>FFh</code>. Like every call it writes its result, 0, to <code>a0</code>.</li>
+<li><code>10Ah</code>, <code>copy</code>: text for the user&#39;s clipboard, <code>a1</code> bytes at <code>a0</code>. This host has no clipboard, so it drops the text: check that the bytes lie wholly in ROM or wholly in RAM and that there are at most 65,536 (else <code>FFFF_FFFEh</code>), charge 1 more per 4 bytes, and return 0. (A host with a clipboard takes the text only in a frame in which the program read the user&#39;s copy key, Enter or a pointer press.)</li>
 </ul>
 <h2 id="the-program">The program</h2>
 <pre><span class=k>use</span> host::cpu::UNKNOWN_CALL;
@@ -149,7 +162,7 @@
 <span class=k>echo</span> <span class=m>$?</span></pre>
 <p>prints <code>6</code>, as <code>terse run frames.terse --frames 10</code> does. Each pass of the loop costs 7 units: the <code>ecall</code> 1 + 4, the other two instructions 1 each. 100,000 passes are 700,000 units, so the loop ends in frame 5 (frames 0 to 4 give 625,000), <code>wait_frame</code> returns 6, and the program exits in frame 6. A host that says 3 does not charge calls; 5, its <code>wait_frame</code> returns the counter instead of one more; 1, it has no budget at all.</p>
 <h2 id="what-you-have-now">What you have now</h2>
-<p>A machine that runs programs at exactly the reference&#39;s speed: <code>frames.rs</code>, 92 lines, and <code>bin/step2.rs</code>, 24. Next, give it a screen: <a href="guide-host-rust-driver.html">Make a host in Rust, step 3: a driver shows hello</a>.</p>
+<p>A machine that runs programs at exactly the reference&#39;s speed: <code>frames.rs</code>, 104 lines, and <code>bin/step2.rs</code>, 24. Next, give it a screen: <a href="guide-host-rust-driver.html">Make a host in Rust, step 3: a driver shows hello</a>.</p>
 <ul>
 <li>The same step in Go: &quot;Make a host in Go, step 2: frames and the budget&quot;, the page before this one.</li>
 <li>Full implementations: <code>native/core-c/main.c</code> (the frame loop) and <code>machine.c</code> (all ten System calls); the reference&#39;s <code>crates/terse-core/src/machine.rs</code> and <code>system.rs</code>.</li>

@@ -44,6 +44,8 @@
     nextEvent  = <span class=n>1</span>
     frameCount = <span class=n>2</span>
     exit       = <span class=n>6</span>
+    copyText   = <span class=n>10</span>
+    maxCopy    = <span class=n>65536</span>
 )</pre>
 <pre><span class=k>func</span> (m *Machine) RunFrame() {
     m.Budget += FrameBudget
@@ -60,7 +62,7 @@
         slot, fn := m.X[A7]&gt;&gt;<span class=n>8</span>, m.X[A7]&amp;<span class=n>0xff</span>
         result, charge := <span class=t>uint32</span>(UnknownCall), <span class=t>int64</span>(BaseCharge)
         <span class=k>if</span> slot == System {
-            result = m.system(fn)
+            result, charge = m.system(fn)
         } <span class=k>else</span> <span class=k>if</span> m.Devices != <span class=k>nil</span> {
             result, charge = m.Devices(slot, fn)
         }
@@ -77,33 +79,42 @@
 <ul>
 <li>The frame adds 125,000 to the budget and runs instructions while the budget is above zero. Each costs what <code>Step</code> said: 1 if fetched from ROM, 4 from RAM.</li>
 <li>An instruction that starts with budget left always runs to its end, so the budget can end below zero. That debt is carried into the next frame: the carry rule. What is left above zero is dropped (<code>min(m.Budget, 0)</code>). When the budget runs out the program is simply paused, and the next frame goes on with its next instruction.</li>
-<li>An <code>ecall</code> costs its own 1 (or 4) plus the call&#39;s charge: 4 for a call of the System device (slot 1), and for a call the machine does not have.</li>
+<li>An <code>ecall</code> costs its own 1 (or 4) plus the call&#39;s charge, which <code>system</code> returns with the result: 4 for a call of the System device (slot 1) and for a call the machine does not have, more for <code>copy</code>.</li>
 <li><code>wait_frame</code> ends the frame early: the program has finished this frame&#39;s work.</li>
 <li>A fault or <code>exit</code> stops the machine. The frame still counts.</li>
 </ul>
-<h2 id="four-calls">Four calls</h2>
-<pre><span class=k>func</span> (m *Machine) system(fn <span class=t>uint32</span>) <span class=t>uint32</span> {
+<h2 id="five-calls">Five calls</h2>
+<pre><span class=k>func</span> (m *Machine) system(fn <span class=t>uint32</span>) (<span class=t>uint32</span>, <span class=t>int64</span>) {
     <span class=k>switch</span> fn {
     <span class=k>case</span> waitFrame:
-        <span class=k>return</span> m.Frame + <span class=n>1</span>
+        <span class=k>return</span> m.Frame + <span class=n>1</span>, BaseCharge
     <span class=k>case</span> nextEvent:
         <span class=k>if</span> m.Memory(m.X[A0], eventSize, <span class=k>true</span>) == <span class=k>nil</span> {
-            <span class=k>return</span> BadBuffer
+            <span class=k>return</span> BadBuffer, BaseCharge
         }
-        <span class=k>return</span> <span class=n>0</span>
+        <span class=k>return</span> <span class=n>0</span>, BaseCharge
     <span class=k>case</span> frameCount:
-        <span class=k>return</span> m.Frame
+        <span class=k>return</span> m.Frame, BaseCharge
     <span class=k>case</span> exit:
         m.Stopped, m.ExitCode = Exited, <span class=t>byte</span>(m.X[A0])
-        <span class=k>return</span> <span class=n>0</span>
+        <span class=k>return</span> <span class=n>0</span>, BaseCharge
+    <span class=k>case</span> copyText:
+        <span class=c>// No clipboard: check, charge, drop.</span>
+        n := m.X[A1]
+        text := m.Memory(m.X[A0], n, <span class=k>false</span>)
+        <span class=k>if</span> n &gt; maxCopy || (n &gt; <span class=n>0</span> &amp;&amp; text == <span class=k>nil</span>) {
+            <span class=k>return</span> BadBuffer, BaseCharge
+        }
+        <span class=k>return</span> <span class=n>0</span>, BaseCharge + <span class=t>int64</span>(n+<span class=n>3</span>)/<span class=n>4</span>
     }
-    <span class=k>return</span> UnknownCall
+    <span class=k>return</span> UnknownCall, BaseCharge
 }</pre>
 <ul>
 <li><code>100h</code>, <code>wait_frame</code>: returns the number of the frame in which the program goes on, one more than the counter.</li>
 <li><code>101h</code>, <code>next_event</code>: the next input event. This host has no input, so the queue is always empty: check that the 4 bytes at <code>a0</code> are in RAM (else <code>FFFF_FFFEh</code>) and return 0. <code>hello</code>, in the next step, calls it every frame and never waits for the next frame without it.</li>
 <li><code>102h</code>, <code>frame_count</code>: the frame counter, N all through frame N.</li>
 <li><code>106h</code>, <code>exit</code>: the machine stops with exit code <code>a0</code> &amp; <code>FFh</code>. Like every call it writes its result, 0, to <code>a0</code>.</li>
+<li><code>10Ah</code>, <code>copy</code>: text for the user&#39;s clipboard, <code>a1</code> bytes at <code>a0</code>. This host has no clipboard, so it drops the text: check that the bytes lie wholly in ROM or wholly in RAM and that there are at most 65,536 (else <code>FFFF_FFFEh</code>), charge 1 more per 4 bytes, and return 0. (A host with a clipboard takes the text only in a frame in which the program read the user&#39;s copy key, Enter or a pointer press.)</li>
 </ul>
 <h2 id="the-program">The program</h2>
 <pre><span class=k>package</span> main
@@ -160,7 +171,7 @@
 <span class=k>echo</span> <span class=m>$?</span></pre>
 <p>prints <code>6</code>, as <code>terse run frames.terse --frames 10</code> does. Each pass of the loop costs 7 units: the <code>ecall</code> 1 + 4, the other two instructions 1 each. 100,000 passes are 700,000 units, so the loop ends in frame 5 (frames 0 to 4 give 625,000), <code>wait_frame</code> returns 6, and the program exits in frame 6. A host that says 3 does not charge calls; 5, its <code>wait_frame</code> returns the counter instead of one more; 1, it has no budget at all. Step 1&#39;s program says 255: it has no <code>frame_count</code>, so the last call returns <code>FFFF_FFFFh</code>.</p>
 <h2 id="what-you-have-now">What you have now</h2>
-<p>A machine that runs programs at exactly the reference&#39;s speed: <code>frames.go</code>, 80 lines, and <code>step2/main.go</code>, 32. Next, give it a screen: <a href="guide-host-go-driver.html">Make a host in Go, step 3: a driver shows hello</a>.</p>
+<p>A machine that runs programs at exactly the reference&#39;s speed: <code>frames.go</code>, 90 lines, and <code>step2/main.go</code>, 32. Next, give it a screen: <a href="guide-host-go-driver.html">Make a host in Go, step 3: a driver shows hello</a>.</p>
 <ul>
 <li>The same step in Rust: <a href="guide-host-rust-frames.html">Make a host in Rust, step 2: frames and the budget</a>.</li>
 <li>Full implementations: <code>native/core-c/main.c</code> (the frame loop) and <code>machine.c</code> (all ten System calls); the reference&#39;s <code>crates/terse-core/src/machine.rs</code> and <code>system.rs</code>.</li>

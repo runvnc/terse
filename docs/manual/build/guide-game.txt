@@ -1,6 +1,6 @@
 # Make a small game
 
-A dot you steer with the arrow keys, a ring to reach, and a score: the line program of the last pages grown into a game loop. In C here, and in Rust on [the next page](terse:065dec94efe6ebe2b0d0c259c7b8bcfc095aba1353d920ae8a420e3cfd37f88e).
+A dot you steer with the arrow keys, a ring to reach, and a score: the line program of the last pages grown into a game loop. In C here, and in Rust on [the next page](terse:c902429ebaf928dd0478b10df0b2cad4c279f835923799bee3604b32dde137c6).
 
 ## The program
 
@@ -112,6 +112,6 @@ Two games come with Tersenet, both in C, and both are this loop grown up. `progr
 
 ## What you have now
 
-A game: input, movement, a goal and a score, tested without a window. It is `examples/program/c/chase.c` in the Tersenet sources. Next, [the same in Rust](terse:065dec94efe6ebe2b0d0c259c7b8bcfc095aba1353d920ae8a420e3cfd37f88e), or test a program in its real window: [Test your program in its window](terse:605f343d4dd4e446196c6d660911dbe7f49033f0185d645ad148c322fd5a1a77).
+A game: input, movement, a goal and a score, tested without a window. It is `examples/program/c/chase.c` in the Tersenet sources. Next, [the same in Rust](terse:c902429ebaf928dd0478b10df0b2cad4c279f835923799bee3604b32dde137c6), or test a program in its real window: [Test your program in its window](terse:ee752ebaeb3c980c5a98d33506eb4c7978f60bbc7a75ff5b9af50d2db0931ebc).
 
-Random bytes, controllers and the clock are in [The system device](terse:81d1c876ae9c23111795061076a161d6d06fb50e9efb806ae43f4029ffbe9ff9).
+Random bytes, controllers and the clock are in [The system device](terse:65aa289e4c4fe3a2fffe74d82470b46ea37d343e88af96407cb5d0ae48314723).

@@ -14,7 +14,7 @@ A program file (`.terse`) is a 32-byte header, two bytes for each device the pro
 | 10 | 1 | the number of devices, at most 16 |
 | 32 | 2 each | each device: its slot and version (`80h`: optional) |
 
-Bytes 11 to 31 hold a title, which a host does not need. The rest is in [The Terse32 machine](terse:0e51edb20b815c926fe623365bae2c282c9b8193930d50be70974083725df724), "The image format".
+Bytes 11 to 31 hold a title, which a host does not need. The rest is in [The Terse32 machine](terse:5b5efc30244a8dfbb355db052e5c84b8fa812c81c04ec5847881fc74f72b3849), "The image format".
 
 ```go from examples/host/go/machine/image.go
 package machine
@@ -357,8 +357,8 @@ prints `186`. The reference gives the same: `terse run exit.terse --frames 1`, t
 
 ## What you have now
 
-A Terse32 processor that runs a program to its end: `cpu.go` (283 lines), `decode.go` (122), `image.go` (51) and `step1/main.go` (36). Next, make it keep time: [Make a host in Go, step 2: frames and the budget](terse:06878ece8c0b4570920a2a9803e542479dacd25cfd625860bc22748970297141).
+A Terse32 processor that runs a program to its end: `cpu.go` (283 lines), `decode.go` (122), `image.go` (51) and `step1/main.go` (36). Next, make it keep time: [Make a host in Go, step 2: frames and the budget](terse:53a3273737d7d04ec76fb9464b3d53a1b63ce5ee509744dc8d6b6c2a430e78f3).
 
-- The same step in Rust: [Make a host in Rust, step 1: run a program to its end](terse:24422a441a94b60b1bed3972a54203ae0efd3d88b6a66e87669c1d183ad8c3da).
+- The same step in Rust: [Make a host in Rust, step 1: run a program to its end](terse:1f2fdf272a6a1baeff67527d3e75a8a1fecaaf9306e0b7f7b82ec7c16df5a8f4).
 - Full implementations: `native/core-c/cpu.c` (C) and `crates/terse-core/src/cpu.rs` (the reference).
-- The rules: [The Terse32 machine](terse:0e51edb20b815c926fe623365bae2c282c9b8193930d50be70974083725df724), sections "CPU", "Memory map", "Reset state", "Stopping and faults", "The image format" and "Calls".
+- The rules: [The Terse32 machine](terse:5b5efc30244a8dfbb355db052e5c84b8fa812c81c04ec5847881fc74f72b3849), sections "CPU", "Memory map", "Reset state", "Stopping and faults", "The image format" and "Calls".

@@ -35,6 +35,8 @@ const WAIT_FRAME: u32 = 0;
 const NEXT_EVENT: u32 = 1;
 const FRAME_COUNT: u32 = 2;
 const EXIT: u32 = 6;
+const COPY: u32 = 10;
+const MAX_COPY: u32 = 65_536;
 ```
 
 ```rust from examples/host/rust/src/frames.rs
@@ -59,7 +61,7 @@ const EXIT: u32 = 6;
             let (slot, function) = (a7 >> 8, a7 & 0xff);
             let budget = self.budget;
             let (result, charge) = if slot == SYSTEM {
-                (self.system(function), BASE_CHARGE)
+                self.system(function)
             } else {
                 devices(&mut self.cpu, budget, slot, function)
             };
@@ -78,17 +80,17 @@ In order:
 
 - The frame adds 125,000 to the budget and runs instructions while the budget is above zero. Each costs what `step` said: 1 if fetched from ROM, 4 from RAM.
 - An instruction that starts with budget left always runs to its end, so the budget can end below zero. That debt is carried into the next frame: the carry rule. What is left above zero is dropped (`min(0)`). When the budget runs out the program is simply paused, and the next frame goes on with its next instruction.
-- An `ecall` costs its own 1 (or 4) plus the call's charge: 4 for a call of the System device (slot 1). A call to any other slot goes to `devices`, which gives the result and the charge; here it is a closure that answers every call as one the machine does not have.
+- An `ecall` costs its own 1 (or 4) plus the call's charge, which `system` returns with the result: 4 for a call of the System device (slot 1), more for `copy`. A call to any other slot goes to `devices`, which gives the result and the charge; here it is a closure that answers every call as one the machine does not have.
 - `wait_frame` ends the frame early: the program has finished this frame's work.
 - A fault or `exit` stops the machine. The frame still counts.
 
-## Four calls
+## Five calls
 
 ```rust from examples/host/rust/src/frames.rs
-    fn system(&mut self, function: u32) -> u32 {
+    fn system(&mut self, function: u32) -> (u32, i64) {
         let a0 = self.cpu.x[A0];
         let event = self.cpu.memory(a0, EVENT_SIZE, true);
-        match function {
+        let result = match function {
             WAIT_FRAME => self.frame + 1,
             NEXT_EVENT if event.is_none() => BAD_BUFFER,
             NEXT_EVENT => 0,
@@ -97,8 +99,18 @@ In order:
                 self.status = Status::Exited(a0 as u8);
                 0
             }
+            COPY => {
+                // No clipboard: check, charge, drop.
+                let n = self.cpu.x[A1];
+                let text = self.cpu.memory(a0, n, false);
+                if n > MAX_COPY || (n > 0 && text.is_none()) {
+                    return (BAD_BUFFER, BASE_CHARGE);
+                }
+                return (0, BASE_CHARGE + (n as i64 + 3) / 4);
+            }
             _ => UNKNOWN_CALL,
-        }
+        };
+        (result, BASE_CHARGE)
     }
 ```
 
@@ -106,6 +118,7 @@ In order:
 - `101h`, `next_event`: the next input event. This host has no input, so the queue is always empty: check that the 4 bytes at `a0` are in RAM (else `FFFF_FFFEh`) and return 0. `hello`, in the next step, calls it every frame and never waits for the next frame without it.
 - `102h`, `frame_count`: the frame counter, N all through frame N.
 - `106h`, `exit`: the machine stops with exit code `a0` & `FFh`. Like every call it writes its result, 0, to `a0`.
+- `10Ah`, `copy`: text for the user's clipboard, `a1` bytes at `a0`. This host has no clipboard, so it drops the text: check that the bytes lie wholly in ROM or wholly in RAM and that there are at most 65,536 (else `FFFF_FFFEh`), charge 1 more per 4 bytes, and return 0. (A host with a clipboard takes the text only in a frame in which the program read the user's copy key, Enter or a pointer press.)
 
 ## The program
 
@@ -170,8 +183,8 @@ prints `6`, as `terse run frames.terse --frames 10` does. Each pass of the loop 
 
 ## What you have now
 
-A machine that runs programs at exactly the reference's speed: `frames.rs`, 92 lines, and `bin/step2.rs`, 24. Next, give it a screen: [Make a host in Rust, step 3: a driver shows hello](terse:3395ee1d67d371dfcbb0f358a60c7c1cbdecd5cd45049b3311a1b8e23f00c47c).
+A machine that runs programs at exactly the reference's speed: `frames.rs`, 104 lines, and `bin/step2.rs`, 24. Next, give it a screen: [Make a host in Rust, step 3: a driver shows hello](terse:8c226844c800c6eeb7a5b29f9cbd89d426db05c96dc75b342f6da8ef8d1bdf68).
 
 - The same step in Go: "Make a host in Go, step 2: frames and the budget", the page before this one.
 - Full implementations: `native/core-c/main.c` (the frame loop) and `machine.c` (all ten System calls); the reference's `crates/terse-core/src/machine.rs` and `system.rs`.
-- The rules: [The Terse32 machine](terse:0e51edb20b815c926fe623365bae2c282c9b8193930d50be70974083725df724), section "Frames and the budget"; [The system device (device 1)](terse:81d1c876ae9c23111795061076a161d6d06fb50e9efb806ae43f4029ffbe9ff9); [Charges and limits](terse:700aa265f5d0ae8141b841e6eeecb0b6146ac6935da3121441ee039db69ecf7c).
+- The rules: [The Terse32 machine](terse:5b5efc30244a8dfbb355db052e5c84b8fa812c81c04ec5847881fc74f72b3849), section "Frames and the budget"; [The system device (device 1)](terse:65aa289e4c4fe3a2fffe74d82470b46ea37d343e88af96407cb5d0ae48314723); [Charges and limits](terse:700aa265f5d0ae8141b841e6eeecb0b6146ac6935da3121441ee039db69ecf7c).

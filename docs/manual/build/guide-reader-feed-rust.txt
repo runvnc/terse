@@ -145,4 +145,4 @@ A complete reader keeps its subscriptions and every entry it receives, lists the
 
 A Tersenet reader in Rust: it follows a feed, checks everything it receives against its signature and hash, and shows the articles.
 
-Next, if you want to go further: Tersenet can also carry small programs, run by the Terse32 virtual machine. Nothing so far needs it. [Write a program](terse:9bd9f08065474881858780b2ea9d6c767f509b1b02e90813d9016b92183ebf79).
+Next, if you want to go further: Tersenet can also carry small programs, run by the Terse32 virtual machine. Nothing so far needs it. [Write a program](terse:fa7a97176258c24150e4c4c6b46258247a1b01863c07ee57940fa726a98ddad3).

@@ -180,5 +180,5 @@ A complete reader keeps its subscriptions and every entry it receives, lists the
 
 A Tersenet reader in Go: it follows a feed, checks everything it receives against its signature and hash, and shows the articles.
 
-- The same step in Rust: [Make a reader in Rust, step 3: follow a feed](terse:c155e6f7db2e4e2c83e1bc742dc033557fefa7dcdec13091b45709e6e6f7fcd2).
-- Next, if you want to go further: Tersenet can also carry small programs, run by the Terse32 virtual machine. Nothing so far needs it. [Write a program](terse:9bd9f08065474881858780b2ea9d6c767f509b1b02e90813d9016b92183ebf79).
+- The same step in Rust: [Make a reader in Rust, step 3: follow a feed](terse:6012bf2fe170541797fbb06c754d826e15338911e3c52949eaf393a06e9fe8af).
+- Next, if you want to go further: Tersenet can also carry small programs, run by the Terse32 virtual machine. Nothing so far needs it. [Write a program](terse:fa7a97176258c24150e4c4c6b46258247a1b01863c07ee57940fa726a98ddad3).
