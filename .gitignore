@@ -5,3 +5,4 @@
 /native/core-c/tcore
 /native/core-c/*.o
 /dist
+__pycache__/
