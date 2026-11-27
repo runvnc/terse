@@ -1375,6 +1375,86 @@ fn all_drawn(fig: &terse_core::page::Figure) {
     assert_eq!(drawn, drawing, "every segment drawn, within the caps");
 }
 
+/// Fences that name a language, coloured by the reader (its choice, not
+/// the format's): C, Rust, Go, command lines, and fences that are not
+/// coloured; a link in a comment stays a link.
+const CODE: &str = "\
+```c examples/program/c/hello.c
+#include \"terse.h\"
+/* a comment
+   on two lines */
+static uint8_t n = 0x2A; // see terse:feed/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+char c = '\\n';
+```
+
+```rust
+#![no_std]
+fn main() -> Result<(), String> {
+    println!(\"{}\", 1.5); // a [link](terse:feed/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef)
+    let s: &'static str = r\"raw\";
+}
+```
+
+```go
+package main
+func f(b []byte) error { return nil }
+var s = `a raw
+string`
+```
+
+```sh
+X=1 terse run a.terse | grep \"x\" # a comment
+xxd -r -p > f <<EOF
+5445
+EOF
+```
+
+```text
+int not_coloured;
+```
+
+A paragraph after them.
+";
+
+/// A page's lines with each run that is not in the plain code colour or
+/// the body colour as `class[text]` (k keyword, t type, s string, n
+/// number or meta, c comment, l link).
+fn coloured_lines(run: &Run) -> String {
+    let mut out = String::new();
+    for line in &run.layout().lines {
+        for span in &line.spans {
+            let class = match span.style.rgb {
+                [190, 205, 165] | [218, 218, 218] => "",
+                [207, 162, 238] => "k",
+                [124, 199, 196] => "t",
+                [230, 176, 122] => "s",
+                [240, 145, 155] => "n",
+                [150, 150, 140] => "c",
+                [110, 170, 255] => "l",
+                _ => "?",
+            };
+            match class {
+                "" => out.push_str(&span.text),
+                c => out.push_str(&format!("{c}[{}]", span.text)),
+            }
+        }
+        out.push('\n');
+    }
+    out
+}
+
+#[test]
+fn article_code_colours() {
+    let run = open_only("Code", CODE, 10);
+    let got = coloured_lines(&run);
+    golden("article-code", &got);
+    assert!(got.contains("t[uint8_t ]") && got.contains("k[fn ]") && got.contains("k[func ]") && got.contains("k[terse ]"), "{got}");
+    assert!(got.contains("int not_coloured;\nA paragraph after them.\n"), "{got}");
+    let text = run.page_text();
+    assert!(text.contains("// see [terse:feed/012345…abcdef]{1}\n"), "{text}");
+    assert!(text.contains("// a [link]{2}\n"), "{text}");
+}
+
 #[test]
 fn article_format() {
     let mut run = open_only(FORMATTED_TITLE, FORMATTED, 10);

@@ -82,7 +82,9 @@
  *     indents every line of a paragraph alike, so wrapped lines align with
  *     the bullet, not the text.)
  *   - A preformatted block or a fence: monospace 13 units, not wrapped,
- *     its lines (and blank lines, in a fence) as written.
+ *     its lines (and blank lines, in a fence) as written; a fence whose
+ *     info string names a language has its code coloured ("Colouring
+ *     code" below).
  *   - A figure (W and H 1-4 digits each, 1-1024; a word after a separator
  *     only; points and widths in range as written, before rounding): a
  *     Figure command, centred, of W x H units, or if W is over
@@ -383,6 +385,9 @@
 #define TC_MAX 1024  /* a table's cells kept (the page device's limit) */
 #define TABLE_SIZE 14
 #define CODE_DOWN 1  /* a code span is this much smaller than its text */
+#define W_HTOKEN 300 /* a token of a coloured fence classified (and its Colour command) */
+#define W_HLOOK 60   /* a word looked up in a keyword list */
+#define W_HLIST 700  /* ... and the list looked through */
 
 /* Keys (USB HID). */
 #define KEY_F 0x09
@@ -678,6 +683,8 @@ static uint16_t b_start, b_end; /* the block's text: its first byte, the end of 
 static uint16_t b_open;    /* the block's first line (a fence: its opening line) */
 static uint8_t b_kind, b_prev; /* the block's kind, the previous block's */
 static uint8_t b_closed;   /* a fence: its closing line was found */
+static uint8_t b_lang;     /* a fence: the language its info string names (HL_*) */
+static uint8_t hl_dirty;   /* a coloured block changed the text colour */
 static uint8_t b_bad;      /* a figure: its opening line is malformed */
 static uint8_t b_style;    /* the style the document is in */
 static uint8_t b_skip;     /* B_EMIT: blanks at b_emit are dropped */
@@ -1812,6 +1819,8 @@ static uint16_t fence_number(uint32_t *i, uint32_t end)
     return v;
 }
 
+static uint8_t fence_lang(uint32_t i, uint32_t end);
+
 /* The rest of a fence's opening line, art[i .. end): "path W H" makes the
  * block a figure (b_bad if W or H is not right). */
 static void fence_info(uint32_t i, uint32_t end)
@@ -1819,8 +1828,10 @@ static void fence_info(uint32_t i, uint32_t end)
     spend((end - i) * W_FIND);
     while (i < end && is_blank(art[i]))
         i++;
-    if (end - i < 4 || memcmp(art + i, "path", 4) || (end - i > 4 && !is_blank(art[i + 4])))
+    if (end - i < 4 || memcmp(art + i, "path", 4) || (end - i > 4 && !is_blank(art[i + 4]))) {
+        b_lang = fence_lang(i, end);
         return;
+    }
     b_kind = K_FIGURE;
     i += 4;
     while (i < end && is_blank(art[i]))
@@ -2021,7 +2032,7 @@ static uint8_t find_block(uint32_t limit, uint8_t final)
                     b_kind = block_of[k];
                     b_start = k == L_PLAIN ? q : k == L_ITEM || k == L_H1 ? b_line + 2 : k == L_H2 ? b_line + 3 : b_line;
                     b_open = b_line;
-                    b_lines = b_closed = b_bad = 0;
+                    b_lines = b_closed = b_bad = b_lang = 0;
                 }
                 if (k == L_TABLE)
                     table_line(b_line);
@@ -2093,6 +2104,419 @@ static uint8_t find_block(uint32_t limit, uint8_t final)
     }
 }
 
+/* --- Colouring code ------------------------------------------------------
+ *
+ * A fence's lines are coloured by the language its info string names (a
+ * choice of this reader, not of the format: ARTICLE.md 2.4 ignores the
+ * info string). The first word: c or h, rust or rs, go, sh (shell, bash,
+ * fish, zsh, console); text, txt, plain, output, path and article are not
+ * coloured; if the word is none of these, a word of the info string that
+ * is a file name gives the language by its extension; else any word gets
+ * the generic colouring. A preformatted block and a fence with no info
+ * string are not coloured. The website (crates/terse-net/src/highlight.rs)
+ * and the Go reader use the same rules and classes.
+ *
+ * A small tokenizer, run as the block is emitted (once, as the document is
+ * built: the page device then keeps the colours): comments, strings and
+ * character literals, numbers, keywords and types from short tables, C's
+ * preprocessor words, Rust's attributes and macros; for command lines the
+ * command word of each command, strings, comments, variables and
+ * here-documents; generic: # and // comments, strings and numbers at the
+ * start of a word, a [section] line. A token never runs past its line's
+ * LF; what goes on to the next line (a block comment, a Rust or Go raw
+ * string, a shell line ended by a backslash, a here-document) is hl_st.
+ * A run of a class is a Colour command before it. So that a link with
+ * text in a fence stays one ("[" ... "](terse:...)"), no colour changes
+ * after a "[" not yet closed on the line when a "](" follows it. */
+enum { HL_NONE, HL_C, HL_RUST, HL_GO, HL_SH, HL_GEN };
+/* Classes: keep the colour (blanks), plain, comment, string, number,
+ * keyword, type, meta. */
+enum { HC_KEEP, HC_PLAIN, HC_COM, HC_STR, HC_NUM, HC_KW, HC_TYPE, HC_META };
+static const uint8_t hl_rgb[8][3] = {
+    {0, 0, 0}, {190, 205, 165}, {150, 150, 140}, {230, 176, 122},
+    {240, 145, 155}, {207, 162, 238}, {124, 199, 196}, {240, 145, 155},
+};
+/* Words: the language, then the word, each ended by a space. */
+static const char hl_words[] = "\1c \1h \2rust \2rs \3go \4sh \4shell \4bash \4fish \4zsh \4console "
+                               "\5text \5txt \5plain \5output \5path \5article ";
+static const char kw_c[] = "if else for while do return break continue switch case default goto sizeof static const "
+                           "extern struct union enum typedef volatile inline register restrict auto true false NULL ";
+static const char ty_c[] = "int char void unsigned signed long short float double bool _Bool ";
+static const char kw_rust[] = "fn let mut if else for while loop match return break continue pub use mod struct enum "
+                              "impl trait type const static as in ref move where unsafe extern crate self super dyn "
+                              "async await true false ";
+static const char ty_rust[] = "u8 u16 u32 u64 u128 usize i8 i16 i32 i64 i128 isize f32 f64 bool char str ";
+static const char kw_go[] = "func if else for range return break continue switch case default go defer select "
+                            "package import var const type struct interface map chan fallthrough goto true false nil iota ";
+static const char ty_go[] = "int int8 int16 int32 int64 uint uint8 uint16 uint32 uint64 uintptr byte rune string bool "
+                            "error float32 float64 complex64 complex128 any ";
+static const char cmd_sh[] = "if then else elif do while until begin ";
+
+static uint8_t hl_lang; /* the language of the block being emitted (HL_NONE: not coloured) */
+static uint8_t hl_st;   /* what goes on to the next line: 1 a block comment, 2 a string (its quote hl_q),
+                         * 3 a shell line ended by a backslash, 4 a here-document (its word at hl_hd) */
+static uint8_t hl_q, hl_bol, hl_cmd, hl_hdn;
+static uint16_t hl_at, hl_hd; /* the end of the token classified last; the here-document's word */
+
+static uint8_t lower(uint8_t c)
+{
+    return (uint8_t)(c - 'A') < 26 ? c | 0x20 : c;
+}
+
+static const char *const hl_lists[] = {kw_c, ty_c, kw_rust, ty_rust, kw_go, ty_go, cmd_sh};
+enum { L_KW_C, L_TY_C, L_KW_RUST, L_TY_RUST, L_KW_GO, L_TY_GO, L_CMD_SH };
+/* Each list's first letters (bit c & 31) and lengths (bit n), to skip
+ * most words without looking through the list. */
+static uint32_t hl_first[7], hl_lens[7];
+
+/* Whether the word art[p .. p + n) is in list `id`. */
+static uint8_t in_list(uint8_t id, uint32_t p, uint32_t n)
+{
+    const char *w = hl_lists[id], *s;
+    uint32_t k;
+    spend(W_HLOOK);
+    if (!hl_lens[id])
+        for (s = w; *s; s++)
+            if (s == w || s[-1] == ' ') {
+                for (k = 0; s[k] != ' '; k++)
+                    ;
+                hl_first[id] |= 1u << (*s & 31);
+                hl_lens[id] |= 1u << k;
+            }
+    if (n > 31 || !(hl_lens[id] >> n & 1) || !(hl_first[id] >> (art[p] & 31) & 1))
+        return 0;
+    spend(W_HLIST);
+    while (*w) {
+        for (k = 0; k < n && (uint8_t)w[k] == art[p + k]; k++)
+            ;
+        if (k == n && w[k] == ' ')
+            return 1;
+        while (*w++ != ' ')
+            ;
+    }
+    return 0;
+}
+
+/* The language a word art[p .. p + n) names (any case), + 1; 0 if none. */
+static uint8_t word_lang(uint32_t p, uint32_t n)
+{
+    const char *w = hl_words;
+    uint32_t k;
+    spend(W_HLIST);
+    while (*w) {
+        uint8_t l = (uint8_t)*w++;
+        for (k = 0; k < n && w[k] != ' ' && (uint8_t)w[k] == lower(art[p + k]); k++)
+            ;
+        if (k == n && w[k] == ' ')
+            return l + 1;
+        while (*w++ != ' ')
+            ;
+    }
+    return 0;
+}
+
+/* The language of a fence from its info string, art[i .. end) (its
+ * leading blanks skipped). */
+static uint8_t fence_lang(uint32_t i, uint32_t end)
+{
+    uint32_t j = i, k, dot;
+    uint8_t l;
+    if (i >= end)
+        return HL_NONE;
+    while (j < end && !is_blank(art[j]))
+        j++;
+    if ((l = word_lang(i, j - i)))
+        return l - 1 == 5 ? HL_NONE : l - 1;
+    /* A file name: its extension. */
+    for (k = i; k < end; k = j) {
+        while (k < end && is_blank(art[k]))
+            k++;
+        for (j = k, dot = 0; j < end && !is_blank(art[j]); j++)
+            if (art[j] == '.')
+                dot = j;
+            else if (art[j] == '/')
+                dot = 0;
+        if (dot > k && (l = word_lang(dot + 1, j - dot - 1)))
+            return l - 1 == 5 ? HL_NONE : l - 1;
+    }
+    return HL_GEN;
+}
+
+static uint8_t is_word(uint8_t c)
+{
+    return is_alnum(c) || c == '_';
+}
+
+/* The first `a` `b` in art[p .. e), or e. */
+static uint32_t find_pair(uint32_t p, uint32_t e, uint8_t a, uint8_t b)
+{
+    for (; p + 1 < e; p++)
+        if (art[p] == a && art[p + 1] == b)
+            return p;
+    return e;
+}
+
+/* The end of a string whose text starts at p, closed by q (a backslash
+ * escapes unless raw), or 0 if the line (ending at le) ends first. */
+static uint32_t str_end(uint32_t p, uint32_t le, uint8_t q, uint8_t raw)
+{
+    for (; p < le; p++) {
+        if (art[p] == '\\' && !raw)
+            p++;
+        else if (art[p] == q)
+            return p + 1;
+    }
+    return 0;
+}
+
+/* Classifies the token at art[p] (the line ending at le): its class in
+ * *cls, returns its end. */
+static uint32_t hl_token(uint32_t p, uint32_t le, uint8_t *cls)
+{
+    uint8_t c = art[p], n = p + 1 < le ? art[p + 1] : 0, bol = hl_bol, lang = hl_lang;
+    uint8_t ws = bol || is_blank(art[p - 1]);
+    uint32_t e = p + 1, k;
+    hl_bol = 0;
+    *cls = HC_PLAIN;
+    if (c == '\n') {
+        hl_bol = 1;
+        *cls = HC_KEEP;
+        return e;
+    }
+    if (bol && lang == HL_SH) {
+        if (hl_st == 4) { /* a here-document's line; its word alone ends it */
+            for (k = p; k < le && is_blank(art[k]); k++)
+                ;
+            if (le - k >= hl_hdn && !memcmp(art + k, art + hl_hd, hl_hdn) && blanks_only(k + hl_hdn, le))
+                hl_st = 0;
+            *cls = HC_STR;
+            return le;
+        }
+        hl_cmd = hl_st != 3;
+        hl_st = 0;
+    }
+    if (hl_st == 1) { /* in a block comment */
+        k = find_pair(p, le, '*', '/');
+        if (k < le)
+            hl_st = 0, k += 2;
+        *cls = HC_COM;
+        return k;
+    }
+    if (hl_st == 2) { /* in a string */
+        k = str_end(p, le, hl_q, hl_q == '`');
+        if (k)
+            hl_st = 0;
+        *cls = HC_STR;
+        return k ? k : le;
+    }
+    if (is_blank(c)) {
+        while (e < le && is_blank(art[e]))
+            e++;
+        *cls = HC_KEEP;
+        return e;
+    }
+    if (lang == HL_SH) {
+        if (c == '#' && ws) {
+            *cls = HC_COM;
+            return le;
+        }
+        if (c == '\\' && e == le) {
+            hl_st = 3;
+            return e;
+        }
+        if (c == '|' || c == ';' || c == '(' || c == '&') {
+            hl_cmd = c != '&' || n == '&' || art[p - 1] == '&';
+            if (c == '&' && art[p - 1] == '>')
+                hl_cmd = 0;
+            return e;
+        }
+        if (c == '<' && n == '<') { /* a here-document: <<WORD, <<'WORD', <<"WORD", <<-WORD */
+            k = p + 2 + (p + 2 < le && art[p + 2] == '-');
+            k += k < le && (art[k] == '\'' || art[k] == '"');
+            for (e = k; e < le && is_word(art[e]); e++)
+                ;
+            if (e > k) {
+                hl_hd = k, hl_hdn = e - k, hl_st = 4;
+                e += e < le && (art[e] == '\'' || art[e] == '"');
+                *cls = HC_META;
+            }
+            return e;
+        }
+        if (c == '\'' || c == '"') {
+            k = str_end(p + 1, le, c, c == '\'');
+            hl_cmd = 0;
+            *cls = HC_STR;
+            return k ? k : le;
+        }
+        if (c == '$') {
+            *cls = HC_META;
+            if (n == '(') {
+                hl_cmd = 1;
+                return p + 2;
+            }
+            if (n == '{') {
+                for (k = p; k < le && art[k] != '}'; k++)
+                    ;
+                return k < le ? k + 1 : le;
+            }
+            for (; e < le && is_word(art[e]); e++)
+                ;
+            return e;
+        }
+        for (; e < le && !is_blank(art[e]) && art[e] != '|' && art[e] != ';' && art[e] != '&' && art[e] != '('
+               && art[e] != ')' && art[e] != '<' && art[e] != '>' && art[e] != '\'' && art[e] != '"' && art[e] != '$';
+             e++)
+            ;
+        if (hl_cmd && ws) {
+            for (k = p; k < e && is_word(art[k]); k++)
+                ;
+            if (k > p && k < e && art[k] == '=') { /* an assignment before the command */
+                *cls = HC_META;
+                return k;
+            }
+            *cls = HC_KW;
+            hl_cmd = in_list(L_CMD_SH, p, e - p);
+        }
+        return e;
+    }
+    if (lang == HL_GEN) {
+        if (bol && c == '[' && art[le - 1] == ']') {
+            *cls = HC_KW;
+            return le;
+        }
+        if (ws && (c == '#' || (c == '/' && n == '/'))) {
+            *cls = HC_COM;
+            return le;
+        }
+        if (ws && (c == '"' || c == '\'') && (k = str_end(p + 1, le, c, 0))) {
+            *cls = HC_STR;
+            return k;
+        }
+        if (ws && is_digit(c)) {
+            *cls = HC_NUM;
+            goto number;
+        }
+        while (e < le && !is_blank(art[e]))
+            e++;
+        return e;
+    }
+    /* C, Rust and Go. */
+    if (c == '/' && n == '/') {
+        *cls = HC_COM;
+        return le;
+    }
+    if (c == '/' && n == '*') {
+        k = find_pair(p + 2, le, '*', '/');
+        if (k == le)
+            hl_st = 1;
+        *cls = HC_COM;
+        return k < le ? k + 2 : le;
+    }
+    if (c == '#' && lang == HL_C) { /* a preprocessor word, and an #include's <file> */
+        for (e = p + 1; e < le && (is_word(art[e]) || (e == p + 1 && art[e] == ' ')); e++)
+            ;
+        *cls = HC_META;
+        return e;
+    }
+    if (c == '<' && lang == HL_C && art[p - 1] == ' ' && p >= 9 && !memcmp(art + p - 9, "#include", 8)) {
+        for (; e < le && art[e] != '>'; e++)
+            ;
+        *cls = HC_STR;
+        return e < le ? e + 1 : le;
+    }
+    if (c == '#' && lang == HL_RUST && (n == '[' || n == '!')) {
+        for (; e < le && art[e] != ']'; e++)
+            ;
+        *cls = HC_META;
+        return e < le ? e + 1 : le;
+    }
+    if (c == '"' || (c == '`' && lang == HL_GO)) {
+        k = str_end(p + 1, le, c, c == '`');
+        if (!k && lang != HL_C)
+            hl_st = 2, hl_q = c;
+        *cls = HC_STR;
+        return k ? k : le;
+    }
+    if (c == '\'') { /* a character; in Rust a quote not closed after one character is a lifetime */
+        k = n == '\\' ? str_end(p + 1, le, c, 0) : 0;
+        if (n != '\\' && n != '\'') {
+            for (k = p + 2; k < le && (art[k] & 0xC0) == 0x80; k++)
+                ;
+            k = k < le && art[k] == '\'' ? k + 1 : 0;
+        }
+        if (!k && lang == HL_RUST)
+            return e;
+        *cls = HC_STR;
+        return k ? k : le;
+    }
+    if (is_digit(c)) {
+        *cls = HC_NUM;
+    number:
+        while (e < le && (is_word(art[e]) || (art[e] == '.' && e + 1 < le && is_digit(art[e + 1]))))
+            e++;
+        return e;
+    }
+    if (is_word(c)) {
+        while (e < le && is_word(art[e]))
+            e++;
+        k = e - p;
+        if (lang == HL_RUST && (c == 'r' || c == 'b') && k <= 2 && e < le && (art[e] == '"' || art[e] == '#')) {
+            /* r"...", r#"..."#, b"...": to the closing quote (and hashes) */
+            uint32_t h = 0;
+            while (e + h < le && art[e + h] == '#')
+                h++;
+            if (e + h < le && art[e + h] == '"') {
+                for (k = e + h + 1; k < le; k++)
+                    if (art[k] == '"' && le - k > h && !memcmp(art + k + 1, art + e, h))
+                        break;
+                *cls = HC_STR;
+                return k < le ? k + 1 + h : le;
+            }
+        }
+        if (in_list(lang == HL_C ? L_KW_C : lang == HL_RUST ? L_KW_RUST : L_KW_GO, p, k))
+            *cls = HC_KW;
+        else if (in_list(lang == HL_C ? L_TY_C : lang == HL_RUST ? L_TY_RUST : L_TY_GO, p, k)
+                 || (lang == HL_C && k > 2 && art[e - 2] == '_' && art[e - 1] == 't')
+                 || (lang == HL_RUST && (uint8_t)(c - 'A') < 26 && k > 1 && (uint8_t)(art[p + 1] - 'a') < 26))
+            *cls = HC_TYPE;
+        else if (lang == HL_RUST && e + 1 < le && art[e] == '!' && art[e + 1] != '=') {
+            *cls = HC_META;
+            e++;
+        }
+        return e;
+    }
+    while (e < le && (art[e] & 0xC0) == 0x80)
+        e++;
+    return e;
+}
+
+/* B_EMIT of a coloured block: the token at art[p] (p at or after hl_at)
+ * is classified, and its colour set if it differs. */
+static void hl_step(uint32_t p, uint32_t end)
+{
+    uint32_t le = find2(art + p, art + end, '\n', '\n') - art, k;
+    uint8_t cls;
+    const uint8_t *rgb;
+    hl_at = hl_token(p, le, &cls);
+    spend(W_HTOKEN + (hl_at - p) * W_FIND);
+    if (cls == HC_KEEP)
+        return;
+    rgb = cls == HC_PLAIN ? rgb_pre : hl_rgb[cls];
+    if (rgb == b_colour)
+        return;
+    /* A "[" not closed since the text was last flushed, with a "](" after
+     * it on the line: a link with text may start there. */
+    for (k = p; k > b_text && k > b_ls && art[k - 1] != ']' && art[k - 1] != '['; k--)
+        ;
+    spend((p - k) * W_FIND);
+    if (k > b_text && k > b_ls && art[k - 1] == '[' && find_pair(p, le, ']', '(') < le)
+        return;
+    flush(p);
+    doc_rgb(rgb);
+    b_colour = rgb;
+    hl_dirty = 1;
+}
+
 static const uint8_t style_face[] = {DOC_SANS, DOC_MONO, DOC_SANS, DOC_SANS, DOC_SANS};
 static const uint8_t style_flags[] = {0, 0, DOC_BOLD, DOC_BOLD, 0};
 static const uint8_t style_size[] = {BODY_SIZE, PRE_SIZE, H1_SIZE, H2_SIZE, TABLE_SIZE};
@@ -2105,7 +2529,10 @@ static void set_style(uint8_t s)
         doc_size(style_size[s]);
         doc_rgb(style_rgb[s]);
         b_style = s;
+    } else if (hl_dirty) {
+        doc_rgb(style_rgb[s]); /* after a coloured block */
     }
+    hl_dirty = 0;
     b_colour = style_rgb[s];
 }
 
@@ -2135,6 +2562,10 @@ static void start_block(void)
     case K_PRE:
         set_style(S_PRE);
         doc_paragraph(DOC_START, PRE_INDENT, PARA_SPACE, DOC_NOWRAP);
+        hl_lang = b_kind == K_FENCE ? b_lang : HL_NONE;
+        hl_at = b_start;
+        hl_st = 0;
+        hl_bol = 1;
         break;
     case K_H1:
         set_style(S_H1);
@@ -2234,8 +2665,8 @@ static uint8_t table_step(void)
 static uint8_t emit_block(void)
 {
     uint32_t end = b_end, i, k;
-    uint8_t *p = art + b_emit, *e = art + end, *stop, *q;
-    uint8_t pre = b_kind >= K_PRE;
+    uint8_t *p = art + b_emit, *e = art + end, *stop, *q, *lim;
+    uint8_t pre = b_kind >= K_PRE, hl = pre && hl_lang;
     for (;;) {
         stop = (uint32_t)(e - p) > b_work / W_EMIT ? p + b_work / W_EMIT : e;
         if (b_skip) {
@@ -2249,11 +2680,20 @@ static uint8_t emit_block(void)
                 break;
             b_skip = 0;
         }
-        q = pre ? find2(p, stop, '\n', ':') : find3(p, stop, '\n', ':', '`');
+        lim = stop;
+        if (hl) { /* a coloured fence: the token at p classified, and looked through to its end */
+            if (p - art >= hl_at)
+                hl_step(p - art, end);
+            if (art + hl_at < stop)
+                lim = art + hl_at;
+        }
+        q = pre ? find2(p, lim, '\n', ':') : find3(p, stop, '\n', ':', '`');
         spend((q - p) * W_EMIT);
         p = q;
         if (p >= stop)
             break;
+        if (p == lim)
+            continue;
         spend(W_HIT);
         if (*p == '`') {
             if (!code_span(p - art, end))
