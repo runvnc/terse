@@ -150,7 +150,7 @@ on ring bell
 
 on pull rope
   say: (ringing the bell)
-  continue
+  try ring bell
 
 on climb rope
   say: The rope would only ring the bell, and the tower door is bolted.

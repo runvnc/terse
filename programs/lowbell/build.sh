@@ -1,5 +1,5 @@
 #!/bin/sh
-# Builds <name>.terse, <name> being this directory's name (lamplight; to
+# Builds <name>.terse, <name> being this directory's name (lowbell; to
 # rename the program, rename the directory, <name>.c and the test file):
 # story.py compiles the story (story/*.story) into story_data.h, then
 # `terse build` compiles <name>.c with it.

@@ -1,4 +1,4 @@
-//! programs/lamplight in the window, driven as a player drives it
+//! programs/lowbell in the window, driven as a player drives it
 //! (`--drive`, in a headless compositor the host starts; skipped without
 //! weston): typed commands answered, the beam on the hidden chalk with the
 //! picture drawn as listed, the picture still where nothing is animated
@@ -21,7 +21,7 @@ fn have_weston() -> bool {
 }
 
 fn image() -> std::path::PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../programs/lamplight/lamplight.terse")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../programs/lowbell/lowbell.terse")
 }
 
 fn drive(dir: &Path, script: &str, renderer: &str, size: &str) -> Output {

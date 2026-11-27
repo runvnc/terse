@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""story.py: the Lamplight story compiler and its tools (Python 3, standard
+"""story.py: the Low Bell story compiler and its tools (Python 3, standard
 library only). STORY.md describes the story format.
 
     story.py [-o story_data.h] <story dir or files>       compile
@@ -24,7 +24,7 @@ import struct
 import sys
 import zlib
 
-# --- Fixed numbers shared with lamplight.c (engine.h) ------------------------
+# --- Fixed numbers shared with lowbell.c (engine.h) ------------------------
 
 SCENE_W, SCENE_H = 640, 256        # art space, screen units
 TEXT_COLS = 78                     # wrapped width of the text area
@@ -289,7 +289,7 @@ NOTE_NAMES = {'c': 0, 'd': 2, 'e': 4, 'f': 5, 'g': 7, 'a': 9, 'b': 11}
 C = dict(END=0, FLAG=1, IN=2, CARRYING=3, HERE=4, OBJIN=5, OPEN=6, LOCKED=7, ON=8, WORN=9, VISITED=10,
          DARK=11, HEARS=12, RANDOM=13, BEAM=14, CMP=15)
 E = dict(END=0, SAY=1, SET=2, CLEAR=3, MOVE=4, GO=5, STATE=6, EXIT=7, SOUND=8, ADD=9, LET=10, SCHEDULE=11,
-         CANCEL=12, END_GAME=13, LOUD=14, CONTINUE=15, LOOK=16, ACHIEVE=17, AIM=18, TOGGLE=19, MINUTES=20)
+         CANCEL=12, END_GAME=13, LOUD=14, CONTINUE=15, LOOK=16, ACHIEVE=17, AIM=18, TOGGLE=19, MINUTES=20, TRY=21)
 STATES = ['open', 'closed', 'locked', 'unlocked', 'on', 'off']
 CMP_OPS = ['==', '!=', '<', '<=', '>', '>=']
 BUILTIN_COUNTERS = ['moves', 'score', 'time', 'bell', 'minute']
@@ -1064,6 +1064,9 @@ def p_object(lines, n, rest, colon, npc=False):
                 D.error(w, 'also in <room>')
             else:
                 o.also = (m.group(1), w)
+        elif key in ('readable', 'text') and (colon2 or r):
+            o.kinds.add('readable')
+            o.readable = block_text(lines, c, r)
         elif key in K:
             o.kinds.add(key)
             if key == 'door':
@@ -1741,6 +1744,20 @@ def compile_effects(nodes, lines):
                 D.error(w, 'achieve <achievement>' + (closest(t[0], ST.achievements) if t else ''))
                 continue
             out += bytes([E['ACHIEVE'], ST.achievements[t[0]][0]])
+        elif key == 'try':
+            # try <verb or action> [<object> [<object>]]: that command instead
+            if not t or len(t) > 3:
+                D.error(w, 'try <verb> [<object> [<second object>]]')
+                continue
+            ai = ST.action_index.get(t[0])
+            if ai is None and t[0] in ST.W.w and ST.W.w[t[0]]['verb'] != 0xFF:
+                ai = ST.W.w[t[0]]['verb']
+            if ai is None:
+                D.error(w, f'unknown verb "{t[0]}"' + closest(t[0], list(ST.action_index)))
+                continue
+            o1 = obj_ref(t[1], w) if len(t) > 1 else 0xFF
+            o2 = obj_ref(t[2], w) if len(t) > 2 else 0xFF
+            out += bytes([E['TRY'], ai, o1, o2])
         elif key == 'minutes':
             if len(t) != 1:
                 D.error(w, 'minutes <n>: what this move takes')
@@ -1831,6 +1848,7 @@ def emit(out_path, check_only=False, stats=False):
     for name in ST.custom_actions:
         actions.append([name, NOUN, [], None])
     action_index = {a[0]: i for i, a in enumerate(actions)}
+    ST.action_index, ST.W = action_index, W
     custom_default = {}
     for action, words, default, flags, where in ST.verbs:
         ai = action_index[action]
@@ -2857,7 +2875,7 @@ def report_diag():
 
 
 def main(argv):
-    ap = argparse.ArgumentParser(description='The Lamplight story compiler (STORY.md).')
+    ap = argparse.ArgumentParser(description='The Low Bell story compiler (STORY.md).')
     ap.add_argument('story', nargs='*', help='a story directory or .story files')
     ap.add_argument('-o', '--output', help='the C header to write (default: story_data.h beside this script)')
     ap.add_argument('--check', action='store_true', help='check the story and print its sizes; write nothing')

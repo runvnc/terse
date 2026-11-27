@@ -1,6 +1,6 @@
 # The placeholder story's solution, from the start to the win.
 #
-# Transcript format (crates/terse-cli/tests/lamplight.rs runs every file here):
+# Transcript format (crates/terse-cli/tests/lowbell.rs runs every file here):
 #   > command        typed, then Enter; a "-- more --" prompt is answered with Space
 #   < text           the reply holds this text (spaces and line breaks count as one space)
 #   ! text           the reply does not hold it
@@ -11,11 +11,12 @@
 #   novectors text   it does not
 #   wait N           N frames pass
 
-screen Lamplight (placeholder story)
+screen Low Bell (placeholder story)
 status The Jetty
 status 9:30 pm
 status bell in 30 min
 status score 0/10
+vectors c aa8250ff
 > north
 < The Square
 < The warden is here
@@ -65,7 +66,6 @@ status score 3/10
 < Inside the Boathouse
 < An oilskin coat hangs from a hook
 < On the workbench you see a flask of oil.
-novectors c ebebdc
 > shine lantern at wall
 < Chalk marks leap out of the dark
 < [You found the chalk marks]
@@ -85,7 +85,7 @@ vectors w 32
 < You put on the oilskin coat.
 < [Dressed for the weather]
 > i
-< You are carrying a storm lantern (lit), a brass key, an iron key, a flask of oil and an oilskin coat (worn).
+< You are carrying a storm lantern (lit), a brass key, a flask of oil, an oilskin coat (worn) and an iron key.
 > w
 < The Jetty
 > n
@@ -97,7 +97,7 @@ vectors w 32
 > pour oil into lamp
 < You tip the flask into the reservoir
 > light lamp
-< The lamp throws its light across the square
+< the lamp throws its light across the square
 < *** You have won ***
 < You have scored 10 out of 10
 screen Type RESTART, RESTORE, UNDO or QUIT.

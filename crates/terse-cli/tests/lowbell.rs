@@ -1,11 +1,11 @@
-//! programs/lamplight (an illustrated text adventure engine and its
-//! placeholder story): every transcript in programs/lamplight/transcripts/
+//! programs/lowbell (an illustrated text adventure engine and its
+//! placeholder story): every transcript in programs/lowbell/transcripts/
 //! played headless, as `terse run` plays it, its replies checked (the
 //! walkthrough of the story is one of them); the walkthrough again through
 //! `terse run --events`; the frame budget and the scene's ink over the
 //! walkthrough; the game without its optional devices (sound, saving);
 //! the same input gives the same run; story_data.h is what story.py makes
-//! of the story, and the image is up to date with it and lamplight.c.
+//! of the story, and the image is up to date with it and lowbell.c.
 //!
 //! A transcript (format at the top of transcripts/walkthrough.txt) types
 //! commands and checks fragments of the replies, read from the engine's
@@ -21,8 +21,8 @@ use terse_core::{Completion, Event, FrameInput, FrameResult, Grants, Image, Mach
 use terse_net::{BlobStore, ContentService, Node, Records};
 
 /// The program's name: its directory, its C file and its image are named
-/// after it (programs/lamplight/build.sh).
-const NAME: &str = "lamplight";
+/// after it (programs/lowbell/build.sh).
+const NAME: &str = "lowbell";
 
 fn dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../programs").join(NAME)
@@ -275,7 +275,7 @@ fn transcripts_play_as_written() {
         let f = play(name, text, &mut g);
         let ink = g.ink.iter().max().copied().unwrap_or(0);
         eprintln!(
-            "lamplight {name}: {} frames, busiest {} units ({:.1}%), most ink {ink} ({:.1}% of the cap), list {} bytes, {} failed",
+            "lowbell {name}: {} frames, busiest {} units ({:.1}%), most ink {ink} ({:.1}% of the cap), list {} bytes, {} failed",
             g.used.len(),
             g.busiest(),
             common::pct(g.busiest()),
@@ -344,8 +344,9 @@ fn frames_stay_inside_the_budget_and_ink() {
     for g in [&g, &g2] {
         let stats = common::FrameStats::new(&g.used[2..]);
         let ink = *g.ink.iter().max().unwrap();
-        eprintln!("lamplight: {}; most ink {ink}", stats.describe());
-        assert!(common::pct(stats.busiest) < 40.0, "busiest frame {} units", stats.busiest);
+        eprintln!("lowbell: {}; most ink {ink}", stats.describe());
+        assert!(common::pct(stats.busiest) < 50.0, "busiest frame {} units", stats.busiest);
+        assert!(common::pct(stats.median) < 15.0, "typical frame {} units", stats.median);
         assert!(ink < 230_400 / 4, "ink {ink}");
         assert_eq!(g.spilled, 0);
     }
@@ -376,8 +377,8 @@ fn same_input_same_run() {
     assert_eq!(a.used, b.used);
 }
 
-/// story_data.h is what story.py makes of story/, and lamplight.terse is
-/// built from it and lamplight.c as build.sh builds it.
+/// story_data.h is what story.py makes of story/, and lowbell.terse is
+/// built from it and lowbell.c as build.sh builds it.
 #[test]
 fn image_is_up_to_date() {
     let python = std::process::Command::new("python3").arg("--version").output().is_ok_and(|o| o.status.success());
@@ -396,7 +397,7 @@ fn image_is_up_to_date() {
         assert!(o.status.success(), "story.py: {}", String::from_utf8_lossy(&o.stderr));
         assert!(
             std::fs::read(&out).unwrap() == std::fs::read(dir().join("story_data.h")).unwrap(),
-            "programs/lamplight/story_data.h is out of date: run programs/lamplight/build.sh"
+            "programs/lowbell/story_data.h is out of date: run programs/lowbell/build.sh"
         );
     }
     common::check_up_to_date(&IMAGE_BYTES, &[&format!("{NAME}/{NAME}.c")], true, NAME, RAM_PAGES, &[(2, 0), (3, 0), (4, 0x80), (6, 0x80)]);

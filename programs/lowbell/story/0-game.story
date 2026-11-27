@@ -1,9 +1,9 @@
 # PLACEHOLDER STORY. Three rooms that exercise every feature of the
-# Lamplight engine; the real story replaces these files. STORY.md
+# Low Bell engine; the real story replaces these files. STORY.md
 # describes the format.
 
 game
-  title Lamplight (placeholder story)
+  title Low Bell (placeholder story)
   author the engine's test story
   start jetty
   carry 5
@@ -14,7 +14,7 @@ game
   score 10
   status: {room}|| {time}   bell {bell}   score {score}/{max}
   intro:
-    [This is a placeholder story, written to test the Lamplight engine. The
+    [This is a placeholder story, written to test the Low Bell engine. The
     real story will replace it.]
 
     Night has fallen on the lake. Somewhere up the bank a street lamp has

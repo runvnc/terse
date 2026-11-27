@@ -1,4 +1,4 @@
-/* lamplight: an engine for illustrated text adventures, in the manner of
+/* lowbell (Low Bell): an engine for illustrated text adventures, in the manner of
  * the early 1980s. The top of the screen is a vector drawing of the place,
  * the bottom is text: the story's description, what the player types and
  * the replies.
@@ -132,7 +132,7 @@ enum { PH_THE = 1, PH_THE_C, PH_A, PH_A_C, PH_THE2, PH_THE2_C, PH_A2, PH_WORD, P
 enum { C_END, C_FLAG, C_IN, C_CARRYING, C_HERE, C_OBJIN, C_OPEN, C_LOCKED, C_ON, C_WORN, C_VISITED, C_DARK, C_HEARS,
        C_RANDOM, C_BEAM, C_CMP };
 enum { E_END, E_SAY, E_SET, E_CLEAR, E_MOVE, E_GO, E_STATE, E_EXIT, E_SOUND, E_ADD, E_LET, E_SCHEDULE, E_CANCEL,
-       E_END_GAME, E_LOUD, E_CONTINUE, E_LOOK, E_ACHIEVE, E_AIM, E_TOGGLE, E_MINUTES };
+       E_END_GAME, E_LOUD, E_CONTINUE, E_LOOK, E_ACHIEVE, E_AIM, E_TOGGLE, E_MINUTES, E_TRY };
 /* Events. */
 enum { T_AT = 1, T_EVERY, T_WHEN, T_WHENEVER, T_TIMER, T_NOISE, T_ENTER, T_ATTIME, T_EVERYTIME };
 /* Art. */
@@ -836,7 +836,7 @@ static void enter_events(void);
 
 static void move_obj(uint8_t o, uint8_t to)
 {
-    uint8_t from_here = here(o), npc = objs[o].kinds & K_NPC;
+    uint8_t from_here = here(o), npc = (objs[o].kinds & K_NPC) != 0;
     if (npc && from_here) {
         uint8_t r = IS_ROOM(to) ? to - 3 : 0xFF;
         if (r != G.room) {
@@ -873,6 +873,8 @@ static void go_room(uint8_t r)
     look();
     enter_events();
 }
+
+static void try_action(uint8_t a, uint8_t o1, uint8_t o2);
 
 static int effects(uint16_t off)
 {
@@ -942,6 +944,7 @@ static int effects(uint16_t off)
         }
         case E_AIM: aim_at(*p++); break;
         case E_MINUTES: move_minutes = (int16_t)rd16(p); p += 2; break;
+        case E_TRY: try_action(p[0], p[1], p[2]); p += 3; break;
         default: return cont;
         }
     }
@@ -1199,9 +1202,14 @@ static void seg(int16_t ax, int16_t ay, int16_t bx, int16_t by)
     pen_x = bx, pen_y = by;
 }
 
-static uint32_t isqrt64(uint64_t v)
+/* The beam's circle for clipping, in half units. */
+static int32_t clip_x, clip_y, clip_r;
+
+/* The part of (x0, y0)-(x1, y1) (half units) inside the beam: 1 and the
+ * ends, or 0. */
+static uint32_t isqrt32(uint32_t v)
 {
-    uint64_t r = 0, b = (uint64_t)1 << 62;
+    uint32_t r = 0, b = 1u << 30;
     while (b > v)
         b >>= 2;
     while (b) {
@@ -1212,42 +1220,47 @@ static uint32_t isqrt64(uint64_t v)
             r >>= 1;
         b >>= 2;
     }
-    return (uint32_t)r;
+    return r;
 }
 
-/* The beam's circle for clipping, in half units. */
-static int32_t clip_x, clip_y, clip_r;
-
 /* The part of (x0, y0)-(x1, y1) (half units) inside the beam: 1 and the
- * ends, or 0. */
+ * ends, or 0. All in 32 bits: the closest point of the line to the
+ * centre, then half the chord either side of it, clamped to the segment. */
 static int clip_seg(int32_t x0, int32_t y0, int32_t x1, int32_t y1, int32_t *o)
 {
-    int32_t dx = x1 - x0, dy = y1 - y0, fx = x0 - clip_x, fy = y0 - clip_y;
-    int32_t a = dx * dx + dy * dy, b = fx * dx + fy * dy, c = fx * fx + fy * fy - clip_r * clip_r;
-    if (a == 0) {
-        if (c > 0)
-            return 0;
-        o[0] = x0, o[1] = y0, o[2] = x1, o[3] = y1;
+    int32_t r = clip_r, cx = clip_x, cy = clip_y;
+    if ((x0 < cx - r && x1 < cx - r) || (x0 > cx + r && x1 > cx + r) || (y0 < cy - r && y1 < cy - r) || (y0 > cy + r && y1 > cy + r))
+        return 0;
+    int32_t dx = x1 - x0, dy = y1 - y0, fx = x0 - cx, fy = y0 - cy, r2 = r * r;
+    int32_t gx = x1 - cx, gy = y1 - cy;
+    uint8_t in0 = fx * fx + fy * fy <= r2, in1 = gx * gx + gy * gy <= r2;
+    o[0] = x0, o[1] = y0, o[2] = x1, o[3] = y1;
+    if (in0 && in1)
         return 1;
-    }
-    int64_t disc = (int64_t)b * b - (int64_t)a * c;
-    if (disc <= 0)
+    int32_t a = dx * dx + dy * dy;
+    if (a == 0)
+        return in0;
+    int32_t len = (int32_t)isqrt32((uint32_t)a);
+    if (len == 0)
+        return in0;
+    /* s: distance along the segment from (x0, y0), in half units. */
+    int32_t sc = -(fx * dx + fy * dy) / len;
+    int32_t px = x0 + dx * sc / len - cx, py = y0 + dy * sc / len - cy;
+    int32_t d2 = px * px + py * py;
+    if (d2 >= r2)
         return 0;
-    int32_t s = (int32_t)isqrt64((uint64_t)disc);
-    int32_t n0 = -b - s, n1 = -b + s;
-    if (n0 < 0)
-        n0 = 0;
-    if (n1 > a)
-        n1 = a;
-    if (n0 >= n1)
+    int32_t h = (int32_t)isqrt32((uint32_t)(r2 - d2));
+    int32_t s0 = sc - h, s1 = sc + h;
+    if (s0 < 0)
+        s0 = 0;
+    if (s1 > len)
+        s1 = len;
+    if (s0 >= s1)
         return 0;
-    uint32_t adx = dx < 0 ? -dx : dx, ady = dy < 0 ? -dy : dy;
-    int32_t px0 = (int32_t)(adx * (uint32_t)n0 / (uint32_t)a), py0 = (int32_t)(ady * (uint32_t)n0 / (uint32_t)a);
-    int32_t px1 = (int32_t)(adx * (uint32_t)n1 / (uint32_t)a), py1 = (int32_t)(ady * (uint32_t)n1 / (uint32_t)a);
-    o[0] = x0 + (dx < 0 ? -px0 : px0);
-    o[1] = y0 + (dy < 0 ? -py0 : py0);
-    o[2] = x0 + (dx < 0 ? -px1 : px1);
-    o[3] = y0 + (dy < 0 ? -py1 : py1);
+    if (!in0)
+        o[0] = x0 + dx * s0 / len, o[1] = y0 + dy * s0 / len;
+    if (!in1)
+        o[2] = x0 + dx * s1 / len, o[3] = y0 + dy * s1 / len;
     return 1;
 }
 
@@ -1315,8 +1328,9 @@ static uint8_t layer_anim(const uint8_t *h, uint16_t *bright, int32_t *dx, int32
     case AN_DRIFT: {
         int32_t period = h[7] * 8, ph = tick % period, half = period / 2;
         int32_t tri = ph < half ? ph : period - ph;
-        *dx = (int8_t)h[5] * 16 * tri / half;
-        *dy = (int8_t)h[6] * 16 * tri / half;
+        /* In whole units: the picture changes only when a line moves one. */
+        *dx = (int8_t)h[5] * tri / half * 16;
+        *dy = (int8_t)h[6] * tri / half * 16;
         anim_key = anim_key * 31 + (uint32_t)(*dx * 977 + *dy);
         room_anim = 1;
         return 1;
@@ -1420,7 +1434,7 @@ static void scene_build(uint8_t draw)
         vec_move(bx * 8, by * 8);
         vec_circle(r * 8);
         int32_t ddx = bx - lx, ddy = by - ly;
-        uint32_t len = isqrt64((uint64_t)((int64_t)ddx * ddx + (int64_t)ddy * ddy));
+        uint32_t len = isqrt32((uint32_t)(ddx * ddx + ddy * ddy));
         if (len > (uint32_t)r) {
             int32_t px = -ddy * r / (int32_t)len, py = ddx * r / (int32_t)len;
             vec_rgb(45, 38, 20);
@@ -1452,13 +1466,9 @@ static void scene_frame(void)
         }
     }
     if (beam && (shown_bx != G.beam_x || shown_by != G.beam_y)) {
-        int32_t dx = G.beam_x - shown_bx, dy = G.beam_y - shown_by;
-        int32_t sx = dx / 4, sy = dy / 4;
-        if (!sx && dx)
-            sx = dx > 0 ? 1 : -1;
-        if (!sy && dy)
-            sy = dy > 0 ? 1 : -1;
-        shown_bx += sx, shown_by += sy;
+        /* The beam is where it was aimed at once: what it reveals is
+         * drawn with the reply that tells of it. */
+        shown_bx = G.beam_x, shown_by = G.beam_y;
         dirty_scene = 1;
     }
     if (!dirty_scene && !room_anim)
@@ -1552,24 +1562,26 @@ static void beam_check(void)
 
 /* --- The screen's text -------------------------------------------------------------------------------- */
 
-static uint8_t cells[80 * 4];
+/* A row of cells, each a word: the character, then the colours (SPEC
+ * §terminal.cells, little-endian). */
+static uint32_t cells[80];
 
-static void cell(uint8_t col, uint16_t cp, uint8_t fg)
-{
-    uint8_t *c = cells + 4 * col;
-    c[0] = cp, c[1] = cp >> 8, c[2] = fg, c[3] = 0;
-}
+static void cell(uint8_t col, uint16_t cp, uint8_t fg) { cells[col] = cp | (uint32_t)fg << 16; }
 
 static void row_clear(uint8_t fg)
 {
-    for (uint8_t i = 0; i < 80; i++)
-        cell(i, ' ', fg);
+    uint32_t v = ' ' | (uint32_t)fg << 16, *c = cells;
+    for (uint32_t *e = c + 80; c < e; c++)
+        *c = v;
 }
 
 static void row_put(uint8_t col, const uint8_t *s, uint8_t n, uint8_t fg)
 {
-    for (uint8_t i = 0; i < n && col + i < 80; i++)
-        cell(col + i, code_point(s[i]), fg);
+    if (col + n > 80)
+        n = 80 - col;
+    uint32_t f = (uint32_t)fg << 16, *c = cells + col;
+    for (const uint8_t *e = s + n; s < e; s++)
+        *c++ = (*s < 0x80 ? *s : code_point(*s)) | f;
 }
 
 static void row_write(uint8_t row) { term_cells_write(row * 80, cells, 80); }
@@ -1758,9 +1770,8 @@ static int obj_has_word(uint16_t list, uint16_t w)
 
 /* Whether the words t0..t1 (articles left out) all name object o, at least
  * one of them as a noun. */
-static int np_matches(uint8_t o, uint8_t t0, uint8_t t1)
+static int np_matches_(uint8_t o, uint8_t t0, uint8_t t1, uint8_t noun)
 {
-    uint8_t noun = 0;
     for (uint8_t t = t0; t < t1; t++) {
         uint16_t w = tw[t], k = kinds(t);
         if (k & WK_ART)
@@ -1772,6 +1783,8 @@ static int np_matches(uint8_t o, uint8_t t0, uint8_t t1)
     }
     return noun;
 }
+
+static int np_matches(uint8_t o, uint8_t t0, uint8_t t1) { return np_matches_(o, t0, t1, 0); }
 
 /* The last content word of a noun phrase, for messages. */
 static void np_word(uint8_t t0, uint8_t t1)
@@ -2328,6 +2341,21 @@ static int rules_run(uint8_t kind)
 }
 
 static uint8_t moved_now;
+
+/* A rule's `try`: another command carried out in this one's place. */
+static void try_action(uint8_t a, uint8_t o1, uint8_t o2)
+{
+    static uint8_t depth;
+    if (depth > 3)
+        return;
+    depth++;
+    uint8_t sa = c_action, s1 = c_o1, s2 = c_o2;
+    c_action = a, c_o1 = o1, c_o2 = o2;
+    if (!rules_run(0) && !G.ended && action_default_run() && !G.ended)
+        rules_run(1);
+    c_action = sa, c_o1 = s1, c_o2 = s2;
+    depth--;
+}
 static uint16_t spend;              /* the minutes the commands of this line take */
 
 /* The whole command, once its objects are known. */
@@ -2507,21 +2535,19 @@ static void intro(void)
 /* The name after SAVE or RESTORE: letters and digits, or "game". */
 static int save_name_from(uint8_t t)
 {
-    uint8_t n = 0;
-    if (t + 1 < nt) {
-        uint8_t s = tpos[t + 1];
-        for (uint8_t i = s; i < input_len; i++) {
-            uint8_t c = lower[i];
-            if (c == ' ' && n)
-                break;
-            if (c == ' ')
-                continue;
-            if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) || n >= 16) {
-                say(M_NO_FREE_TEXT);
-                return 0;
-            }
-            save_name[n++] = c;
+    uint8_t n = 0, gap = 0;
+    /* The rest of the line: one word of letters and digits. */
+    for (uint8_t i = tpos[t] + tlen[t]; i < input_len; i++) {
+        uint8_t c = lower[i];
+        if (c == ' ') {
+            gap = n != 0;
+            continue;
         }
+        if (gap || !((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) || n >= 16) {
+            say(M_NO_FREE_TEXT);
+            return 0;
+        }
+        save_name[n++] = c;
     }
     if (!n) {
         memcpy(save_name, "game", 4);
@@ -2618,6 +2644,13 @@ static void command(uint8_t t0, uint8_t t1)
     ctx_prep = 0xFF;
     if (t0 >= t1)
         return;
+    /* SAVE and RESTORE take any name after them. */
+    if (tw[t0] < N_WORDS && (words[tw[t0]].kinds & WK_VERB) && (words[tw[t0]].verb == A_SAVE || words[tw[t0]].verb == A_RESTORE)) {
+        question = Q_NONE;
+        if (save_name_from(t0))
+            do_save(words[tw[t0]].verb == A_RESTORE);
+        return;
+    }
     for (uint8_t t = t0; t < t1; t++)
         if (tw[t] == T_UNKNOWN) {
             ctx_word = lower + tpos[t];
@@ -2635,7 +2668,7 @@ static void command(uint8_t t0, uint8_t t1)
         if (qs == Q_WHICH) {
             uint8_t c[N_OBJS], n = 0;
             for (uint8_t i = 0; i < q_ncands; i++)
-                if (np_matches(q_cands[i], t0, t1))
+                if (np_matches_(q_cands[i], t0, t1, 1)) /* "iron" will do */
                     c[n++] = q_cands[i];
             if (n == 1)
                 got = c[0];
@@ -2840,14 +2873,15 @@ static void line(void)
             return;
         }
     }
-    if (!meta && !G.ended)
+    uint8_t pushed = !meta && !G.ended, was_ended = G.ended;
+    if (pushed)
         undo_push();
     uint8_t saved_len = input_len, saved[INPUT_MAX + 1];
     memcpy(saved, input, input_len);
     moved_now = 0;
     /* Commands separated by "." or "then" (or "and" before a verb). */
     uint8_t s = 0;
-    for (uint8_t t = 0; t <= nt && !G.ended; t++) {
+    for (uint8_t t = 0; t <= nt && G.ended == was_ended; t++) {
         uint8_t end = t == nt || tw[t] == T_PERIOD ||
                       (t > s && (kinds(t) & WK_SEP) && t + 1 < nt && (is_verb_start(t + 1) || tw[t] == then_word));
         if (!end)
@@ -2869,6 +2903,17 @@ static void line(void)
         }
         s = t + 1;
     }
+    /* A line that changed nothing (only looked, or was not understood) is
+     * not a step for UNDO. */
+    if (pushed && undo_n) {
+        uint8_t last = (undo_head + UNDO_N - 1) % UNDO_N, it = G.it;
+        G.it = undo_ring[last].it;
+        if (!memcmp(&G, &undo_ring[last], sizeof G)) {
+            undo_head = last;
+            undo_n--;
+        }
+        G.it = it;
+    }
     if (!is_again) {
         memcpy(last_line, saved, saved_len);
         last_len = saved_len;
@@ -2878,8 +2923,11 @@ static void line(void)
 
 /* --- Input -------------------------------------------------------------------------------------------- */
 
+static uint8_t text_busy;
+
 static void submit(void)
 {
+    text_busy = 1;
     if (input_len) {
         uint8_t h = hist_n % 4;
         memcpy(history[h], input, input_len);
@@ -3088,6 +3136,7 @@ int main(void)
     sound_init();
     game_init();
     beam_on_shown = 0;
+    dirty_scene = 1; /* the first place is drawn with its text */
     page_top = 0;
     intro();
     reply_done();
@@ -3098,7 +3147,11 @@ int main(void)
     for (;;) {
         events_frame();
         save_poll();
-        scene_frame();
+        /* The picture of a new place follows its text by a frame, so that no
+         * frame carries both. */
+        if (!text_busy)
+            scene_frame();
+        text_busy = 0;
         sound_frame();
         screen_frame();
         tick++;

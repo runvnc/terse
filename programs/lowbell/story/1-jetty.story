@@ -91,7 +91,7 @@ room jetty "The Jetty"
       line 136 214 172 214 178 220 172 226 136 226 136 214
 
 object lantern "storm lantern"
-  nouns lantern lamp
+  nouns lantern
   adjectives old storm my
   in player
   light

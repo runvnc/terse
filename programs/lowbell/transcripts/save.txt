@@ -26,8 +26,11 @@
 > i
 < brass key
 ! coin
+> drop key
 > restore evening2
 < Restored "evening2".
+> i
+< brass key
 > undo
 < Undone
 > i

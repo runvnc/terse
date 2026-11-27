@@ -14,7 +14,7 @@ vectors w 32
 > x post
 < Cut into it, low down: a lamp, and NOT TOO LATE.
 > shine lantern at moon
-< You see no moon here.
+< I don't know the word "moon".
 > shine lantern at the lake
 < You turn the beam on the lake.
 novectors c ebebdcff

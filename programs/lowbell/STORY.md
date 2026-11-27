@@ -1,6 +1,6 @@
-# Writing a story for Lamplight
+# Writing a story for Low Bell
 
-Lamplight is an engine for illustrated text adventures: the top of the
+Low Bell runs on an engine for illustrated text adventures: the top of the
 screen is a vector drawing of the place, the bottom is the text. The
 story is plain text in `story/*.story`, read in name order (one file or
 many: splitting by place is convenient). `story.py` compiles it into
@@ -8,8 +8,8 @@ many: splitting by place is convenient). `story.py` compiles it into
 touch C to write or change a story.
 
     python3 story.py --check            check the story, print its sizes
-    ./build.sh                          compile the story and build lamplight.terse
-    terse-host lamplight.terse          play it
+    ./build.sh                          compile the story and build lowbell.terse
+    terse-host lowbell.terse          play it
     python3 story.py --draw jetty -o jetty.png          draw a place's picture
     python3 story.py --draw boathouse --hidden --beam 260,96 -o b.svg
     python3 story.py --import-svg sketch.svg --layer roofs --colour grey
@@ -62,7 +62,7 @@ A text that needs more lines than the text area (12) is shown with a
 ## game
 
     game
-      title Lamplight
+      title Low Bell
       author A. Writer
       start jetty                  # the first place
       clock 21:30                  # the time when the story starts (add 24h for a 24-hour clock)
@@ -359,7 +359,7 @@ default replies, all in one voice).
 ## Transcripts
 
 `transcripts/*.txt` are played by `cargo test -p terse-cli --test
-lamplight`; the format is at the top of `transcripts/walkthrough.txt`:
+lowbell`; the format is at the top of `transcripts/walkthrough.txt`:
 `> command`, `< text the reply holds`, `! text it does not`,
 `status text`, `vectors text`, `@ press right`. The walkthrough is the
 story's solution; give each puzzle its own transcript.
