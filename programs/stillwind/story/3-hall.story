@@ -107,6 +107,43 @@ object chair "armchair"
   stand 156 296
   description: A wing armchair, sagging in the shape of somebody small and old and very comfortable. A shawl hangs over the back. It is Wenna's chair, or you're no judge of chairs.
 
+object clock "tall clock"
+  nouns clock hands face pendulum
+  adjectives tall long-case
+  in hall
+  scenery
+  area 364 116 406 250
+  stand 386 256
+  description: A tall clock in dark oak, its brass pendulum hanging dead straight. The hands stand at twelve minutes past seven, which, to be fair to the clock, is the time.
+  readable: XII past VII. As ever.
+
+object map "weather map"
+  nouns map chart arrows valley
+  adjectives weather pinned old
+  in hall
+  scenery
+  area 150 58 216 106
+  description: A hand-drawn map of the valley, pinned at the corners: the mere, the mill, the Spire, and red arrows for the winds, each labelled in the keeper's firm hand. Someone has drawn a small, defiant cross through every arrow in pencil.
+
+object books "books"
+  nouns books shelf shelves book
+  adjectives weather old
+  in hall
+  scenery
+  plural
+  area 20 58 130 92
+  description: Weather books: A KEEPER'S ALMANAC, ON THE BINDING OF BREEZES, WINDS I HAVE KNOWN (vols. 1-4), and a thin new one in a child's hand: HOW TO STOP EVENING.
+  readable: HOW TO STOP EVENING, by T. Hale, aged 11. Page one: "Step 1. Stop the winds." Page two is blank.
+
+on take books
+  say: You slide out HOW TO STOP EVENING, read the first page, and put it back exactly where it was. Some books are evidence.
+
+on push clock
+  say: You give the pendulum a nudge. It swings twice, thinks better of it, and hangs straight again. Clocks know.
+
+on listen clock
+  say: Not a tick. A clock with nothing to count.
+
 object stair "stair"
   nouns stair stairs staircase steps stairwell
   adjectives stone winding spiral

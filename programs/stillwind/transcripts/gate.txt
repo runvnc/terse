@@ -1,0 +1,46 @@
+# The wind-gate (scenes 2 and 3): the ribbon mends the bellows, the
+# bellows' draught turns the gate. Format: walkthrough.txt.
+
+> north
+> knock apple with staff
+> take apple
+> south
+> give apple to goat
+> north
+> open door
+< locked
+> knock on door
+< COME BACK AFTER EVENING
+> unlock door with key
+> open it
+< swings inward
+> in
+scene hall
+status The Hall of Vanes
+shown hall_gate_shut
+> push gate
+< built to turn for wind
+> blow gate
+< see spots
+> up
+< the wind-gate stands across the stair
+> hint
+< The wind-gate wants a draught
+> examine bellows
+< split along one seam
+> mend bellows with ribbon
+< surveyor's hitch
+> untie ribbon
+< honest work
+> pump bellows
+< FWOOF. A fine gust
+! [The wind-gate turns]
+> use bellows on gate
+< edge-on
+shown hall_gate_open
+> hint
+< The way up is open
+> search hearth
+< sherbet
+> sit
+< Wenna's chair

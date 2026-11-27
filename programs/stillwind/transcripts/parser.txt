@@ -1,0 +1,51 @@
+# The parser: words it knows and does not, IT, AGAIN, many verbs on many
+# things, the stopped clock, HELP, and the drawing styles. Format:
+# walkthrough.txt.
+
+> xyzzy
+< I don't know the word "xyzzy"
+> look at the sun
+< checked with a pencil
+> measure sun
+< not how suns work
+> examine staff
+< professionally offensive
+> read it
+< MADE BY HALE
+> again
+< MADE BY HALE
+> wave staff
+< conductor
+> read notebook
+< Dandelion clocks: unblown
+> eat humbugs
+< very minty
+> lick staff
+< 1987
+> listen
+< birdsong
+> smell
+< not moved in months
+> wait
+< The sun does not move
+status 7:12 pm, as ever
+> whistle
+< there's no wind to carry it
+> read boulder
+< NOT TODAY
+> climb boulder
+< sixty-three
+> take goat
+< firmer views
+> south
+< not going home without an answer
+> west
+< not painted yet
+> help
+< The arrow keys walk Ysolde
+> phosphor
+< vector tube
+> clean
+< painted again
+> score
+< 0 out of 10

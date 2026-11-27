@@ -2417,8 +2417,9 @@ static void perform(void)
     move_minutes = -1;
     if (c_o1 < N_OBJS)
         G.it = c_o1;
-    /* Done with the hands: she walks over first, and the command waits. */
-    if ((f & AF_NEAR) && !answering && !G.ended && shown_room == G.room) {
+    /* Done with the hands: she walks over first, and the command waits
+     * (once: carried out when she gets there, wherever the other object is). */
+    if ((f & AF_NEAR) && !answering && !replaying && !G.ended && shown_room == G.room) {
         uint8_t o = far_object();
         if (o != 0xFF) {
             if (walk_to(objs[o].stand[0] * U, objs[o].stand[1] * U))

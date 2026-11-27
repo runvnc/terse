@@ -31,7 +31,7 @@ achievement gate "The wind-gate turns" 2
 
 verb use = use, apply
   default: You can't think how to use {the} on its own. Try saying what you mean to do with {it}.
-verb knock = knock, rap, bang, tap
+verb knock = knock, rap, bang, tap, "knock on", "rap on", "bang on", "tap on"
   default: You knock on {the}. {The} {is} unmoved.
 verb tie = tie, knot, fasten, bind, mend, patch, repair, fix
   default: There's nothing to tie {the} to, and nothing about {it} that wants mending.

@@ -1,0 +1,26 @@
+# Saving, restoring and UNDO: the world and where she stands come back
+# with them. Format: walkthrough.txt.
+
+> north
+scene foot
+> knock apple with staff
+< drops into the grass
+> save
+< Saved as "game"
+> take apple
+< Taken
+> south
+scene meadow
+> give apple to goat
+< are yours
+> undo
+< Undone
+> i
+! iron key
+> restore
+< Restored "game"
+scene foot
+near 168 272
+shown foot_apple_ground
+> i
+! apple

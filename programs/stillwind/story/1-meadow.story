@@ -166,11 +166,11 @@ on pet goat
 on give sweets to goat
   say: Clementine sniffs the humbugs, sneezes violently, and looks at you as if you'd offered her a lit firework. Not a mint goat, then.
 
-on feed goat
-  say: With what? Clementine would like to know too.
-
 on feed goat if carrying apple
   try give apple goat
+
+on feed goat
+  say: With what? Clementine would like to know too.
 
 on give apple to goat
   say:

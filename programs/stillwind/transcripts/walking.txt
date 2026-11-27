@@ -1,0 +1,38 @@
+# Walking: the arrows, the pointer (on the floor she walks there; on a
+# thing she looks at it), exits taken by walking into them, an exit that
+# only says why not, and the scene of each room. Format: walkthrough.txt.
+
+scene meadow
+near 330 300
+@ down left
+wait 40
+@ up left
+settle
+@ click 220 300
+settle
+near 220 300
+@ click 150 240
+settle
+< A boulder the size of a haycart
+@ click 600 260
+settle
+near 600 260
+@ down right
+wait 60
+@ up right
+settle
+< The track east goes down to the mere
+scene meadow
+@ click 456 226
+settle
+< The Spire's Foot
+scene foot
+near 330 310
+> walk to barrel
+near 510 286
+> examine scraper
+< the shape of a hare
+> south
+< The Meadow Path
+scene meadow
+near 456 226

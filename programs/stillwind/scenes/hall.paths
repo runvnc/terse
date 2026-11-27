@@ -47,6 +47,46 @@ stroke none
 fill #ffdca024 M548 96 L600 96 L420 270 L250 270 Z
 fill #ffdca018 M554 96 L594 96 L470 250 L330 250 Z
 
+; --- A weather map of the valley pinned to the wall, arrows for the winds.
+fill #d8c8a0 M150 60 L214 58 L216 104 L152 106 Z
+fill #c0ae84 M150 60 L214 58 L214.5 62 L150.5 64 Z
+fill #7aa0b0 M176 88 C184 84 196 86 200 92 C194 96 182 96 176 92 Z
+fill #8aa070 M160 70 C170 66 180 72 176 80 C168 82 160 78 160 70 Z
+fill none stroke #b04030 0.8 M166 96 L178 90 M174 89 L178 90 L176 93 M200 70 L188 78 M190 74 L188 78 L192 79
+M206 98 L196 92 M197 95 L196 92 L199 91
+stroke #6a5a48 0.5 M158 66 H170 M190 64 H208 M158 100 H172
+stroke none
+fill #c03a3a
+@circle 152 61 1.2
+@circle 213 59 1.2
+
+; --- The tall clock by the stair, stopped at twelve past seven.
+fill #4a3424 M368 132 H402 V250 H368 Z
+fill #5e4430 M368 132 H376 V250 H368 Z
+fill #6a4c34 M364 126 H406 V136 H364 Z M366 122 C374 116 396 116 404 122 V126 H366 Z
+fill #e8dcc0
+@circle 385 150 10
+fill none stroke #3a2a1c 1.2 M385 150 L385 141 M385 150 L381.8 153.2
+stroke #8a7a5a 0.5 M385 141.5 V143 M394 150 H392.5 M385 159 V157.5 M376 150 H377.5
+stroke none
+fill #2a1e16 M374 166 H396 V236 H374 Z
+fill #c99a40
+@circle 385 222 5
+fill none stroke #a27c3a 1 M385 168 V217
+stroke none
+
+; --- Shelves of weather books on the left wall, a candle in a sconce.
+fill #4a3424 M20 60 H130 V64 H20 Z M20 88 H130 V92 H20 Z
+fill #7a3a30 M24 64 H30 V88 H24 Z M44 66 H50 V88 H44 Z M78 64 H84 V88 H78 Z M102 66 H108 V88 H102 Z
+fill #3a5a6a M30 66 H36 V88 H30 Z M60 64 H66 V88 H60 Z M90 64 H96 V88 H90 Z M114 68 H120 V88 H114 Z
+fill #8a7a3a M36 64 H42 V88 H36 Z M66 66 H72 V88 H66 Z M84 68 H90 V88 H84 Z M108 64 H114 V88 H108 Z
+fill #c8b890 M50 68 L58 66 L60 88 L52 88 Z M96 70 H102 V88 H96 Z M120 66 H126 V88 H120 Z
+fill #6a5a48 M24 36 H32 V40 H24 Z
+fill #e8dcc0 M26 26 H30 V36 H26 Z
+fill #ffd27a M28 20 C30 23 30 25 28 26 C26 25 26 23 28 20 Z
+fill #ffd27a20
+@circle 28 26 14
+
 ; --- The rack of retired weathervanes, each on its bracket, labelled.
 fill none stroke #2e2622 1.4 M232 112 H408
 stroke #3a302a 1 M250 112 V94 M300 112 V92 M350 112 V92 M396 112 V94

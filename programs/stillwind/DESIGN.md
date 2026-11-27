@@ -166,6 +166,64 @@ the apple, dropping the nest, giving the ribbon away are refused with a
 reason); the goat gives the key back for nothing once the door is open;
 the corkscrew can always be borrowed again.
 
+## Interactions: a world that answers
+
+The puzzle path is the spine; most of what the player types is not on
+it, and every one of those commands should get an answer that belongs to
+this world, in Ysolde's voice. The rules for writing it:
+
+- **People have opinions.** Clementine trades, refuses, sneezes at mint,
+  leans into a scratch and checks your satchel; she answers ASK ABOUT
+  with looks ("Clementine has been eating the same evening since April").
+  Tamsin, a voice in the speaking-tube, has a topic for everything and a
+  temper for the rest ("La la la," says the tube); BLOW TUBE gets "That
+  was very rude." Later: Hob, who talks in his sleep; Mister Lope, who
+  can be flattered; the winds, each with a voice.
+- **Things have uses nobody planned.** The vane-staff knocks the apple
+  down, conducts the absent orchestra (WAVE STAFF), and will point to
+  each freed wind; the ribbon that hung a key mends the bellows; the
+  dandelion clocks answer BLOW with the whole premise in one image (the
+  seeds rise and settle back exactly where they were); the notebook is
+  the hint system's honest cousin (READ NOTEBOOK: her survey of the
+  stillness). Later: the corkscrew, the nest, the music box's key on the
+  barrel's float.
+- **Many verbs on many things.** Every object answers EXAMINE, and the
+  ones you would try answer more: LISTEN and SMELL in every room, CLIMB
+  the boulder, the tree and the fence, TOUCH the sun-warm stone, KNOCK on
+  the door (and hear Tamsin), the boulder (no answer), the barrel (hollow
+  as a drum), LICK the staff, MEASURE the sun, SIT in Wenna's chair,
+  WHISTLE (it goes nowhere: no wind to carry it), THINK. Defaults are in
+  her voice too ("You were a surveyor, not a brawler").
+- **Small reactive details.** The clock in the status line says 7:12 pm,
+  as ever; the apple is drawn in the tree, then in the grass; the goat
+  is drawn with her ribbon, then without; the door opens on lamplight
+  that falls across the step; the bellows show the red ribbon round
+  their seam; the wind-gate's sails turn edge-on; listening in the hall
+  hears a floorboard creak "and stop, guiltily". The goat's description
+  changes after the trade ("lighter by one key ... heavier by one
+  apple").
+- **Refusals explain.** Things that would make a dead end are refused
+  with a reason that is a joke or a clue (EAT APPLE: "remember the look
+  Clementine gave it"; UNTIE RIBBON from the bellows: "the ribbon is
+  doing honest work").
+
+In the first three scenes: 31 objects and people, 80 rules, about 4,000
+words of text.
+
+## Scenes as blobs, fetched ahead
+
+Each scene's page document is a blob of its own, named by its hash; the
+image holds the engine and an index of the scenes' hashes and lengths
+(SCENES.md). While Ysolde is in a room the engine fetches the scenes of
+the rooms its exits lead to, through the content device, into RAM, so a
+scene change submits a scene that is already there and never waits on
+the network. A scene that has not come yet (a slow relay) shows a short
+honest notice in the picture's place until it comes; one that cannot be
+fetched says so, and the story goes on in words. The image stays small
+(about 51 KB, scenes not included) however many scenes the game has,
+and ROM (256 KiB) does not limit the number of scenes: ten richly
+painted scenes would be 200-300 KB of documents.
+
 ## Tone and look
 
 Flat-colour vector painting under a long gold evening: deep blue sky

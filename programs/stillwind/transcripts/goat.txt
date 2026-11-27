@@ -1,0 +1,38 @@
+# The goat's key (scenes 1 and 2): Clementine trades the key for the
+# apple, which only the vane-staff brings down. Format: walkthrough.txt.
+
+> take ribbon
+< steps neatly sideways
+> give humbugs to goat
+< Not a mint goat
+> pet goat
+< for a moment the two of you are friends
+> ask goat about key
+< you are losing it
+> ask goat about apple
+< toward the tower door
+> hint
+< What do goats like better than ribbons?
+> north
+scene foot
+> shake tree
+< like shaking a house
+> climb tree
+< which you knew
+> knock apple
+< drops into the grass
+> take it
+< Taken
+> eat apple
+< think better of it
+> s
+scene meadow
+> feed goat
+< are yours
+> i
+< iron key
+< red ribbon
+> examine goat
+< lighter by one key
+> give key to goat
+< a goat of her word
