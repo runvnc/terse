@@ -385,7 +385,8 @@
 #define TC_MAX 1024  /* a table's cells kept (the page device's limit) */
 #define TABLE_SIZE 14
 #define CODE_DOWN 1  /* a code span is this much smaller than its text */
-#define W_HTOKEN 240 /* a token of a coloured fence classified */
+#define W_HTOKEN 240 /* a run of a coloured fence classified */
+#define W_HSUB 80     /* a plain token joined to its run */
 #define W_HCOLOUR 520 /* ... and the text before it put in, and its Colour command */
 #define W_HLOOK 120  /* a word looked up in a keyword list */
 
@@ -2129,11 +2130,13 @@ static uint8_t find_block(uint32_t limit, uint8_t final)
  * text in a fence stays one ("[" ... "](terse:...)"), no colour changes
  * after a "[" not yet closed on the line when a "](" follows it. Colours
  * never cost text: when the document is short of room for the rest of
- * the article, the code goes on in the plain colour (hl_step). Metered
- * like the rest (W_HTOKEN a token, W_HLOOK a keyword lookup, W_HCOLOUR a
- * change of colour): the
- * manual's page with the most code (Make a device in Go, 12 KB of Go) is
- * built in 10 frames instead of 4; the first screenful still comes at once. */
+ * the article, the code goes on in the plain colour (hl_step); so it
+ * does past HL_BUDGET units of colouring in an article. Metered
+ * like the rest (W_HTOKEN a run, W_HSUB a plain token joined to it,
+ * W_HLOOK a keyword lookup, W_HCOLOUR a change of colour): the manual's
+ * page with the most code (Make a device in Rust, 13 KB of Rust) is built
+ * in 6 frames instead of 4, its last listing not wholly coloured; the
+ * first screenful still comes at once. */
 enum { HL_NONE, HL_C, HL_RUST, HL_GO, HL_SH, HL_GEN };
 /* Classes: keep the colour (blanks), plain, comment, string, number,
  * keyword, type, meta. */
@@ -2164,7 +2167,14 @@ static uint8_t hl_st;   /* what goes on to the next line: 1 a block comment, 2 a
 static uint8_t hl_q, hl_bol, hl_cmd, hl_hdn;
 static uint16_t hl_at, hl_hd; /* the end of the token classified last; the here-document's word */
 static uint16_t hl_le;        /* the end of the line hl_at is on (its LF) */
+/* The estimated units colouring has cost in the article; past HL_BUDGET
+ * (about five frames' share) the rest of its code is not coloured, so an
+ * article of long listings is built at most that much later. */
+#define HL_BUDGET 400000u
+static uint32_t hl_spent;
 static uint8_t hl_tl;         /* that line may hold a link with text */
+static uint16_t hl_ps, hl_pe; /* a token classified ahead (hl_pe 0: none): its start and end */
+static uint8_t hl_pc;         /* ... and its class */
 
 static uint8_t lower(uint8_t c)
 {
@@ -2512,6 +2522,16 @@ static __attribute__((noinline)) void hl_step(uint32_t p, uint32_t end)
     uint32_t le, k = p, left;
     uint8_t cls;
     const uint8_t *rgb;
+    if (hl_spent > HL_BUDGET) { /* no more colouring in this article */
+        if (b_colour != rgb_pre) {
+            flush(p);
+            doc_rgb(rgb_pre);
+            b_colour = rgb_pre;
+        }
+        hl_lang = HL_NONE;
+        hl_at = end;
+        return;
+    }
     if (p > hl_le) { /* a new line: where it ends, and whether a "[" with a "](" after it is on it */
         hl_le = find2(art + p, art + end, '\n', '\n') - art;
         left = find2(art + p, art + hl_le, '[', '[') - art;
@@ -2527,8 +2547,32 @@ static __attribute__((noinline)) void hl_step(uint32_t p, uint32_t end)
         spend((p - k) * W_FIND);
         return;
     }
-    hl_at = hl_token(p, le, &cls);
+    if (hl_pe && p == hl_ps) { /* classified already, at the end of the last run */
+        hl_at = hl_pe;
+        cls = hl_pc;
+    } else {
+        hl_at = hl_token(p, le, &cls);
+    }
+    hl_pe = 0;
     spend(W_HTOKEN + (hl_at - k) * W_FIND);
+    /* Plain tokens after a plain one join its run (one step, no Colour
+     * command); the first token that is not plain is kept for the next. */
+    while (cls == HC_PLAIN && hl_at < le) {
+        uint32_t q = hl_at, e;
+        uint8_t c;
+        while (q < le && is_blank(art[q]))
+            q++;
+        if (q == le)
+            break;
+        e = hl_token(q, le, &c);
+        spend(W_HSUB + (e - hl_at) * W_FIND);
+        if (c != HC_PLAIN) {
+            hl_ps = q, hl_pe = e, hl_pc = c;
+            hl_at = q;
+            break;
+        }
+        hl_at = e;
+    }
     if (cls == HC_KEEP)
         return;
     rgb = cls == HC_PLAIN ? rgb_pre : hl_rgb[cls];
@@ -2601,9 +2645,9 @@ static void start_block(void)
     case K_PRE:
         set_style(S_PRE);
         doc_paragraph(DOC_START, PRE_INDENT, PARA_SPACE, DOC_NOWRAP);
-        hl_lang = b_kind == K_FENCE ? b_lang : HL_NONE;
+        hl_lang = b_kind == K_FENCE && hl_spent <= HL_BUDGET ? b_lang : HL_NONE;
         hl_at = b_start;
-        hl_le = 0;
+        hl_le = hl_pe = 0;
         hl_st = 0;
         hl_bol = 1;
         break;
@@ -2722,8 +2766,11 @@ static uint8_t emit_block(void)
         }
         lim = stop;
         if (hl) { /* a coloured fence: the token at p classified, and looked through to its end */
-            if (p - art >= hl_at)
+            if (p - art >= hl_at) {
+                uint32_t w = b_work;
                 hl_step(p - art, end);
+                hl_spent += w - b_work;
+            }
             if (art + hl_at < stop)
                 lim = art + hl_at;
         }
@@ -3227,6 +3274,7 @@ static void build(void)
     if (b_phase == B_START) {
         art_beyond = 0;
         heading_title();
+        hl_spent = 0;
         doc_begin(doc, DOC_CAP - DOC_RESERVE);
         doc_head();
         b_phase = B_FIND;
