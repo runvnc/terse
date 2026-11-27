@@ -6,7 +6,7 @@ A feed is one author's numbered series of entries. Each entry is small and signe
 
 `follow/main.go`, with step 1's `article` and step 2's `relay` packages:
 
-```
+```go
 // Step 3: follow a feed and open one of its articles.
 package main
 
@@ -138,7 +138,7 @@ To open an entry, `main` gets its blob with step 2's `relay.Get`, which checks i
 
 In a module of your own, `go get` adds it to `go.mod`:
 
-```
+```sh
 go get github.com/runvnc/terse/sdk/go@v0.1.0
 ```
 
@@ -148,7 +148,7 @@ In the Tersenet sources, `go.work` beside `go.mod` replaces that version with th
 
 With the relay of step 2 running, make a key and publish the article as entry 1 of your feed:
 
-```
+```sh
 terse key new
 terse feed publish ../hello.txt --title Hello \
   --relay ws://127.0.0.1:7979
@@ -156,17 +156,17 @@ terse feed publish ../hello.txt --title Hello \
 
 `terse key new` makes your key and prints it; if you made a profile in the user guide you have one already. `terse key show` prints it, so give it to the program:
 
-```
+```sh
 go run ./follow ws://127.0.0.1:7979 $(terse key show)
 ```
 
-```
+```text
 1  Hello
 ```
 
 Add an entry's number to open it:
 
-```
+```sh
 go run ./follow ws://127.0.0.1:7979 $(terse key show) 1
 ```
 

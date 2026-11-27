@@ -8,7 +8,7 @@ The program is in the Tersenet sources, in `examples/reader/rust`, so you can ru
 
 This is `examples/reader/hello.txt`:
 
-```
+```article
 # Hello
 
 My first article. It has a heading, and this paragraph,
@@ -27,14 +27,14 @@ A line that starts with `# ` is a heading, and one that starts with `## ` a subh
 
 `src/lib.rs` lists the library's modules, this step's and the next:
 
-```
+```rust
 pub mod article;
 pub mod relay;
 ```
 
 `src/article.rs` shows an article:
 
-```
+```rust
 const WIDTH: usize = 68;
 
 pub fn show(text: &[u8]) {
@@ -101,7 +101,7 @@ pub fn visible(text: &str) -> String {
 
 `src/bin/show.rs` is the program:
 
-```
+```rust
 // Step 1: show an article from a file.
 fn main() -> std::io::Result<()> {
     let args: Vec<String> = std::env::args().collect();
@@ -126,14 +126,14 @@ Then it reads the article a line at a time, with an empty line added at the end 
 
 Run it:
 
-```
+```sh
 cd examples/reader/rust
 cargo run -q --bin show ../hello.txt
 ```
 
 The first time, Cargo also downloads and builds the libraries that steps 2 and 3 use. It prints:
 
-```
+```text
 Hello
 =====
 

@@ -21,7 +21,7 @@ For relays the public authorities do not vouch for, the user may set, in their o
 
 With `only-authority` or `pin`, nothing else is accepted for that host, a certificate from a public authority included. An option applies only to the host it is written with. A plain relay takes no options.
 
-```
+```conf
 # <config>/relays
 wss://relay.tersenet.org
 wss://relay.corp.example only-authority=corp-ca.pem
@@ -35,7 +35,7 @@ Nothing received from the network (a hint, a profile, a link, an entry) can add 
 
 The simple way is plain: `terse-relay --listen 0.0.0.0:7878`, and `ws://192.168.1.20:7878` in each client's relay list. The recommended way is encrypted, with a self-signed certificate that each client pins:
 
-```
+```sh
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 3650 -subj /CN=relay.home -keyout relay.key -out relay.pem
 terse-relay --listen 0.0.0.0:7443 --store relay-store --tls-cert relay.pem --tls-key relay.key
 terse relay fingerprint relay.pem

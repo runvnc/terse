@@ -12,21 +12,21 @@
 <article>
 <h1 id="write-and-publish-an-article">Write and publish an article</h1>
 <p>An article is a plain text file. Write it in any text editor and save it as <code>hello.txt</code>:</p>
-<pre># Hello, Tersenet
+<pre><span class=k># Hello, Tersenet</span>
 
 This is my first article. Lines next to each other
 are joined into one paragraph.
 
-## What I like
+<span class=k>## What I like</span>
 
-- short pages
-- no adverts
-- `code` in backquotes
+<span class=m>-</span> short pages
+<span class=m>-</span> no adverts
+<span class=m>-</span> <span class=s>`code`</span> in backquotes
 
-| Day | Walked |
-|---|--:|
-| Monday | 4 km |
-| Tuesday | 6 km |</pre>
+<span class=m>|</span> Day <span class=m>|</span> Walked <span class=m>|</span>
+<span class=m>|</span>---<span class=m>|</span>--:<span class=m>|</span>
+<span class=m>|</span> Monday <span class=m>|</span> 4 km <span class=m>|</span>
+<span class=m>|</span> Tuesday <span class=m>|</span> 6 km <span class=m>|</span></pre>
 <p>A blank line ends a paragraph. <code># </code> starts a heading and <code>## </code> a smaller one; <code>- </code> starts an item of a list; text between backquotes is code; lines that start with <code>|</code> are a table, and the <code>|---|--:|</code> line under its first row makes that row a header and puts the second column on the right.</p>
 <h2 id="is-it-markdown">Is it Markdown?</h2>
 <p>It looks like Markdown, and what the two have in common is written the same way as in GitHub-flavoured Markdown: paragraphs, <code>#</code> and <code>##</code> headings, lists with <code>-</code> or <code>*</code>, code blocks (indented four spaces, or between lines of three backquotes), code spans, tables, and links written <code>[text](target)</code>. But it is not strictly a subset of it. It is much smaller, and a few things differ:</p>
@@ -37,7 +37,7 @@ are joined into one paragraph.
 </ul>
 <p>So an article that keeps to what the two share shows much the same on GitHub, and a Markdown file mostly reads well in Tersenet, with its emphasis marks showing. <a href="writing-articles.html">Writing an article</a> shows every rule.</p>
 <h2 id="publish-it">Publish it</h2>
-<pre>terse feed publish hello.txt --title &quot;Hello, Tersenet&quot;</pre>
+<pre class="sh"><span class=k>terse</span> feed publish hello.txt --title <span class=s>&quot;Hello, Tersenet&quot;</span></pre>
 <pre>seq 2 blob 5d86159d495906bb…ad537da380d</pre>
 <p>The article is now entry #2 of your feed (your profile was #1), signed with your key, on your relay; the line before it, <code>terse: taken by 1 of 1 relays: ws&#58;//127.0.0.1:7878</code>, says so. Anyone who can reach that relay can read it. The title is what timelines show; the heading at the top of the text is for people who open the article by a link.</p>
 <h2 id="links-to-your-other-articles">Links to your other articles</h2>
@@ -46,7 +46,7 @@ are joined into one paragraph.
 <p>An entry names one article, and a public relay drops an article no entry names after a while, so a part that no entry names (a picture, a page you wrote only to link to) is uploaded with the article and then named by an *attachment* entry of your feed, which readers do not list: <code>seq 3 attachment terse:…</code>. A part you want listed too, publish as an article of its own first. A link to another feed&#39;s article is *link-only*: that feed&#39;s relays keep it. <code>--dry-run</code> shows the list and publishes nothing.</p>
 <h2 id="see-it">See it</h2>
 <p>The timeline shows the feeds you follow, so follow your own:</p>
-<pre>terse feed subscribe $(terse key show)</pre>
+<pre class="sh"><span class=k>terse</span> feed subscribe <span class=m>$(</span><span class=k>terse</span> key show)</pre>
 <pre>subscribed to 7105227f05be8a2efd…6854b14db7680ef9987e084c</pre>
 <p>(That works in bash, zsh, fish and PowerShell; or paste your key after <code>subscribe</code>.) The window reads the list of feeds you follow when it starts, so close it, run <code>terse-host</code> again and start the reader:</p>
 <pre>Timeline

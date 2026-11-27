@@ -59,7 +59,7 @@ Lists have one level. Ordinary lines after an item continue it, joined as in a p
 
 A line indented by four spaces or a tab starts a preformatted block, which holds it and the indented lines after it. They are shown as written, leading blanks included, in a monospaced face, and never wrapped: the reader's column holds about 64 monospaced characters, and longer lines are cut off.
 
-```
+```text
     for (i = 0; i < 10; i++)
         draw(i);
 ```

@@ -81,15 +81,15 @@
 <p>When the vector display (device 3) is in the phosphor style or in fill mode 1, figures are drawn as outlines: nothing is filled, and a path that is filled but not stroked is stroked one unit wide in its fill colour. In the phosphor style they are light on the black screen like the rest of the page. An image without the vector display has the clean style and fill mode 0, so its figures are filled.</p>
 <h2 id="building-a-figure-in-c">Building a figure in C</h2>
 <p>While building a document (see The page (device 7)), the library&#39;s path builder writes these commands and <code>doc_figure</code> wraps them in a Figure command, whose head is <code>DOC_FIGURE_HEAD</code> (8) bytes. This is the red triangle above, in a box of 120 x 80 units:</p>
-<pre>static uint8_t path[64];
-path_begin(path, sizeof path);
-path_fill(224, 108, 117, 255);
-path_stroke(229, 229, 229, 255, 32);
-path_move(320, 1120);
-path_line(960, 160);
-path_line(1600, 1120);
+<pre><span class=k>static</span> <span class=t>uint8_t</span> path[<span class=n>64</span>];
+path_begin(path, <span class=k>sizeof</span> path);
+path_fill(<span class=n>224</span>, <span class=n>108</span>, <span class=n>117</span>, <span class=n>255</span>);
+path_stroke(<span class=n>229</span>, <span class=n>229</span>, <span class=n>229</span>, <span class=n>255</span>, <span class=n>32</span>);
+path_move(<span class=n>320</span>, <span class=n>1120</span>);
+path_line(<span class=n>960</span>, <span class=n>160</span>);
+path_line(<span class=n>1600</span>, <span class=n>1120</span>);
 path_close();
-doc_figure(120, 80, DOC_CENTRE, path, path_length(path));</pre>
+doc_figure(<span class=n>120</span>, <span class=n>80</span>, DOC_CENTRE, path, path_length(path));</pre>
 <h2 id="figures-in-articles">Figures in articles</h2>
 <p>The article format writes a figure as text: a fence whose opening line is three backquotes, <code>path</code>, the width W and the height H (1..1024 units each, 1 to 4 digits with no sign; a column of the recommended width, about 68 characters of body text, is 512 units), holding a path string up to a closing line of three backquotes. The path string is SVG path data:</p>
 <div class="table"><table>

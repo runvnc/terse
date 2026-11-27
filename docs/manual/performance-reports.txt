@@ -10,7 +10,7 @@ It is a document of the `reports` format, plain text after a short header, at mo
 
 ## Making and checking one
 
-```
+```sh
 terse perf report              # prints the report
 terse perf report --run        # also runs terse perf
 terse perf report --out r.doc  # and writes it to a file

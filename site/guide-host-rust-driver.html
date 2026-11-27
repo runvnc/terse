@@ -13,120 +13,120 @@
 <h1 id="make-a-host-in-rust-step-3-a-driver-shows-hello">Make a host in Rust, step 3: a driver shows hello</h1>
 <p>Text on a Terse32 screen comes from device 2, the terminal: 80 by 30 character cells. Rather than write it, use the device bus: each device is a separate program, a driver, that talks to your core over a Unix-domain socket. The Tersenet sources have a reference driver for every device. This step adds the module <code>bus</code>: start one driver, the terminal&#39;s, pass it the terminal&#39;s calls, and ask it for the grid to print.</p>
 <p>The reference drivers are in the downloads&#39; <code>bus</code> folder, for Linux, macOS and Windows. Or build them from the top folder of the sources:</p>
-<pre>cargo build --release -p terse-devices</pre>
+<pre class="sh"><span class=k>cargo</span> build --release -p terse-devices</pre>
 <h2 id="messages">Messages</h2>
 <p>Every message is a length (4 bytes, of the rest), an address (the machine, 4 bytes, always 0 here; a slot; 3 zero bytes) and a body whose first byte is its type. Integers are little-endian. <code>send</code> writes one; <code>request</code> writes one and reads the reply, whose type must be the request&#39;s plus <code>REPLY</code>. Anything else, an <code>ERROR</code> from the driver included, ends the run with status 3 (<code>fail</code>):</p>
-<pre>const HELLO: u8 = 0x01;
-const OPEN: u8 = 0x03;
-const CALL: u8 = 0x10;
-const BEGIN: u8 = 0x30;
-const END: u8 = 0x31;
-const STATE: u8 = 0x40;
-const SHUTDOWN: u8 = 0x60;
-const REPLY: u8 = 0x80;
-const PROTOCOL: u8 = 1;
-const ADDRESS_SIZE: usize = 8;
-const NO_SLOT: u8 = 0;</pre>
-<pre>    fn send(&amp;mut self, slot: u8, body: &amp;[u8]) {
-        let length = (ADDRESS_SIZE + body.len()) as u32;
-        let mut message = length.to_le_bytes().to_vec();
-        message.extend([0, 0, 0, 0, slot, 0, 0, 0]);
+<pre><span class=k>const</span> HELLO: <span class=t>u8</span> = <span class=n>0x01</span>;
+<span class=k>const</span> OPEN: <span class=t>u8</span> = <span class=n>0x03</span>;
+<span class=k>const</span> CALL: <span class=t>u8</span> = <span class=n>0x10</span>;
+<span class=k>const</span> BEGIN: <span class=t>u8</span> = <span class=n>0x30</span>;
+<span class=k>const</span> END: <span class=t>u8</span> = <span class=n>0x31</span>;
+<span class=k>const</span> STATE: <span class=t>u8</span> = <span class=n>0x40</span>;
+<span class=k>const</span> SHUTDOWN: <span class=t>u8</span> = <span class=n>0x60</span>;
+<span class=k>const</span> REPLY: <span class=t>u8</span> = <span class=n>0x80</span>;
+<span class=k>const</span> PROTOCOL: <span class=t>u8</span> = <span class=n>1</span>;
+<span class=k>const</span> ADDRESS_SIZE: <span class=t>usize</span> = <span class=n>8</span>;
+<span class=k>const</span> NO_SLOT: <span class=t>u8</span> = <span class=n>0</span>;</pre>
+<pre>    <span class=k>fn</span> send(&amp;<span class=k>mut</span> <span class=k>self</span>, slot: <span class=t>u8</span>, body: &amp;[<span class=t>u8</span>]) {
+        <span class=k>let</span> length = (ADDRESS_SIZE + body.len()) <span class=k>as</span> <span class=t>u32</span>;
+        <span class=k>let</span> <span class=k>mut</span> message = length.to_le_bytes().to_vec();
+        message.extend([<span class=n>0</span>, <span class=n>0</span>, <span class=n>0</span>, <span class=n>0</span>, slot, <span class=n>0</span>, <span class=n>0</span>, <span class=n>0</span>]);
         message.extend(body);
-        check(self.stream.write_all(&amp;message));
+        check(<span class=k>self</span>.stream.write_all(&amp;message));
     }
 
-    fn request(&amp;mut self, slot: u8, body: &amp;[u8]) -&gt; Vec&lt;u8&gt; {
-        self.send(slot, body);
-        let mut length = [0; 4];
-        check(self.stream.read_exact(&amp;mut length));
-        let mut reply = vec![0; word(&amp;length, 0) as usize];
-        check(self.stream.read_exact(&amp;mut reply));
-        let reply = reply.split_off(ADDRESS_SIZE);
-        if reply.first() != Some(&amp;(body[0] | REPLY)) {
-            let text = String::from_utf8_lossy(&amp;reply);
-            fail(format!(&quot;the driver said {text:?}&quot;));
+    <span class=k>fn</span> request(&amp;<span class=k>mut</span> <span class=k>self</span>, slot: <span class=t>u8</span>, body: &amp;[<span class=t>u8</span>]) -&gt; <span class=t>Vec</span>&lt;<span class=t>u8</span>&gt; {
+        <span class=k>self</span>.send(slot, body);
+        <span class=k>let</span> <span class=k>mut</span> length = [<span class=n>0</span>; <span class=n>4</span>];
+        check(<span class=k>self</span>.stream.read_exact(&amp;<span class=k>mut</span> length));
+        <span class=k>let</span> <span class=k>mut</span> reply = <span class=m>vec!</span>[<span class=n>0</span>; word(&amp;length, <span class=n>0</span>) <span class=k>as</span> <span class=t>usize</span>];
+        check(<span class=k>self</span>.stream.read_exact(&amp;<span class=k>mut</span> reply));
+        <span class=k>let</span> reply = reply.split_off(ADDRESS_SIZE);
+        <span class=k>if</span> reply.first() != <span class=t>Some</span>(&amp;(body[<span class=n>0</span>] | REPLY)) {
+            <span class=k>let</span> text = <span class=t>String</span>::from_utf8_lossy(&amp;reply);
+            fail(<span class=m>format!</span>(<span class=s>&quot;the driver said {text:?}&quot;</span>));
         }
         reply
     }</pre>
 <h2 id="starting-the-driver">Starting the driver</h2>
-<pre>    pub fn start(
-        command: &amp;str,
-        cpu: &amp;Cpu,
-        file: &amp;[u8],
-        devices: &amp;[Device],
-    ) -&gt; Bus {
-        let name = format!(&quot;terse-bus-{}&quot;, std::process::id());
-        let dir = env::temp_dir().join(name);
+<pre>    <span class=k>pub</span> <span class=k>fn</span> start(
+        command: &amp;<span class=t>str</span>,
+        cpu: &amp;<span class=t>Cpu</span>,
+        file: &amp;[<span class=t>u8</span>],
+        devices: &amp;[<span class=t>Device</span>],
+    ) -&gt; <span class=t>Bus</span> {
+        <span class=k>let</span> name = <span class=m>format!</span>(<span class=s>&quot;terse-bus-{}&quot;</span>, std::process::id());
+        <span class=k>let</span> dir = env::temp_dir().join(name);
         check(fs::create_dir_all(&amp;dir));
-        let path = dir.join(&quot;bus.sock&quot;);
-        let listener = check(UnixListener::bind(&amp;path));
-        let driver = check(
-            Command::new(command)
-                .env(&quot;TERSE_BUS_SOCKET&quot;, &amp;path)
+        <span class=k>let</span> path = dir.join(<span class=s>&quot;bus.sock&quot;</span>);
+        <span class=k>let</span> listener = check(<span class=t>UnixListener</span>::bind(&amp;path));
+        <span class=k>let</span> driver = check(
+            <span class=t>Command</span>::new(command)
+                .env(<span class=s>&quot;TERSE_BUS_SOCKET&quot;</span>, &amp;path)
                 .stdout(stderr())
                 .spawn(),
         );
-        let (stream, _) = check(listener.accept());
-        let session = dir.to_string_lossy().into_owned();
-        let (tables, grants) = (HashMap::new(), Vec::new());
-        let mut bus =
-            Bus { stream, driver, dir, tables, grants };
+        <span class=k>let</span> (stream, _) = check(listener.accept());
+        <span class=k>let</span> session = dir.to_string_lossy().into_owned();
+        <span class=k>let</span> (tables, grants) = (<span class=t>HashMap</span>::new(), <span class=t>Vec</span>::new());
+        <span class=k>let</span> <span class=k>mut</span> bus =
+            <span class=t>Bus</span> { stream, driver, dir, tables, grants };
 
-        let ask: Vec&lt;u8&gt; = devices
+        <span class=k>let</span> ask: <span class=t>Vec</span>&lt;<span class=t>u8</span>&gt; = devices
             .iter()
             .map(|d| d.slot)
             .filter(|slot| [TERMINAL, FULL_TEXT].contains(slot))
             .collect();
-        let mut hello = vec![HELLO, PROTOCOL, 0, 0];
-        hello.extend([0, 0, 0, 0, ask.len() as u8]);
+        <span class=k>let</span> <span class=k>mut</span> hello = <span class=m>vec!</span>[HELLO, PROTOCOL, <span class=n>0</span>, <span class=n>0</span>];
+        hello.extend([<span class=n>0</span>, <span class=n>0</span>, <span class=n>0</span>, <span class=n>0</span>, ask.len() <span class=k>as</span> <span class=t>u8</span>]);
         hello.extend(&amp;ask);
-        hello.extend((session.len() as u16).to_le_bytes());
+        hello.extend((session.len() <span class=k>as</span> <span class=t>u16</span>).to_le_bytes());
         hello.extend(session.as_bytes());
-        hello.extend([0, 0]);
-        let reply = bus.request(NO_SLOT, &amp;hello);
-        let mut rest = &amp;reply[NAME_AT..];
-        let mut take = |n: usize| rest.split_off(..n).unwrap();
-        let length = take(LENGTH_SIZE);
-        let length = u16::from_le_bytes([length[0], length[1]]);
-        take(length as usize + NATIVE_SIZE);
-        let mut versions = HashMap::new();
-        for _ in 0..take(1)[0] {
-            let (slot, version) = (take(1)[0], take(1)[0]);
-            let layers = take(1)[0] as usize;
+        hello.extend([<span class=n>0</span>, <span class=n>0</span>]);
+        <span class=k>let</span> reply = bus.request(NO_SLOT, &amp;hello);
+        <span class=k>let</span> <span class=k>mut</span> rest = &amp;reply[NAME_AT..];
+        <span class=k>let</span> <span class=k>mut</span> take = |n: <span class=t>usize</span>| rest.split_off(..n).unwrap();
+        <span class=k>let</span> length = take(LENGTH_SIZE);
+        <span class=k>let</span> length = <span class=t>u16</span>::from_le_bytes([length[<span class=n>0</span>], length[<span class=n>1</span>]]);
+        take(length <span class=k>as</span> <span class=t>usize</span> + NATIVE_SIZE);
+        <span class=k>let</span> <span class=k>mut</span> versions = <span class=t>HashMap</span>::new();
+        <span class=k>for</span> _ <span class=k>in</span> <span class=n>0</span>..take(<span class=n>1</span>)[<span class=n>0</span>] {
+            <span class=k>let</span> (slot, version) = (take(<span class=n>1</span>)[<span class=n>0</span>], take(<span class=n>1</span>)[<span class=n>0</span>]);
+            <span class=k>let</span> layers = take(<span class=n>1</span>)[<span class=n>0</span>] <span class=k>as</span> <span class=t>usize</span>;
             take(LAYER_SIZE * layers);
-            for _ in 0..take(1)[0] {
-                let entry = take(ENTRY_SIZE).to_vec();
-                let function = entry[FUNCTION_AT];
-                let key = (slot as u32, function as u32);
+            <span class=k>for</span> _ <span class=k>in</span> <span class=n>0</span>..take(<span class=n>1</span>)[<span class=n>0</span>] {
+                <span class=k>let</span> entry = take(ENTRY_SIZE).to_vec();
+                <span class=k>let</span> function = entry[FUNCTION_AT];
+                <span class=k>let</span> key = (slot <span class=k>as</span> <span class=t>u32</span>, function <span class=k>as</span> <span class=t>u32</span>);
                 bus.tables.insert(key, entry);
             }
             versions.insert(slot, version);
         }
 
-        let mut has = Vec::new();
-        for d in devices {
-            let (slot, version) = (d.slot, d.version);
-            let granted = versions.get(&amp;slot) == Some(&amp;version);
-            if !granted &amp;&amp; !d.optional {
-                fail(format!(&quot;no driver for device {slot}&quot;));
+        <span class=k>let</span> <span class=k>mut</span> has = <span class=t>Vec</span>::new();
+        <span class=k>for</span> d <span class=k>in</span> devices {
+            <span class=k>let</span> (slot, version) = (d.slot, d.version);
+            <span class=k>let</span> granted = versions.get(&amp;slot) == <span class=t>Some</span>(&amp;version);
+            <span class=k>if</span> !granted &amp;&amp; !d.optional {
+                fail(<span class=m>format!</span>(<span class=s>&quot;no driver for device {slot}&quot;</span>));
             }
-            if d.optional {
-                bus.grants.push(granted as u8);
+            <span class=k>if</span> d.optional {
+                bus.grants.push(granted <span class=k>as</span> <span class=t>u8</span>);
             }
-            if granted {
+            <span class=k>if</span> granted {
                 has.extend([d.slot, d.version]);
             }
         }
-        let mut open = vec![OPEN, 0, 0, 0];
+        <span class=k>let</span> <span class=k>mut</span> open = <span class=m>vec!</span>[OPEN, <span class=n>0</span>, <span class=n>0</span>, <span class=n>0</span>];
         open.extend(blake3::hash(file).as_bytes());
-        let (rom, ram) = (cpu.rom.len(), cpu.ram.len());
-        words(&amp;mut open, &amp;[rom as u32, ram as u32]);
-        open.extend([0, 0, (has.len() / DEVICE_SIZE) as u8]);
+        <span class=k>let</span> (rom, ram) = (cpu.rom.len(), cpu.ram.len());
+        words(&amp;<span class=k>mut</span> open, &amp;[rom <span class=k>as</span> <span class=t>u32</span>, ram <span class=k>as</span> <span class=t>u32</span>]);
+        open.extend([<span class=n>0</span>, <span class=n>0</span>, (has.len() / DEVICE_SIZE) <span class=k>as</span> <span class=t>u8</span>]);
         open.extend(&amp;has);
-        open.push(0);
+        open.push(<span class=n>0</span>);
         open.extend(&amp;cpu.rom);
-        if bus.request(NO_SLOT, &amp;open)[TOOK_AT] != TOOK {
-            fail(&quot;the driver will not run the program&quot;);
+        <span class=k>if</span> bus.request(NO_SLOT, &amp;open)[TOOK_AT] != TOOK {
+            fail(<span class=s>&quot;the driver will not run the program&quot;</span>);
         }
         bus
     }</pre>
@@ -138,171 +138,171 @@ const NO_SLOT: u8 = 0;</pre>
 <li>OPEN (<code>03h</code>) gives the driver the machine: its image ID, the BLAKE3 hash of the program file; the ROM and RAM lengths; an empty memory file (two zero bytes); the slots it has; no program identity (0); the ROM. The reply says if the driver took it.</li>
 </ul>
 <h2 id="calls-through-the-table">Calls through the table</h2>
-<pre>    pub fn call(
-        &amp;mut self,
-        cpu: &amp;mut Cpu,
-        budget: i64,
-        slot: u32,
-        function: u32,
-    ) -&gt; (u32, i64) {
-        let key = (slot, function);
-        let Some(entry) = self.tables.get(&amp;key).cloned() else {
-            return (UNKNOWN_CALL, BASE_CHARGE);
+<pre>    <span class=k>pub</span> <span class=k>fn</span> call(
+        &amp;<span class=k>mut</span> <span class=k>self</span>,
+        cpu: &amp;<span class=k>mut</span> <span class=t>Cpu</span>,
+        budget: <span class=t>i64</span>,
+        slot: <span class=t>u32</span>,
+        function: <span class=t>u32</span>,
+    ) -&gt; (<span class=t>u32</span>, <span class=t>i64</span>) {
+        <span class=k>let</span> key = (slot, function);
+        <span class=k>let</span> <span class=t>Some</span>(entry) = <span class=k>self</span>.tables.get(&amp;key).cloned() <span class=k>else</span> {
+            <span class=k>return</span> (UNKNOWN_CALL, BASE_CHARGE);
         };
-        let field = |at| word(&amp;entry, at);
-        let flags = entry[FLAGS_AT];
-        let access = entry[ACCESS_AT];
-        let mut charge = ANSWERED_CHARGE;
-        if flags &amp; DEFERRED != 0 {
+        <span class=k>let</span> field = |at| word(&amp;entry, at);
+        <span class=k>let</span> flags = entry[FLAGS_AT];
+        <span class=k>let</span> access = entry[ACCESS_AT];
+        <span class=k>let</span> <span class=k>mut</span> charge = ANSWERED_CHARGE;
+        <span class=k>if</span> flags &amp; DEFERRED != <span class=n>0</span> {
             charge = BASE_CHARGE;
         }
-        let args = cpu.x[A0..=A5].to_vec();
-        let addr = args[entry[BUFFER_AT] as usize];
-        let mut size = 0;
-        if flags &amp; BUFFERED != 0 {
-            size = field(SCALE_AT) as u64;
-            if entry[LENGTH_AT] != NONE {
-                size *= args[entry[LENGTH_AT] as usize] as u64;
+        <span class=k>let</span> args = cpu.x[A0..=A5].to_vec();
+        <span class=k>let</span> addr = args[entry[BUFFER_AT] <span class=k>as</span> <span class=t>usize</span>];
+        <span class=k>let</span> <span class=k>mut</span> size = <span class=n>0</span>;
+        <span class=k>if</span> flags &amp; BUFFERED != <span class=n>0</span> {
+            size = field(SCALE_AT) <span class=k>as</span> <span class=t>u64</span>;
+            <span class=k>if</span> entry[LENGTH_AT] != NONE {
+                size *= args[entry[LENGTH_AT] <span class=k>as</span> <span class=t>usize</span>] <span class=k>as</span> <span class=t>u64</span>;
             }
-            let least = field(LEAST_AT) as u64;
-            if size &lt; least || size &gt; field(MOST_AT) as u64 {
-                return (field(LENGTH_RESULT_AT), charge);
+            <span class=k>let</span> least = field(LEAST_AT) <span class=k>as</span> <span class=t>u64</span>;
+            <span class=k>if</span> size &lt; least || size &gt; field(MOST_AT) <span class=k>as</span> <span class=t>u64</span> {
+                <span class=k>return</span> (field(LENGTH_RESULT_AT), charge);
             }
-            let ram_only =
-                access &amp; IN_ROM == 0 || access &amp; WRITES != 0;
-            let place = cpu.memory(addr, size as u32, ram_only);
-            if place.is_none() &amp;&amp; size &gt; 0 {
-                return (field(PLACE_RESULT_AT), charge);
+            <span class=k>let</span> ram_only =
+                access &amp; IN_ROM == <span class=n>0</span> || access &amp; WRITES != <span class=n>0</span>;
+            <span class=k>let</span> place = cpu.memory(addr, size <span class=k>as</span> <span class=t>u32</span>, ram_only);
+            <span class=k>if</span> place.is_none() &amp;&amp; size &gt; <span class=n>0</span> {
+                <span class=k>return</span> (field(PLACE_RESULT_AT), charge);
             }
         }
-        let checked = entry[CHECKED_AT];
-        let most = field(CHECKED_MOST_AT);
-        if checked != NONE &amp;&amp; args[checked as usize] &gt; most {
-            return (field(PLACE_RESULT_AT), charge);
+        <span class=k>let</span> checked = entry[CHECKED_AT];
+        <span class=k>let</span> most = field(CHECKED_MOST_AT);
+        <span class=k>if</span> checked != NONE &amp;&amp; args[checked <span class=k>as</span> <span class=t>usize</span>] &gt; most {
+            <span class=k>return</span> (field(PLACE_RESULT_AT), charge);
         }
 
-        let mut call = vec![CALL, function as u8, 0, 0];
-        words(&amp;mut call, &amp;args);
+        <span class=k>let</span> <span class=k>mut</span> call = <span class=m>vec!</span>[CALL, function <span class=k>as</span> <span class=t>u8</span>, <span class=n>0</span>, <span class=n>0</span>];
+        words(&amp;<span class=k>mut</span> call, &amp;args);
         call.extend((budget - BASE_CHARGE).to_le_bytes());
-        let reads = if access &amp; READS == 0 { 0 } else { size };
-        words(&amp;mut call, &amp;[reads as u32]);
-        if reads &gt; 0 {
-            let buffer = cpu.memory(addr, reads as u32, false);
+        <span class=k>let</span> reads = <span class=k>if</span> access &amp; READS == <span class=n>0</span> { <span class=n>0</span> } <span class=k>else</span> { size };
+        words(&amp;<span class=k>mut</span> call, &amp;[reads <span class=k>as</span> <span class=t>u32</span>]);
+        <span class=k>if</span> reads &gt; <span class=n>0</span> {
+            <span class=k>let</span> buffer = cpu.memory(addr, reads <span class=k>as</span> <span class=t>u32</span>, <span class=k>false</span>);
             call.extend(&amp;*buffer.unwrap());
         }
-        let reply = self.request(slot as u8, &amp;call);
-        if reply[FLAGS_AT] &amp; SETS_A1 != 0 {
+        <span class=k>let</span> reply = <span class=k>self</span>.request(slot <span class=k>as</span> <span class=t>u8</span>, &amp;call);
+        <span class=k>if</span> reply[FLAGS_AT] &amp; SETS_A1 != <span class=n>0</span> {
             cpu.x[A1] = word(&amp;reply, A1_AT);
         }
-        let mut at = WRITES_AT;
-        for _ in 0..word(&amp;reply, WRITE_COUNT_AT) {
-            let write = &amp;reply[at..];
-            let to = word(write, 0);
-            let length = word(write, WRITE_LENGTH_AT);
-            let offset = to.wrapping_sub(addr) as u64;
-            let outside = offset + length as u64 &gt; size;
-            if access &amp; WRITES == 0 || outside {
-                fail(&quot;a write outside the buffer&quot;);
+        <span class=k>let</span> <span class=k>mut</span> at = WRITES_AT;
+        <span class=k>for</span> _ <span class=k>in</span> <span class=n>0</span>..word(&amp;reply, WRITE_COUNT_AT) {
+            <span class=k>let</span> write = &amp;reply[at..];
+            <span class=k>let</span> to = word(write, <span class=n>0</span>);
+            <span class=k>let</span> length = word(write, WRITE_LENGTH_AT);
+            <span class=k>let</span> offset = to.wrapping_sub(addr) <span class=k>as</span> <span class=t>u64</span>;
+            <span class=k>let</span> outside = offset + length <span class=k>as</span> <span class=t>u64</span> &gt; size;
+            <span class=k>if</span> access &amp; WRITES == <span class=n>0</span> || outside {
+                fail(<span class=s>&quot;a write outside the buffer&quot;</span>);
             }
-            let data = &amp;write[WRITE_DATA_AT..];
-            let target = cpu.memory(to, length, true).unwrap();
+            <span class=k>let</span> data = &amp;write[WRITE_DATA_AT..];
+            <span class=k>let</span> target = cpu.memory(to, length, <span class=k>true</span>).unwrap();
             target.copy_from_slice(&amp;data[..target.len()]);
-            at += WRITE_DATA_AT + length as usize;
+            at += WRITE_DATA_AT + length <span class=k>as</span> <span class=t>usize</span>;
         }
-        let extra = word(&amp;reply, CHARGE_AT) as i64;
+        <span class=k>let</span> extra = word(&amp;reply, CHARGE_AT) <span class=k>as</span> <span class=t>i64</span>;
         (word(&amp;reply, A0_AT), charge + extra)
     }</pre>
 <p>A function the table does not have is a call the machine does not have: <code>FFFF_FFFFh</code>, charge 4. Otherwise the charge starts at 4 for a deferred call (flag 2: its result and charge follow from its arguments) or 64 for one the driver must answer. Before anything is sent, the table&#39;s checks: the buffer&#39;s length within its range, the buffer wholly in RAM (or in ROM, for one the device only reads), and a checked argument no larger than its limit; a call that fails gets the table&#39;s failure result and goes no further. Then CALL (<code>10h</code>) carries <code>a0</code> to <code>a5</code>, the budget, and the bytes of a buffer the device reads, and RESULT (<code>90h</code>) gives <code>a0</code>, maybe <code>a1</code>, the charge on top, and bytes to write into the call&#39;s buffer.</p>
 <p>The <code>…_AT</code> names are offsets in an entry and in RESULT; <code>DEFERRED</code>, <code>BUFFERED</code>, <code>READS</code>, <code>WRITES</code> and <code>IN_ROM</code> are the entry&#39;s flag and access bits, and <code>NONE</code> (<code>FFh</code>) no argument. All of them: DEVICES.md sections 1.4 and 5.</p>
 <h2 id="frames">Frames</h2>
 <p>BEGIN (<code>30h</code>) starts each frame: the frame counter, the time (0 here), no input events, an empty replay field. The reply, INPUTS, may charge the frame and bring events; the terminal does neither, and this host reads only the charge:</p>
-<pre>    pub fn begin(&amp;mut self, frame: u32) -&gt; i64 {
-        let mut begin = vec![BEGIN, 0, 0, 0];
-        words(&amp;mut begin, &amp;[frame, 0, 0, 0]);
-        let reply = self.request(NO_SLOT, &amp;begin);
-        word(&amp;reply, INPUTS_CHARGE_AT) as i64
+<pre>    <span class=k>pub</span> <span class=k>fn</span> begin(&amp;<span class=k>mut</span> <span class=k>self</span>, frame: <span class=t>u32</span>) -&gt; <span class=t>i64</span> {
+        <span class=k>let</span> <span class=k>mut</span> begin = <span class=m>vec!</span>[BEGIN, <span class=n>0</span>, <span class=n>0</span>, <span class=n>0</span>];
+        words(&amp;<span class=k>mut</span> begin, &amp;[frame, <span class=n>0</span>, <span class=n>0</span>, <span class=n>0</span>]);
+        <span class=k>let</span> reply = <span class=k>self</span>.request(NO_SLOT, &amp;begin);
+        word(&amp;reply, INPUTS_CHARGE_AT) <span class=k>as</span> <span class=t>i64</span>
     }</pre>
 <p>END (<code>31h</code>) ends the frame, with no reply. STATE (<code>40h</code>, <code>state</code>) asks for a slot&#39;s part of the machine&#39;s state; the terminal&#39;s starts with its 2,400 cells, 4 bytes each: a character (16 bits), a foreground and a background colour. SHUTDOWN (<code>60h</code>, <code>close</code>) stops the driver:</p>
-<pre>    pub fn end(&amp;mut self, frame: u32, stopped: bool) {
-        let mut end = vec![END, stopped as u8, 0, 0];
-        words(&amp;mut end, &amp;[frame]);
-        self.send(NO_SLOT, &amp;end);
+<pre>    <span class=k>pub</span> <span class=k>fn</span> end(&amp;<span class=k>mut</span> <span class=k>self</span>, frame: <span class=t>u32</span>, stopped: <span class=t>bool</span>) {
+        <span class=k>let</span> <span class=k>mut</span> end = <span class=m>vec!</span>[END, stopped <span class=k>as</span> <span class=t>u8</span>, <span class=n>0</span>, <span class=n>0</span>];
+        words(&amp;<span class=k>mut</span> end, &amp;[frame]);
+        <span class=k>self</span>.send(NO_SLOT, &amp;end);
     }
 
-    pub fn state(&amp;mut self, slot: u8) -&gt; Vec&lt;u8&gt; {
-        self.request(slot, &amp;[STATE]).split_off(SECTION_AT)
+    <span class=k>pub</span> <span class=k>fn</span> state(&amp;<span class=k>mut</span> <span class=k>self</span>, slot: <span class=t>u8</span>) -&gt; <span class=t>Vec</span>&lt;<span class=t>u8</span>&gt; {
+        <span class=k>self</span>.request(slot, &amp;[STATE]).split_off(SECTION_AT)
     }
 
-    pub fn close(mut self) {
-        self.send(NO_SLOT, &amp;[SHUTDOWN]);
-        check(self.driver.wait());
-        check(fs::remove_dir_all(&amp;self.dir));
+    <span class=k>pub</span> <span class=k>fn</span> close(<span class=k>mut</span> <span class=k>self</span>) {
+        <span class=k>self</span>.send(NO_SLOT, &amp;[SHUTDOWN]);
+        check(<span class=k>self</span>.driver.wait());
+        check(fs::remove_dir_all(&amp;<span class=k>self</span>.dir));
     }</pre>
 <h2 id="the-program">The program</h2>
-<pre>use host::bus::{Bus, TERMINAL};
-use host::frames::{Machine, Status};
-use host::image::load;
-use std::error::Error;
-use std::process::exit;
+<pre><span class=k>use</span> host::bus::{<span class=t>Bus</span>, TERMINAL};
+<span class=k>use</span> host::frames::{<span class=t>Machine</span>, <span class=t>Status</span>};
+<span class=k>use</span> host::image::load;
+<span class=k>use</span> std::error::<span class=t>Error</span>;
+<span class=k>use</span> std::process::exit;
 
-fn main() -&gt; Result&lt;(), Box&lt;dyn Error&gt;&gt; {
-    let args: Vec&lt;String&gt; = std::env::args().collect();
-    let file = std::fs::read(&amp;args[1])?;
-    let frames: u32 = args[2].parse()?;
-    let (cpu, devices) = load(&amp;file)?;
-    let mut bus = Bus::start(&amp;args[3], &amp;cpu, &amp;file, &amp;devices);
-    let mut m = Machine::new(cpu);
-    while m.running() &amp;&amp; m.frame &lt; frames {
+<span class=k>fn</span> main() -&gt; <span class=t>Result</span>&lt;(), <span class=t>Box</span>&lt;<span class=k>dyn</span> <span class=t>Error</span>&gt;&gt; {
+    <span class=k>let</span> args: <span class=t>Vec</span>&lt;<span class=t>String</span>&gt; = std::env::args().collect();
+    <span class=k>let</span> file = std::fs::read(&amp;args[<span class=n>1</span>])?;
+    <span class=k>let</span> frames: <span class=t>u32</span> = args[<span class=n>2</span>].parse()?;
+    <span class=k>let</span> (cpu, devices) = load(&amp;file)?;
+    <span class=k>let</span> <span class=k>mut</span> bus = <span class=t>Bus</span>::start(&amp;args[<span class=n>3</span>], &amp;cpu, &amp;file, &amp;devices);
+    <span class=k>let</span> <span class=k>mut</span> m = <span class=t>Machine</span>::new(cpu);
+    <span class=k>while</span> m.running() &amp;&amp; m.frame &lt; frames {
         m.budget -= bus.begin(m.frame);
         m.run_frame(|cpu, budget, slot, function| {
             bus.call(cpu, budget, slot, function)
         });
         bus.end(m.frame, !m.running());
     }
-    print!(&quot;{}&quot;, screen(&amp;bus.state(TERMINAL)));
+    <span class=m>print!</span>(<span class=s>&quot;{}&quot;</span>, screen(&amp;bus.state(TERMINAL)));
     bus.close();
-    match m.status {
-        Status::Faulted(fault) =&gt; {
-            eprintln!(&quot;{fault}&quot;);
-            exit(1)
+    <span class=k>match</span> m.status {
+        <span class=t>Status</span>::<span class=t>Faulted</span>(fault) =&gt; {
+            <span class=m>eprintln!</span>(<span class=s>&quot;{fault}&quot;</span>);
+            exit(<span class=n>1</span>)
         }
-        Status::Exited(code) =&gt; exit(code as i32),
-        Status::Running =&gt; Ok(()),
+        <span class=t>Status</span>::<span class=t>Exited</span>(code) =&gt; exit(code <span class=k>as</span> <span class=t>i32</span>),
+        <span class=t>Status</span>::<span class=t>Running</span> =&gt; <span class=t>Ok</span>(()),
     }
 }
 
-const COLUMNS: usize = 80;
-const ROWS: usize = 30;
-const CELL_SIZE: usize = 4;
-const CONTINUATION: u16 = 0xffff;
+<span class=k>const</span> COLUMNS: <span class=t>usize</span> = <span class=n>80</span>;
+<span class=k>const</span> ROWS: <span class=t>usize</span> = <span class=n>30</span>;
+<span class=k>const</span> CELL_SIZE: <span class=t>usize</span> = <span class=n>4</span>;
+<span class=k>const</span> CONTINUATION: <span class=t>u16</span> = <span class=n>0xffff</span>;
 
-fn screen(grid: &amp;[u8]) -&gt; String {
-    let code = |cell: usize| {
-        let at = CELL_SIZE * cell;
-        u16::from_le_bytes([grid[at], grid[at + 1]])
+<span class=k>fn</span> screen(grid: &amp;[<span class=t>u8</span>]) -&gt; <span class=t>String</span> {
+    <span class=k>let</span> code = |cell: <span class=t>usize</span>| {
+        <span class=k>let</span> at = CELL_SIZE * cell;
+        <span class=t>u16</span>::from_le_bytes([grid[at], grid[at + <span class=n>1</span>]])
     };
-    let mut text = String::new();
-    for row in 0..ROWS {
-        let mut line = String::new();
-        for col in 0..COLUMNS {
-            let cell = row * COLUMNS + col;
-            let right_half =
-                col &gt; 0 &amp;&amp; code(cell - 1) != CONTINUATION;
-            match code(cell) {
-                CONTINUATION if right_half =&gt; {}
-                CONTINUATION =&gt; line.push(&#39; &#39;),
-                c =&gt; line += &amp;String::from_utf16_lossy(&amp;[c]),
+    <span class=k>let</span> <span class=k>mut</span> text = <span class=t>String</span>::new();
+    <span class=k>for</span> row <span class=k>in</span> <span class=n>0</span>..ROWS {
+        <span class=k>let</span> <span class=k>mut</span> line = <span class=t>String</span>::new();
+        <span class=k>for</span> col <span class=k>in</span> <span class=n>0</span>..COLUMNS {
+            <span class=k>let</span> cell = row * COLUMNS + col;
+            <span class=k>let</span> right_half =
+                col &gt; <span class=n>0</span> &amp;&amp; code(cell - <span class=n>1</span>) != CONTINUATION;
+            <span class=k>match</span> code(cell) {
+                CONTINUATION <span class=k>if</span> right_half =&gt; {}
+                CONTINUATION =&gt; line.push(<span class=s>&#39; &#39;</span>),
+                c =&gt; line += &amp;<span class=t>String</span>::from_utf16_lossy(&amp;[c]),
             }
         }
-        text += line.trim_end_matches(&#39; &#39;);
-        text += &quot;\n&quot;;
+        text += line.trim_end_matches(<span class=s>&#39; &#39;</span>);
+        text += <span class=s>&quot;\n&quot;</span>;
     }
     text
 }</pre>
 <p><code>screen</code> prints the grid as <code>terse run --dump</code> does: a row&#39;s 80 cells, stripped of spaces at the end. <code>FFFFh</code> in a cell is the right half of a wide character, skipped after the character, else a space.</p>
 <h2 id="run-it">Run it</h2>
 <p>From <code>examples/host/rust</code>, after <code>cargo build --release</code>:</p>
-<pre>target/release/step3 ../../../programs/hello/hello.terse 30 \
+<pre class="sh"><span class=k>target/release/step3</span> ../../../programs/hello/hello.terse 30 \
     ../../../target/release/terse-dev-terminal</pre>
 <p>prints <code>hello</code>&#39;s screen after 30 frames, 30 lines, which begins</p>
 <pre> Tersenet · hello

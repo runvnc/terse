@@ -4,7 +4,7 @@ This article is the reference for what comes after building a program (see "Buil
 
 ## Running it headless
 
-```
+```sh
 terse run prog.terse --frames 30 --dump
 ```
 
@@ -28,7 +28,7 @@ runs the image without a window for 30 frames (or until it stops; at most 36,000
 
 A key is a USB HID usage ID (`40` or `0x28`) or a name: `a`-`z`, `0`-`9`, `f1`-`f12`, `enter`, `esc`, `backspace`, `tab`, `space`, `up`, `down`, `left`, `right`, `home`, `end`, `pageup`, `pagedown`, `insert`, `delete`. Pad buttons are hexadecimal, the first button byte in bits 0-7 and the second in bits 8-15 (`1` up, `2` down, `4` left, `8` right, `10` A, `20` B, `2000` Start); sticks are -127 to 127. A cell (column, row) starts at screen unit (column times 8, row times 16).
 
-```
+```events
 # type, press Enter, then quit
 10 text hi
 12 press enter
@@ -41,7 +41,7 @@ A key is a USB HID usage ID (`40` or `0x28`) or a name: `a`-`z`, `0`-`9`, `f1`-`
 
 ## Running it in a window
 
-```
+```sh
 cargo run -p terse-host -- prog.terse
 ```
 
@@ -55,7 +55,7 @@ An instruction from ROM costs 1 unit, one from RAM 4. A call costs 5 (the `ecall
 
 A program published in your feed has an identity, your feed key and its name, that stays the same from version to version:
 
-```
+```sh
 terse feed publish --program prog.terse --name "Tiny tool"
 ```
 

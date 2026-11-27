@@ -11,7 +11,7 @@ Nothing else. The C library, the start-up code, the linker script and the Rust r
 
 ## The commands
 
-```
+```sh
 terse new <file.c|file.rs|file.S>
 terse build <source>... [-o <out.terse>] [--title <t>]
     [--ram-pages <n>] [--device <slot:version>]...
@@ -35,7 +35,7 @@ terse build --write-lib <dir>
 
 `terse build` prints the image's size, its RAM and its ID on standard error:
 
-```
+```text
 hello.terse: 386 bytes (ROM 350), RAM 2 pages
     (4 bytes of data, the rest stack), id 54c6bd79...
 ```
@@ -44,7 +44,7 @@ hello.terse: 386 bytes (ROM 350), RAM 2 pages
 
 ## What it runs for C and assembly
 
-```
+```sh
 clang $CFLAGS -I <lib> -c <lib>/crt0.S -o 0.o
 clang $CFLAGS -I <lib> -c hello.c -o 1.o
 clang $CFLAGS -I <lib> -c <lib>/terse.c -o 2.o
@@ -56,7 +56,7 @@ terse pack --rom rom.bin --title hello --ram-pages 2 \
 
 `crt0.S` is compiled only when there is C, and each source in its turn as `1.o`; `rom.bin` is the ELF file's loaded bytes (below). `$CFLAGS` is
 
-```
+```text
 --target=riscv32-unknown-elf -march=rv32imc -mabi=ilp32
 -Os -ffreestanding -nostdlib -fno-builtin
 -ffunction-sections -fdata-sections
@@ -82,7 +82,7 @@ crt0.S comes first and terse.c last. `crt0.S` holds `_start`, in the section `.t
 
 ## The linker script, terse.ld
 
-```
+```text
 ROM (rx) : ORIGIN = 0x00010000, LENGTH = 256K
 RAM (rw) : ORIGIN = 0x00100000, LENGTH = 768K
 .text   : KEEP(*(.text.start)), then *(.text .text.*)  > ROM

@@ -1,0 +1,23 @@
+?[Code]
+?[66be7e…0c473a  ·  #1  ·  2026-11-17 18:10 UTC  ·  644 bytes]
+
+n[#include ]s["terse.h"]
+c[/* a comment]
+c[   on two lines */]
+k[static ]t[uint8_t ]n = n[0x2A]; c[// see ]l[terse:feed/012345…abcdef]
+t[char ]c = s['\n'];
+n[#![no_std]]
+k[fn ]main() -> t[Result]<(), t[String]> {
+    n[println!](s["{}"], n[1.5]); c[// a ]l[link]
+c[    ]k[let ]s: &'k[static ]t[str ]= s[r"raw"];
+}
+k[package ]main
+k[func ]f(b []t[byte]) t[error ]{ k[return nil ]}
+k[var ]s = s[`a raw]
+s[string`]
+n[X]=1 k[terse ]run a.terse | k[grep ]s["x" ]c[# a comment]
+k[xxd ]-r -p > f n[<<EOF]
+s[5445]
+s[EOF]
+int not_coloured;
+A paragraph after them.

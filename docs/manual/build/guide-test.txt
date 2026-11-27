@@ -8,7 +8,7 @@ It never opens a window on your desktop: on Linux it starts a hidden display of 
 
 `line.drive`:
 
-```text examples/program/line.drive
+```drive examples/program/line.drive
 settle
 expect vectors contains line 5120 6400 5120 1280
 shot start.png
@@ -30,11 +30,11 @@ One command a line, in order:
 
 ## Run it
 
-```
+```sh
 terse-host line.terse --drive line.drive --renderer software
 ```
 
-```
+```text
 frame 3-13: settle: 10 pictures, 0 changed,
     settled (10 unchanged)
 frame 14: ok: vectors contains "line 5120 6400 5120 1280"
@@ -54,4 +54,4 @@ The same script runs headless, `terse run line.terse --events line.drive --frame
 
 ## What you have now
 
-A test that sees what the user sees. `type`, `click`, `hold` and `resize` give other input; `dump page` prints the page as laid out; `expect no-slow` fails if a frame was late. Every command is in [Testing a program](terse:53f6a15d3abc7ab8645f7df63419e4fc7ac420fe8e0926da1741425dfa84016f). Next, a bigger step: [Make a host, step 1: run a program to its end](terse:efbecc2e001806c3ac1367033665ee2635644a7a5105e71547bdb3d564dfb6c9).
+A test that sees what the user sees. `type`, `click`, `hold` and `resize` give other input; `dump page` prints the page as laid out; `expect no-slow` fails if a frame was late. Every command is in [Testing a program](terse:d7782c2ccd5d70fb0caf5ea3bc2db05a4dbff1b0b0005d9087fe3cc27f434fdf). Next, a bigger step: [Make a host, step 1: run a program to its end](terse:b54850f21a672a3eeee88bdeeff60deab6cbac89cc0b472aa2434fb854abf2ca).

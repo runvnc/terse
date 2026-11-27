@@ -76,7 +76,7 @@ Machines (device 8): absent (0 bytes) if the image does not list device 8. Other
 
 3D display (device 9): absent unless the machine has device 9; then m (u32, 0-16,384) and the list.
 
-Sound (device 6): absent unless the machine has device 6; then the 16 voices of 38 bytes (source, wavetable, sample slot, phase, increment, volume, pan, attack, decay, sustain, release, stage, level, modulator, depth, feedback, ring, mix, noise register, ended, last two outputs), the 32 wavetables of 64 bytes, and the 4 sample slots, each its length (u32), its loop start (u32) and its bytes: 2,688 bytes plus the samples. The layout is in STATE.md section 1.12 and the voice in [the sound device](terse:df59286ec1bb94b80a425bca54c651f8fbd158fd9ff7c9cca98a4b8944fdaa46).
+Sound (device 6): absent unless the machine has device 6; then the 16 voices of 38 bytes (source, wavetable, sample slot, phase, increment, volume, pan, attack, decay, sustain, release, stage, level, modulator, depth, feedback, ring, mix, noise register, ended, last two outputs), the 32 wavetables of 64 bytes, and the 4 sample slots, each its length (u32), its loop start (u32) and its bytes: 2,688 bytes plus the samples. The layout is in STATE.md section 1.12 and the voice in [the sound device](terse:635a665e47b54bf2ae8fbba8ce658a99fda2ca761c9d28ef4aa4352479a6ac8c).
 
 Argument: 32 bytes, the blob ID the shell gave the machine, only if it gave one; else nothing. There is no flag: a reader finds the argument exactly when 32 bytes remain after the sound section, none when 0 remain, and refuses any other remainder.
 
@@ -97,7 +97,7 @@ The state hash is the BLAKE3-256 hash (unkeyed) of the serialization, written as
 
 `programs/hello/hello.terse` at reset (serialization 18,812 bytes), after 1 frame and after 30 frames:
 
-```
+```text
 f82b7079daea85863f079eaba67e0ad2816b905e9a1a494e7dab587889a4c058
 2c8994cf8408449f927b16377cf44750419682c7fcc744d84748459c7ec8f9cf
 819432152b38626f8fc54b43f50d5d4c501dc99e6904315b61dc78b796c611e2
@@ -136,7 +136,7 @@ The snapshot file:
 
 A writer stores exactly the pages that are not all zero; a reader accepts any page stored. Bits past the last page must be clear. A reader also refuses N below 200 or above 1,160,947 (the longest serialization; 1,423,155 with experimental sections), and L that is 0, not a multiple of 8,192, above 786,432 (96 pages) or more than N - 200. Bytes after the hash, or a hash that does not match, are refused.
 
-`terse run <image> --save-state <file>` writes the file after the last frame; `--load-state <file>` starts from one instead of reset (the image is the one given, else the one the snapshot names). `--frames 0 --hash` then prints the saved hash, and a continued run has the hashes of the uninterrupted one. Both are for a single machine. Shells take snapshots of their machines with [the Machines device](terse:b756d4178e2a831e38fc7a19ca7d43f169dffe1751bd18d6db3dda7803213d9f).
+`terse run <image> --save-state <file>` writes the file after the last frame; `--load-state <file>` starts from one instead of reset (the image is the one given, else the one the snapshot names). `--frames 0 --hash` then prints the saved hash, and a continued run has the hashes of the uninterrupted one. Both are for a single machine. Shells take snapshots of their machines with [the Machines device](terse:9f39c664b3f87c0b125b2be286072ffde5512d71cc34059f99b2e0b0684dcc7a).
 
 ## The conformance image
 
@@ -152,4 +152,4 @@ Run it headless for 200 frames with an empty store and no subscriptions, and com
 
 With `--dump --dump-vectors` instead of `--hash-every 10` it prints the final screen (compare with `expected-screen.txt`): one PASS or FAIL line per section it can check itself, and the display list. The hashes are the authoritative check; they also cover what the program cannot see, such as the palette, the list, every register and every unit of budget. Esc exits with the number of failed sections.
 
-See [the machine](terse:d5582dce5b933ab662643e810c537ba15a1888f126018b878cc7946ccdc9e258) for frames and the budget, and [charges](terse:700aa265f5d0ae8141b841e6eeecb0b6146ac6935da3121441ee039db69ecf7c).
+See [the machine](terse:0e51edb20b815c926fe623365bae2c282c9b8193930d50be70974083725df724) for frames and the budget, and [charges](terse:700aa265f5d0ae8141b841e6eeecb0b6146ac6935da3121441ee039db69ecf7c).

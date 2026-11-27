@@ -104,8 +104,11 @@ pub enum Block {
     Paragraph(Vec<Inline>),
     Item(Vec<Inline>),
     /// A preformatted block or a fence (or a figure shown as its fence):
-    /// its lines, as written, links found in them.
-    Pre(Vec<Vec<Inline>>),
+    /// its lines, as written, links found in them; then a fence's info
+    /// string (the opening line after the backquotes, which the format
+    /// ignores but a site may use to colour code), empty for a
+    /// preformatted block.
+    Pre(Vec<Vec<Inline>>, String),
     Table(Table),
     Figure(Figure),
 }
@@ -502,7 +505,7 @@ pub fn parse(blob: &[u8]) -> Parsed {
                     all.push(ls[i]);
                     i += 1;
                 }
-                blocks.push(Block::Pre(all.iter().map(|l| inlines(l, false)).collect()));
+                blocks.push(Block::Pre(all.iter().map(|l| inlines(l, false)).collect(), String::new()));
             }
             Kind::Table => {
                 let mut all = vec![line];
@@ -527,7 +530,8 @@ pub fn parse(blob: &[u8]) -> Parsed {
                 if closed && let Some(fig) = figure(&line[3..], body) {
                     blocks.push(Block::Figure(fig));
                 } else if !body.is_empty() {
-                    blocks.push(Block::Pre(body.iter().map(|l| inlines(l, false)).collect()));
+                    let info = String::from_utf8_lossy(&line[3..]).trim().to_string();
+                    blocks.push(Block::Pre(body.iter().map(|l| inlines(l, false)).collect(), info));
                 }
             }
         }
@@ -1039,7 +1043,7 @@ pub fn dump_block(out: &mut String, b: &Block) {
             out.push_str("item\n");
             dump_inlines(out, x, "  ");
         }
-        Block::Pre(lines) => {
+        Block::Pre(lines, _) => {
             out.push_str("pre\n");
             for l in lines {
                 out.push_str("  line\n");

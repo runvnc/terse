@@ -76,14 +76,14 @@ Build it with `terse build chase.rs` and play it with `terse-host chase.terse`.
 
 With the `chase.txt` of the last page (left at frame 1, up at frame 81),
 
-```
+```sh
 terse run chase.terse --frames 150 --events chase.txt \
     --dump --dump-vectors
 ```
 
 prints `Score 1` at the top of the grid and the same list as the C program:
 
-```
+```text
 -- vectors: 17 list bytes --
 disc 2560 1632 r 64 c ffffffff
 circle 640 640 r 160 w 16 c ffffffff
@@ -91,6 +91,6 @@ circle 640 640 r 160 w 16 c ffffffff
 
 ## What you have now
 
-The game in Rust, and with it the guide's part on programs. It is `examples/program/rust/chase.rs` in the Tersenet sources; the full games, `programs/sparks` and `programs/reef`, are in C. Next, see it as the user does: [Test your program in its window](terse:2965ba66d08b2d3aece628f11d7be3c21b8044b4cbca8f11e47ce9b356802e5c). Then a bigger step, a host: your own Terse32 machine that runs these programs.
+The game in Rust, and with it the guide's part on programs. It is `examples/program/rust/chase.rs` in the Tersenet sources; the full games, `programs/sparks` and `programs/reef`, are in C. Next, see it as the user does: [Test your program in its window](terse:605f343d4dd4e446196c6d660911dbe7f49033f0185d645ad148c322fd5a1a77). Then a bigger step, a host: your own Terse32 machine that runs these programs.
 
-Everything the runtime gives is in [Rust programs](terse:3efa338181143c256c79b66dc9493a9c4e6a67372c326eaf7501bdf70415f5ff).
+Everything the runtime gives is in [Rust programs](terse:2f9625c44ad014264f7202aeb100e736789282efcf6e66f7d39432da0b99070c).

@@ -14,62 +14,62 @@
 <p>A dot you steer with the arrow keys, a ring to reach, and a score: the line program of the last pages grown into a game loop. In C here, and in Rust on <a href="guide-game-rust.html">the next page</a>.</p>
 <h2 id="the-program">The program</h2>
 <p><code>chase.c</code>:</p>
-<pre>#include &quot;terse.h&quot;
+<pre><span class=m>#include</span> <span class=s>&quot;terse.h&quot;</span>
 
-static uint8_t list[64];
+<span class=k>static</span> <span class=t>uint8_t</span> list[<span class=n>64</span>];
 
-static int near(int a, int b)
+<span class=k>static</span> <span class=t>int</span> near(<span class=t>int</span> a, <span class=t>int</span> b)
 {
-    return a - b &lt; 12 &amp;&amp; b - a &lt; 12;
+    <span class=k>return</span> a - b &lt; <span class=n>12</span> &amp;&amp; b - a &lt; <span class=n>12</span>;
 }
 
-static void put_number(int n)
+<span class=k>static</span> <span class=t>void</span> put_number(<span class=t>int</span> n)
 {
-    if (n &gt; 9)
-        put_number(n / 10);
-    term_putc(&#39;0&#39; + n % 10);
+    <span class=k>if</span> (n &gt; <span class=n>9</span>)
+        put_number(n / <span class=n>10</span>);
+    term_putc(<span class=s>&#39;0&#39;</span> + n % <span class=n>10</span>);
 }
 
-static void show_score(int score)
+<span class=k>static</span> <span class=t>void</span> show_score(<span class=t>int</span> score)
 {
-    term_goto(0, 0);
-    term_puts(&quot;Score &quot;);
+    term_goto(<span class=n>0</span>, <span class=n>0</span>);
+    term_puts(<span class=s>&quot;Score &quot;</span>);
     put_number(score);
 }
 
-int main(void)
+<span class=t>int</span> main(<span class=t>void</span>)
 {
-    int x = 320, y = 240, dx = 0, dy = 0;
-    int goal_x = 160, goal_y = 120, score = 0;
+    <span class=t>int</span> x = <span class=n>320</span>, y = <span class=n>240</span>, dx = <span class=n>0</span>, dy = <span class=n>0</span>;
+    <span class=t>int</span> goal_x = <span class=n>160</span>, goal_y = <span class=n>120</span>, score = <span class=n>0</span>;
     terse_event e;
     show_score(score);
-    for (;;) {
-        while (terse_event_pop(&amp;e)) {
-            if (e.type != EV_KEY_DOWN)
-                continue;
-            if (e.a == KEY_LEFT)
-                dx = -2, dy = 0;
-            if (e.a == KEY_RIGHT)
-                dx = 2, dy = 0;
-            if (e.a == KEY_UP)
-                dx = 0, dy = -2;
-            if (e.a == KEY_DOWN)
-                dx = 0, dy = 2;
-            if (e.a == KEY_ESCAPE)
-                return 0;
+    <span class=k>for</span> (;;) {
+        <span class=k>while</span> (terse_event_pop(&amp;e)) {
+            <span class=k>if</span> (e.type != EV_KEY_DOWN)
+                <span class=k>continue</span>;
+            <span class=k>if</span> (e.a == KEY_LEFT)
+                dx = -<span class=n>2</span>, dy = <span class=n>0</span>;
+            <span class=k>if</span> (e.a == KEY_RIGHT)
+                dx = <span class=n>2</span>, dy = <span class=n>0</span>;
+            <span class=k>if</span> (e.a == KEY_UP)
+                dx = <span class=n>0</span>, dy = -<span class=n>2</span>;
+            <span class=k>if</span> (e.a == KEY_DOWN)
+                dx = <span class=n>0</span>, dy = <span class=n>2</span>;
+            <span class=k>if</span> (e.a == KEY_ESCAPE)
+                <span class=k>return</span> <span class=n>0</span>;
         }
-        x = (x + dx + 640) % 640;
-        y = (y + dy + 480) % 480;
-        if (near(x, goal_x) &amp;&amp; near(y, goal_y)) {
+        x = (x + dx + <span class=n>640</span>) % <span class=n>640</span>;
+        y = (y + dy + <span class=n>480</span>) % <span class=n>480</span>;
+        <span class=k>if</span> (near(x, goal_x) &amp;&amp; near(y, goal_y)) {
             show_score(++score);
-            goal_x = 40 + terse_random_byte() * 2;
-            goal_y = 40 + terse_random_byte() * 3 / 2;
+            goal_x = <span class=n>40</span> + terse_random_byte() * <span class=n>2</span>;
+            goal_y = <span class=n>40</span> + terse_random_byte() * <span class=n>3</span> / <span class=n>2</span>;
         }
-        vec_begin(list, sizeof list);
+        vec_begin(list, <span class=k>sizeof</span> list);
         vec_move(x * VEC_UNIT, y * VEC_UNIT);
-        vec_disc(4 * VEC_UNIT);
+        vec_disc(<span class=n>4</span> * VEC_UNIT);
         vec_move(goal_x * VEC_UNIT, goal_y * VEC_UNIT);
-        vec_circle(10 * VEC_UNIT);
+        vec_circle(<span class=n>10</span> * VEC_UNIT);
         vec_end();
         vec_submit_list(list);
         terse_wait_frame();
@@ -85,10 +85,10 @@ int main(void)
 </ul>
 <h2 id="test-it-without-a-window">Test it without a window</h2>
 <p>Without a window there are no random bytes (they are all 0), so a test run is the same every time. Save as <code>chase.txt</code> a turn left at frame 1 and up at frame 81, which takes the dot from the middle, (320, 240), to the ring at (160, 120):</p>
-<pre>1 press left
-81 press up</pre>
+<pre><span class=n>1</span> <span class=k>press</span> left
+<span class=n>81</span> <span class=k>press</span> up</pre>
 <p>then run</p>
-<pre>terse run chase.terse --frames 150 --events chase.txt \
+<pre class="sh"><span class=k>terse</span> run chase.terse --frames 150 --events chase.txt \
     --dump --dump-vectors</pre>
 <p>The grid&#39;s first row is <code>Score 1</code>, and the list:</p>
 <pre>-- vectors: 17 list bytes --

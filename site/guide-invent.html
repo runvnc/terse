@@ -14,38 +14,38 @@
 <p>The devices of the specification, the terminal, the vector displays, sound and the others, are each written down exactly, and every host has them. To try an idea for a new one there is a shortcut, the **experimental device**: a driver says what its calls are, what they cost and how big its state is, and the core checks and charges the calls and keeps the state without knowing what the device means. Programs reach it on a slot from 240 to 255, by its name. This page walks through one, the driver in C and a program that uses it in C; <a href="guide-invent-rust.html">the next page</a> has the program in Rust.</p>
 <h2 id="the-device">The device</h2>
 <p><code>example.dice</code> is a dice roller with a memory. Its driver, <code>native/driver-experimental/dice.c</code> in the Tersenet sources, is one file of C, about 310 lines. This is the device itself:</p>
-<pre>/* The state: x, rolls, history. */
-enum { HISTORY = 16, SECTION = 4 + 4 + HISTORY };
+<pre><span class=c>/* The state: x, rolls, history. */</span>
+<span class=k>enum</span> { HISTORY = <span class=n>16</span>, SECTION = <span class=n>4</span> + <span class=n>4</span> + HISTORY };
 
-typedef struct {
-    uint32_t x;             /* xorshift32, never 0 */
-    uint32_t rolls;         /* rolls so far */
-    uint8_t last[HISTORY];  /* roll n at last[n % 16] */
+<span class=k>typedef</span> <span class=k>struct</span> {
+    <span class=t>uint32_t</span> x;             <span class=c>/* xorshift32, never 0 */</span>
+    <span class=t>uint32_t</span> rolls;         <span class=c>/* rolls so far */</span>
+    <span class=t>uint8_t</span> last[HISTORY];  <span class=c>/* roll n at last[n % 16] */</span>
 } Dice;
 
-static void reset(Dice *d)
+<span class=k>static</span> <span class=t>void</span> reset(Dice *d)
 {
-    memset(d, 0, sizeof *d);
-    d-&gt;x = 0x2545F491;
+    memset(d, <span class=n>0</span>, <span class=k>sizeof</span> *d);
+    d-&gt;x = <span class=n>0x2545F491</span>;
 }
-static void seed(Dice *d, uint32_t s)
+<span class=k>static</span> <span class=t>void</span> seed(Dice *d, <span class=t>uint32_t</span> s)
 {
-    d-&gt;x = s ? s : 0x2545F491;
+    d-&gt;x = s ? s : <span class=n>0x2545F491</span>;
 }
-static uint32_t roll(Dice *d, uint32_t sides)
+<span class=k>static</span> <span class=t>uint32_t</span> roll(Dice *d, <span class=t>uint32_t</span> sides)
 {
-    if (!sides) return 0;
-    d-&gt;x ^= d-&gt;x &lt;&lt; 13; d-&gt;x ^= d-&gt;x &gt;&gt; 17; d-&gt;x ^= d-&gt;x &lt;&lt; 5;
-    uint32_t r = 1 + d-&gt;x % sides;
+    <span class=k>if</span> (!sides) <span class=k>return</span> <span class=n>0</span>;
+    d-&gt;x ^= d-&gt;x &lt;&lt; <span class=n>13</span>; d-&gt;x ^= d-&gt;x &gt;&gt; <span class=n>17</span>; d-&gt;x ^= d-&gt;x &lt;&lt; <span class=n>5</span>;
+    <span class=t>uint32_t</span> r = <span class=n>1</span> + d-&gt;x % sides;
     d-&gt;last[d-&gt;rolls++ % HISTORY] = r;
-    return r;
+    <span class=k>return</span> r;
 }
-/* The last n rolls, oldest first; 0 where there were fewer. */
-static void history(const Dice *d, uint32_t n, uint8_t *out)
+<span class=c>/* The last n rolls, oldest first; 0 where there were fewer. */</span>
+<span class=k>static</span> <span class=t>void</span> history(<span class=k>const</span> Dice *d, <span class=t>uint32_t</span> n, <span class=t>uint8_t</span> *out)
 {
-    for (uint32_t i = 0; i &lt; n; i++) {
-        uint32_t k = d-&gt;rolls - n + i;  /* which roll, if any */
-        out[i] = d-&gt;rolls &gt;= n - i ? d-&gt;last[k % HISTORY] : 0;
+    <span class=k>for</span> (<span class=t>uint32_t</span> i = <span class=n>0</span>; i &lt; n; i++) {
+        <span class=t>uint32_t</span> k = d-&gt;rolls - n + i;  <span class=c>/* which roll, if any */</span>
+        out[i] = d-&gt;rolls &gt;= n - i ? d-&gt;last[k % HISTORY] : <span class=n>0</span>;
     }
 }</pre>
 <p>The rest is the device bus, as in any driver: the messages HELLO, OPEN, CALL, STATE and the others over a local socket. Four things differ from a driver of a numbered device, each marked <code>EXPERIMENTAL</code> in the file:</p>
@@ -58,36 +58,36 @@ static void history(const Dice *d, uint32_t n, uint8_t *out)
 <p>Nothing in the device reads a clock or a random source: the program seeds it.</p>
 <h2 id="the-program">The program</h2>
 <p><code>roll.c</code>:</p>
-<pre>#include &quot;terse.h&quot;
+<pre><span class=m>#include</span> <span class=s>&quot;terse.h&quot;</span>
 
-#define DICE 240
-#define DICE_SEED (DICE &lt;&lt; 8 | 0)
-#define DICE_ROLL (DICE &lt;&lt; 8 | 1)
+<span class=m>#define</span> DICE <span class=n>240</span>
+<span class=m>#define</span> DICE_SEED (DICE &lt;&lt; <span class=n>8</span> | <span class=n>0</span>)
+<span class=m>#define</span> DICE_ROLL (DICE &lt;&lt; <span class=n>8</span> | <span class=n>1</span>)
 
-int main(void)
+<span class=t>int</span> main(<span class=t>void</span>)
 {
-    uint32_t seed;
-    if (!terse_has_device(DICE)) {
-        term_puts(&quot;No dice here: run me with example.dice.\n&quot;);
-        for (;;)
+    <span class=t>uint32_t</span> seed;
+    <span class=k>if</span> (!terse_has_device(DICE)) {
+        term_puts(<span class=s>&quot;No dice here: run me with example.dice.\n&quot;</span>);
+        <span class=k>for</span> (;;)
             terse_wait_frame();
     }
-    terse_random(&amp;seed, sizeof seed);
-    terse_call(DICE_SEED, seed, 0, 0);
-    for (;;) {
-        for (int frame = 0; frame &lt; 30; frame++)
+    terse_random(&amp;seed, <span class=k>sizeof</span> seed);
+    terse_call(DICE_SEED, seed, <span class=n>0</span>, <span class=n>0</span>);
+    <span class=k>for</span> (;;) {
+        <span class=k>for</span> (<span class=t>int</span> frame = <span class=n>0</span>; frame &lt; <span class=n>30</span>; frame++)
             terse_wait_frame();
-        term_puts(&quot;You rolled &quot;);
-        term_putc(&#39;0&#39; + terse_call(DICE_ROLL, 6, 0, 0));
-        term_puts(&quot;.\n&quot;);
+        term_puts(<span class=s>&quot;You rolled &quot;</span>);
+        term_putc(<span class=s>&#39;0&#39;</span> + terse_call(DICE_ROLL, <span class=n>6</span>, <span class=n>0</span>, <span class=n>0</span>));
+        term_puts(<span class=s>&quot;.\n&quot;</span>);
     }
 }</pre>
 <p>Function <code>f</code> of the device on slot 240 is the call <code>(240 &lt;&lt; 8) | f</code>, made with <code>terse_call</code>; <code>DICE_ROLL</code> takes the number of sides, here 6. <code>terse_has_device</code> says whether the host granted the device. The seed comes from the machine&#39;s own random bytes, which the host records, so a replay rolls the same dice.</p>
 <h2 id="build-them-and-run-them">Build them and run them</h2>
 <p>The image names the device on a slot, as optional: an experimental device is never required, and a host without its driver runs the program without it.</p>
-<pre>cc -std=c11 -O2 -o dice native/driver-experimental/dice.c
-terse build roll.c --optional 240:0=example.dice
-terse-bus roll.terse --driver example.dice=$PWD/dice \
+<pre class="sh"><span class=k>cc</span> -std=c11 -O2 -o dice native/driver-experimental/dice.c
+<span class=k>terse</span> build roll.c --optional 240:0=example.dice
+<span class=k>terse-bus</span> roll.terse --driver example.dice=<span class=m>$PWD</span>/dice \
     --frames 100 --dump</pre>
 <p><code>terse-bus</code> is the host that runs every device as a driver, from the downloads&#39; <code>bus</code> folder or built from the sources; the C driver needs Linux or macOS. It prints:</p>
 <pre>You rolled 1.

@@ -51,8 +51,13 @@ unsubscribes, `F` shows an entry's feed, `f` lists the feeds, `?` helps,
 ### Output
 
 - `show` and `--dump` write the title, the article laid out to `--width`
-  columns, and a numbered list of the links' targets. `--color` adds ANSI
-  styles.
+  columns, and a numbered list of the links' targets, with ANSI styles
+  when the output is a terminal (not with `--plain`, `NO_COLOR` or
+  `TERM=dumb`); `--color` and `--no-color` choose.
+- Code in a fence whose info string names a language (`c`, `rust`, `go`,
+  `sh`, ...: a choice of this reader, not of the format) is coloured with
+  the terminal's palette, in the interactive reader too (not with
+  `NO_COLOR`); `internal/render/highlight.go`.
 - `--plain` is for screen readers: no box drawing, no braille, lists with
   `-`, tables as space-aligned columns, figures as their source text (the
   fallback ARTICLE.md allows).

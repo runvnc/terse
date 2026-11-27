@@ -85,7 +85,7 @@ When the vector display (device 3) is in the phosphor style or in fill mode 1, f
 
 While building a document (see The page (device 7)), the library's path builder writes these commands and `doc_figure` wraps them in a Figure command, whose head is `DOC_FIGURE_HEAD` (8) bytes. This is the red triangle above, in a box of 120 x 80 units:
 
-```
+```c
 static uint8_t path[64];
 path_begin(path, sizeof path);
 path_fill(224, 108, 117, 255);

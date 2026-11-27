@@ -40,13 +40,13 @@
 <p>Nothing more is charged: a Surface is 11 bytes of the list, which a submit charges 1 unit per 4 bytes. At most 4 take effect in a list, each one face of the 256. The state is the list as submitted: which Surfaces are in effect depends on the list alone.</p>
 <h2 id="example">Example</h2>
 <p>A console below the middle of the screen, tilted back, showing the terminal&#39;s rows 4 to 11, columns 1 to 28; the text there stays where the program writes it:</p>
-<pre>#define U V3_UNIT
+<pre><span class=m>#define</span> U V3_UNIT
 
-v3_begin(list, sizeof list);
+v3_begin(list, <span class=k>sizeof</span> list);
 v3_push();
-v3_translate(320 * U, 380 * U, 0);
-v3_rotate(V3_AXIS_X, 59164);  /* -35 degrees */
-v3_surface(8, 64, 224, 128, 220 * U);
+v3_translate(<span class=n>320</span> * U, <span class=n>380</span> * U, <span class=n>0</span>);
+v3_rotate(V3_AXIS_X, <span class=n>59164</span>);  <span class=c>/* -35 degrees */</span>
+v3_surface(<span class=n>8</span>, <span class=n>64</span>, <span class=n>224</span>, <span class=n>128</span>, <span class=n>220</span> * U);
 v3_pop();
 v3_end();
 v3_submit_list(list);</pre>

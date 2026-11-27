@@ -13,7 +13,7 @@
 <h1 id="testing-a-program">Testing a program</h1>
 <p>A program is tested in two ways. <code>terse run</code> runs it without a window, exactly: the same image and input give the same screen and the same state hash on every computer, so a test can compare them. <code>terse-host --drive</code> runs it in the real window, in real time, with input from a script, and checks what the window shows over time: the picture as drawn, the page laid out on its own thread, figures drawn late, keys as a keyboard sends them. Use the first for what the program computes and the second for what the user sees. Both read the same script.</p>
 <h2 id="headless-terse-run">Headless: terse run</h2>
-<pre>terse run prog.terse --frames 60 --events keys.txt --dump</pre>
+<pre class="sh"><span class=k>terse</span> run prog.terse --frames 60 --events keys.txt --dump</pre>
 <div class="table"><table>
 <thead><tr><th>Option</th><th>What it does</th></tr></thead>
 <tbody>
@@ -60,7 +60,7 @@
 <p>A key is a name (<code>a</code> to <code>z</code>, <code>0</code> to <code>9</code>, <code>f1</code> to <code>f12</code>, <code>enter</code>, <code>esc</code>, <code>backspace</code>, <code>tab</code>, <code>space</code>, <code>up</code>, <code>down</code>, <code>left</code>, <code>right</code>, <code>home</code>, <code>end</code>, <code>pageup</code>, <code>pagedown</code>, <code>insert</code>, <code>delete</code>) or a USB HID usage (<code>40</code>, <code>0x28</code>). <a href="events.html">Events and input</a> has every event.</p>
 <p>A headless run reads the window&#39;s commands below and does nothing with them, saying how many it passed over: one script serves both.</p>
 <h2 id="in-the-window-terse-host-drive">In the window: terse-host --drive</h2>
-<pre>terse-host prog.terse --drive script.txt --renderer software</pre>
+<pre class="sh"><span class=k>terse-host</span> prog.terse --drive script.txt --renderer software</pre>
 <p>runs the program alone (or, with <code>--shell</code> or no image, the shell) in its window at 60 frames a second, and carries out the script&#39;s lines in order, each in its frame. It prints what it sees on standard output.</p>
 <p>**It never opens a window on your desktop.** On Linux it starts a headless display of its own (the compositor weston, which must be installed) and runs inside it; on Windows and macOS, which have none, it refuses. Only <code>TERSE_DRIVE_DISPLAY=current</code> puts the window on the current display, where it shows: set it only on a computer whose desktop nobody uses, such as a CI machine. Sound is off.</p>
 <div class="table"><table>

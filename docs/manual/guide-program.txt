@@ -35,7 +35,7 @@ There are no threads and no interrupts. A program that does too much in one fram
 
 ## Build it and run it
 
-```
+```sh
 terse new hello.c
 terse build hello.c
 terse-host hello.terse
@@ -45,13 +45,13 @@ terse-host hello.terse
 
 ## Test it without a window
 
-```
+```sh
 terse run hello.terse --frames 60 --dump
 ```
 
 runs it for 60 frames with no window and prints the text grid:
 
-```
+```text
  Hello from hello!
 
 Press Esc to exit.
@@ -59,7 +59,7 @@ Press Esc to exit.
 
 and then the grid's empty rows. Now give it a key. Save the line `5 press esc` as `esc.txt` (a frame number, then what happens) and run
 
-```
+```sh
 terse run hello.terse --frames 60 --events esc.txt \
     --hash-every 1
 ```

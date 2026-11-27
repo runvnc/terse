@@ -178,7 +178,7 @@ The copied data itself (a put's bytes, a title) is not part of the state.
 
 Fetch the first 1,024 bytes of a blob and wait for them.
 
-```
+```c
 #include "terse.h"
 
 static content_req req;

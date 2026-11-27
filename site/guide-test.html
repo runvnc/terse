@@ -15,15 +15,15 @@
 <p>It never opens a window on your desktop: on Linux it starts a hidden display of its own (the compositor weston, which must be installed); on Windows and macOS it refuses. It runs the built <code>.terse</code> file, so it is the same for C and Rust programs. Here it tests <code>line.terse</code>, the program of &quot;Draw a line and read a key&quot;.</p>
 <h2 id="the-script">The script</h2>
 <p><code>line.drive</code>:</p>
-<pre>settle
-expect vectors contains line 5120 6400 5120 1280
-shot start.png
-press left
-press left
-settle
-expect vectors contains line 5120 6400 4800 1280
-expect idle 30
-shot left.png</pre>
+<pre><span class=k>settle</span>
+<span class=k>expect</span> vectors contains line <span class=n>5120</span> <span class=n>6400</span> <span class=n>5120</span> <span class=n>1280</span>
+<span class=k>shot</span> start.png
+<span class=k>press</span> left
+<span class=k>press</span> left
+<span class=k>settle</span>
+<span class=k>expect</span> vectors contains line <span class=n>5120</span> <span class=n>6400</span> <span class=n>4800</span> <span class=n>1280</span>
+<span class=k>expect</span> idle <span class=n>30</span>
+<span class=k>shot</span> left.png</pre>
 <p>One command a line, in order:</p>
 <ul>
 <li><code>settle</code> waits until the picture stops changing.</li>
@@ -33,7 +33,7 @@ shot left.png</pre>
 <li><code>expect idle 30</code> fails if the picture changes in the next 30 frames: with no key pressed, nothing should move.</li>
 </ul>
 <h2 id="run-it">Run it</h2>
-<pre>terse-host line.terse --drive line.drive --renderer software</pre>
+<pre class="sh"><span class=k>terse-host</span> line.terse --drive line.drive --renderer software</pre>
 <pre>frame 3-13: settle: 10 pictures, 0 changed,
     settled (10 unchanged)
 frame 14: ok: vectors contains &quot;line 5120 6400 5120 1280&quot;

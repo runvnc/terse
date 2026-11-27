@@ -124,7 +124,7 @@ pub fn links(text: &[u8]) -> Vec<Kind> {
     for b in &blocks {
         match b {
             Block::Heading(x) | Block::Subheading(x) | Block::Paragraph(x) | Block::Item(x) => add(x),
-            Block::Pre(lines) => lines.iter().for_each(|l| add(l)),
+            Block::Pre(lines, _) => lines.iter().for_each(|l| add(l)),
             Block::Table(t) => t.rows.iter().flatten().for_each(|c| add(c)),
             Block::Figure(_) => {}
         }

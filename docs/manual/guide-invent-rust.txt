@@ -45,7 +45,7 @@ The Rust runtime has no calls for an invented device, nor could it: nobody but i
 
 With the driver built as on the last page:
 
-```
+```sh
 terse build roll.rs --optional 240:0=example.dice
 terse-bus roll.terse --driver example.dice=$PWD/dice \
     --frames 100 --dump

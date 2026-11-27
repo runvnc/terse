@@ -21,9 +21,9 @@
 <li>Events stay in the queue across frames until the program reads them. The queue is part of the machine&#39;s state.</li>
 </ul>
 <p><code>next_event</code> (<code>101h</code>) takes <code>a0</code> = a 4-byte buffer in RAM. It removes the head event, writes type, <code>a</code>, <code>b</code>, <code>c</code> in that order, and returns 1; if the queue is empty it writes nothing and returns 0. In C:</p>
-<pre>terse_event e;                 /* fields: type, a, b, c */
-while (terse_event_pop(&amp;e) != EV_NONE)
-    handle(&amp;e);                /* EV_NONE is 0: queue empty */</pre>
+<pre>terse_event e;                 <span class=c>/* fields: type, a, b, c */</span>
+<span class=k>while</span> (terse_event_pop(&amp;e) != EV_NONE)
+    handle(&amp;e);                <span class=c>/* EV_NONE is 0: queue empty */</span></pre>
 <h2 id="event-types">Event types</h2>
 <div class="table"><table>
 <thead><tr><th>Type</th><th>Name</th><th><code>a</code></th><th><code>b</code></th><th><code>c</code></th></tr></thead>
@@ -72,7 +72,7 @@ while (terse_event_pop(&amp;e) != EV_NONE)
 <p>While a key is held a host may repeat it: more key-down events for the same key, each followed by the text it types, with no key-up between them, and one key-up at the end. So a key-down for a key that is already down is a repeat.</p>
 <h2 id="text">Text</h2>
 <p>A text event carries one Unicode scalar value (up to 21 bits) produced by the host&#39;s text input, after the keyboard layout and input-method composition: <code>a</code> is bits 0-7, <code>b</code> bits 8-15 and <code>c</code> bits 16-20. In <code>terse-host</code> a key that types a character gives a key down, then a text event. No host sends a text event for a control character: Enter, Tab, Backspace, Escape and Ctrl+letter give only their keys.</p>
-<pre>uint32_t cp = e.a | (uint32_t)e.b &lt;&lt; 8 | (uint32_t)e.c &lt;&lt; 16;</pre>
+<pre><span class=t>uint32_t</span> cp = e.a | (<span class=t>uint32_t</span>)e.b &lt;&lt; <span class=n>8</span> | (<span class=t>uint32_t</span>)e.c &lt;&lt; <span class=n>16</span>;</pre>
 <p>Text the user pastes arrives the same way, one event per character, no faster than the queue has room for, to whichever machine has the focus as it is sent. A CR LF pair or a lone CR becomes U+000A; tabs (U+0009) and U+000A are kept, other control characters dropped. The paste key itself (<code>terse-host</code>: Ctrl+V or Shift+Insert) arrives as a key and brackets the paste: its key down before the text, its key up after the last of it, even if the user let go sooner. So a program can tell a paste from typing: a spreadsheet pastes its own copied cells instead, or splits the text at tabs and line breaks into cells. A paste key with nothing to paste still sends its key down and key up.</p>
 <h2 id="pointer">Pointer</h2>
 <p>Positions are in screen units: x from 0 to 639, y from 0 to 479, (0, 0) at the top left. A pointer event is sent when the position or a button changes, at most once per frame for movement; a button change is sent at once, with the current position. Positions outside the screen are clamped to it, and nothing is sent when the pointer leaves the host&#39;s window.</p>
@@ -89,11 +89,11 @@ while (terse_event_pop(&amp;e) != EV_NONE)
 <tr><td><code>c</code></td><td>6-7</td><td>zero</td></tr>
 </tbody></table></div>
 <p>The macros of <code>terse.h</code> decode it:</p>
-<pre>if (e.type == EV_POINTER) {
-    uint32_t x = EV_POINTER_X(e);       /* 0-639 */
-    uint32_t y = EV_POINTER_Y(e);       /* 0-479 */
-    uint8_t buttons = EV_POINTER_BUTTONS(e);
-    if (buttons &amp; BUTTON_PRIMARY)
+<pre><span class=k>if</span> (e.type == EV_POINTER) {
+    <span class=t>uint32_t</span> x = EV_POINTER_X(e);       <span class=c>/* 0-639 */</span>
+    <span class=t>uint32_t</span> y = EV_POINTER_Y(e);       <span class=c>/* 0-479 */</span>
+    <span class=t>uint8_t</span> buttons = EV_POINTER_BUTTONS(e);
+    <span class=k>if</span> (buttons &amp; BUTTON_PRIMARY)
         press(x, y);
 }</pre>
 <p><code>EV_POINTER_BUTTONS</code> gives the three button bits shifted down to bits 0-2, where <code>BUTTON_PRIMARY</code> (1), <code>BUTTON_SECONDARY</code> (2) and <code>BUTTON_MIDDLE</code> (4) test them. A button that was pressed is detected by comparing with the buttons of the previous pointer event. A terminal cell under the pointer is column x / 8, row y / 16.</p>
@@ -149,10 +149,10 @@ while (terse_event_pop(&amp;e) != EV_NONE)
 </tbody></table></div>
 <p>A controller that is not connected reads as all zeros. Axis values are never −128. In C, <code>terse_pad_read(n, &amp;pad)</code> fills a <code>terse_pad</code> (fields <code>connected</code>, <code>buttons</code>, <code>buttons2</code>, <code>lx</code>, <code>ly</code>, <code>rx</code>, <code>ry</code>), and <code>PAD_UP</code> ... <code>PAD_Y</code> test <code>buttons</code>, <code>PAD_L1</code>, <code>PAD_R1</code>, <code>PAD_L2</code>, <code>PAD_R2</code>, <code>PAD_SELECT</code> and <code>PAD_START</code> test <code>buttons2</code>.</p>
 <pre>terse_pad pad;
-terse_pad_read(0, &amp;pad);
-if (pad.connected) {
-    x += pad.lx / 32;
-    if (pad.buttons &amp; PAD_A)
+terse_pad_read(<span class=n>0</span>, &amp;pad);
+<span class=k>if</span> (pad.connected) {
+    x += pad.lx / <span class=n>32</span>;
+    <span class=k>if</span> (pad.buttons &amp; PAD_A)
         jump();
 }</pre>
 <h2 id="recording-and-replay">Recording and replay</h2>

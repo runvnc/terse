@@ -14,69 +14,69 @@
 <p>A feed is one author&#39;s numbered series of entries. Each entry is small and signed with the author&#39;s key, and says, for example, &quot;number 1 of my feed is this blob, this size, with this title&quot;. The key is the feed&#39;s name: 64 hexadecimal digits. In this step your reader subscribes to a feed on a relay, checks every entry&#39;s signature, lists the titles of the articles, and opens one. (Make a reader in Go, step 3, is the same program in Go.)</p>
 <h2 id="the-code">The code</h2>
 <p><code>src/bin/follow.rs</code>, with step 1&#39;s <code>article</code> and step 2&#39;s <code>relay</code> modules:</p>
-<pre>// Step 3: follow a feed and open one of its articles.
-use reader::{article, relay};
-use std::collections::HashMap;
-use tungstenite::Message;
+<pre><span class=c>// Step 3: follow a feed and open one of its articles.</span>
+<span class=k>use</span> reader::{article, relay};
+<span class=k>use</span> std::collections::<span class=t>HashMap</span>;
+<span class=k>use</span> tungstenite::<span class=t>Message</span>;
 
-const TYPE_SUBSCRIBE: u8 = 0x04;
-const TYPE_ENTRY: u8 = 0x90;
-const REQUEST_NUMBER: u32 = 2;
-const AFTER: u32 = 0;
-const STATUS_AT: usize = 5;
-const STATUS_DONE: u8 = 1;
-const HIGHEST_AT: usize = 6;
-const HIGHEST_END: usize = 10;
-const SEQ_AT: usize = 32;
-const SEQ_END: usize = 36;
-const KIND_ARTICLE: u8 = 1;
+<span class=k>const</span> TYPE_SUBSCRIBE: <span class=t>u8</span> = <span class=n>0x04</span>;
+<span class=k>const</span> TYPE_ENTRY: <span class=t>u8</span> = <span class=n>0x90</span>;
+<span class=k>const</span> REQUEST_NUMBER: <span class=t>u32</span> = <span class=n>2</span>;
+<span class=k>const</span> AFTER: <span class=t>u32</span> = <span class=n>0</span>;
+<span class=k>const</span> STATUS_AT: <span class=t>usize</span> = <span class=n>5</span>;
+<span class=k>const</span> STATUS_DONE: <span class=t>u8</span> = <span class=n>1</span>;
+<span class=k>const</span> HIGHEST_AT: <span class=t>usize</span> = <span class=n>6</span>;
+<span class=k>const</span> HIGHEST_END: <span class=t>usize</span> = <span class=n>10</span>;
+<span class=k>const</span> SEQ_AT: <span class=t>usize</span> = <span class=n>32</span>;
+<span class=k>const</span> SEQ_END: <span class=t>usize</span> = <span class=n>36</span>;
+<span class=k>const</span> KIND_ARTICLE: <span class=t>u8</span> = <span class=n>1</span>;
 
-fn main() -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
-    let args: Vec&lt;String&gt; = std::env::args().collect();
-    let key = relay::hex32(&amp;args[2])?;
-    let (mut socket, _) = tungstenite::connect(&amp;args[1])?;
-    let number = REQUEST_NUMBER.to_le_bytes();
-    let after = AFTER.to_le_bytes();
-    let request =
+<span class=k>fn</span> main() -&gt; <span class=t>Result</span>&lt;(), <span class=t>Box</span>&lt;<span class=k>dyn</span> std::error::<span class=t>Error</span>&gt;&gt; {
+    <span class=k>let</span> args: <span class=t>Vec</span>&lt;<span class=t>String</span>&gt; = std::env::args().collect();
+    <span class=k>let</span> key = relay::hex32(&amp;args[<span class=n>2</span>])?;
+    <span class=k>let</span> (<span class=k>mut</span> socket, _) = tungstenite::connect(&amp;args[<span class=n>1</span>])?;
+    <span class=k>let</span> number = REQUEST_NUMBER.to_le_bytes();
+    <span class=k>let</span> after = AFTER.to_le_bytes();
+    <span class=k>let</span> request =
         [&amp;[TYPE_SUBSCRIBE][..], &amp;number, &amp;key, &amp;after].concat();
-    socket.send(Message::binary(request))?;
-    let reply = socket.read()?.into_data();
-    if reply.len() &lt; HIGHEST_END
+    socket.send(<span class=t>Message</span>::binary(request))?;
+    <span class=k>let</span> reply = socket.read()?.into_data();
+    <span class=k>if</span> reply.len() &lt; HIGHEST_END
         || reply[STATUS_AT] != STATUS_DONE
     {
-        return Err(&quot;the relay refused the subscription&quot;.into());
+        <span class=k>return</span> <span class=t>Err</span>(<span class=s>&quot;the relay refused the subscription&quot;</span>.into());
     }
-    let highest = reply[HIGHEST_AT..HIGHEST_END].try_into()?;
-    let highest = u32::from_le_bytes(highest);
-    let mut articles = HashMap::new();
-    let mut caught_up = highest == AFTER;
-    while !caught_up {
-        let msg = socket.read()?.into_data();
-        let Some(entry) = msg.strip_prefix(&amp;[TYPE_ENTRY]) else {
-            continue;
+    <span class=k>let</span> highest = reply[HIGHEST_AT..HIGHEST_END].try_into()?;
+    <span class=k>let</span> highest = <span class=t>u32</span>::from_le_bytes(highest);
+    <span class=k>let</span> <span class=k>mut</span> articles = <span class=t>HashMap</span>::new();
+    <span class=k>let</span> <span class=k>mut</span> caught_up = highest == AFTER;
+    <span class=k>while</span> !caught_up {
+        <span class=k>let</span> msg = socket.read()?.into_data();
+        <span class=k>let</span> <span class=t>Some</span>(entry) = msg.strip_prefix(&amp;[TYPE_ENTRY]) <span class=k>else</span> {
+            <span class=k>continue</span>;
         };
-        if entry.len() &lt; SEQ_END {
-            continue;
+        <span class=k>if</span> entry.len() &lt; SEQ_END {
+            <span class=k>continue</span>;
         }
-        let seq = entry[SEQ_AT..SEQ_END].try_into()?;
-        let seq = u32::from_le_bytes(seq);
+        <span class=k>let</span> seq = entry[SEQ_AT..SEQ_END].try_into()?;
+        <span class=k>let</span> seq = <span class=t>u32</span>::from_le_bytes(seq);
         caught_up = seq &gt;= highest;
-        let Ok(e) = tersenet::verify_entry(entry) else {
-            continue;
+        <span class=k>let</span> <span class=t>Ok</span>(e) = tersenet::verify_entry(entry) <span class=k>else</span> {
+            <span class=k>continue</span>;
         };
-        if e.feed == key &amp;&amp; e.kind == KIND_ARTICLE {
-            println!(&quot;{seq}  {}&quot;, article::visible(e.title));
+        <span class=k>if</span> e.feed == key &amp;&amp; e.kind == KIND_ARTICLE {
+            <span class=m>println!</span>(<span class=s>&quot;{seq}  {}&quot;</span>, article::visible(e.title));
             articles.insert(seq, e.blob);
         }
     }
-    let Some(seq) = args.get(3) else { return Ok(()) };
-    let Some(&amp;id) = articles.get(&amp;seq.parse::&lt;u32&gt;()?) else {
-        return Err(&quot;no such article in the feed&quot;.into());
+    <span class=k>let</span> <span class=t>Some</span>(seq) = args.get(<span class=n>3</span>) <span class=k>else</span> { <span class=k>return</span> <span class=t>Ok</span>(()) };
+    <span class=k>let</span> <span class=t>Some</span>(&amp;id) = articles.get(&amp;seq.parse::&lt;<span class=t>u32</span>&gt;()?) <span class=k>else</span> {
+        <span class=k>return</span> <span class=t>Err</span>(<span class=s>&quot;no such article in the feed&quot;</span>.into());
     };
-    let blob = relay::get(&amp;mut socket, id)?;
-    println!();
+    <span class=k>let</span> blob = relay::get(&amp;<span class=k>mut</span> socket, id)?;
+    <span class=m>println!</span>();
     article::show(&amp;blob);
-    Ok(())
+    <span class=t>Ok</span>(())
 }</pre>
 <p>It is 64 lines; the whole program, with <code>lib.rs</code>, <code>article.rs</code> and <code>relay.rs</code>, is 179. The entries are checked by one call to the Tersenet SDK for Rust, <code>tersenet::verify_entry</code>, named in step 2&#39;s <code>Cargo.toml</code>.</p>
 <h2 id="how-it-works">How it works</h2>
@@ -106,16 +106,16 @@ fn main() -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
 <p>In a package of your own, <code>cargo add tersenet</code> adds it to <code>Cargo.toml</code>. In the Tersenet sources, <code>.cargo/config.toml</code> beside <code>Cargo.toml</code> puts the copy in <code>sdk/rust</code> in its place, so the examples build with the SDK they are tested with.</p>
 <h2 id="run-it">Run it</h2>
 <p>With the relay of step 2 running, make a key and publish the article as entry 1 of your feed:</p>
-<pre>terse key new
-terse feed publish ../hello.txt --title Hello \
+<pre class="sh"><span class=k>terse</span> key new
+<span class=k>terse</span> feed publish ../hello.txt --title Hello \
   --relay ws&#58;//127.0.0.1:7979</pre>
 <p><code>terse key new</code> makes your key and prints it; if you made a profile in the user guide you have one already. <code>terse key show</code> prints it, so give it to the program:</p>
-<pre>cargo run -q --bin follow ws&#58;//127.0.0.1:7979 \
-  $(terse key show)</pre>
+<pre class="sh"><span class=k>cargo</span> run -q --bin follow ws&#58;//127.0.0.1:7979 \
+  <span class=m>$(</span><span class=k>terse</span> key show)</pre>
 <pre>1  Hello</pre>
 <p>Add an entry&#39;s number to open it:</p>
-<pre>cargo run -q --bin follow ws&#58;//127.0.0.1:7979 \
-  $(terse key show) 1</pre>
+<pre class="sh"><span class=k>cargo</span> run -q --bin follow ws&#58;//127.0.0.1:7979 \
+  <span class=m>$(</span><span class=k>terse</span> key show) 1</pre>
 <p>It prints the list again, an empty line, and the article as step 1 shows it.</p>
 <h2 id="what-it-leaves-out">What it leaves out</h2>
 <p>A complete reader keeps its subscriptions and every entry it receives, lists the newest first, follows several feeds on several relays and stays connected for new entries, downloads small articles before you open them, and shows each feed&#39;s name with its key. It also notes when a blob&#39;s length is not the size its entry gives. The reference implementation checks entries with the same SDK (<code>crates/terse-net/src/entry.rs</code>), and <code>node.rs</code> does the rest. <a href="native-reader.html">Writing a reader without the machine</a> lists all a complete reader must do.</p>

@@ -202,7 +202,7 @@ func (u *ui) renderOpts() render.Options {
 	if col > 80 {
 		col = 80
 	}
-	return render.Options{Width: col, LinkNumbers: u.cfg.linkNumbers, Color: true}
+	return render.Options{Width: col, LinkNumbers: u.cfg.linkNumbers, Color: true, Highlight: colorTerminal()}
 }
 
 func (u *ui) cur() *screen { return u.stack[len(u.stack)-1] }

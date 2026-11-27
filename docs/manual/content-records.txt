@@ -95,7 +95,7 @@ An owner is written `builtin:<title>`, `program:<feed key>:<name>` or `image:<im
 
 This is how the game Sparks (programs/sparks) keeps its high score in a 4-byte record named `high-score`. The load is asked for at start and handled when it arrives, so the first frame does not wait; a save is sent at game over and its completion is ignored.
 
-```
+```c
 #include "terse.h"
 
 static content_req load_req, save_req;

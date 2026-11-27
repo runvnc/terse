@@ -14,31 +14,31 @@
 <p>The program of &quot;Draw a line and read a key&quot;, in Rust: one line, whose top end Left and Right swing; Esc quits.</p>
 <h2 id="the-program">The program</h2>
 <p><code>line.rs</code>:</p>
-<pre>#![no_std]
-#![no_main]
+<pre><span class=m>#![no_std]</span>
+<span class=m>#![no_main]</span>
 
-use terse::*;
+<span class=k>use</span> terse::*;
 
-entry!(main);
+<span class=m>entry!</span>(main);
 
-fn main() {
-    let mut buf = [0u8; 64];
-    let mut x: i16 = 320;
-    loop {
-        while let Some(e) = next_event() {
-            if e.kind != EV_KEY_DOWN {
-                continue;
+<span class=k>fn</span> main() {
+    <span class=k>let</span> <span class=k>mut</span> buf = [<span class=n>0u8</span>; <span class=n>64</span>];
+    <span class=k>let</span> <span class=k>mut</span> x: <span class=t>i16</span> = <span class=n>320</span>;
+    <span class=k>loop</span> {
+        <span class=k>while</span> <span class=k>let</span> <span class=t>Some</span>(e) = next_event() {
+            <span class=k>if</span> e.kind != EV_KEY_DOWN {
+                <span class=k>continue</span>;
             }
-            match e.key() {
-                KEY_LEFT =&gt; x -= 10,
-                KEY_RIGHT =&gt; x += 10,
-                KEY_ESCAPE =&gt; exit(0),
+            <span class=k>match</span> e.key() {
+                KEY_LEFT =&gt; x -= <span class=n>10</span>,
+                KEY_RIGHT =&gt; x += <span class=n>10</span>,
+                KEY_ESCAPE =&gt; exit(<span class=n>0</span>),
                 _ =&gt; {}
             }
         }
-        let mut list = VecList::new(&amp;mut buf);
-        list.move_to(320 * VEC_UNIT, 400 * VEC_UNIT);
-        list.line_to(x * VEC_UNIT, 80 * VEC_UNIT);
+        <span class=k>let</span> <span class=k>mut</span> list = <span class=t>VecList</span>::new(&amp;<span class=k>mut</span> buf);
+        list.move_to(<span class=n>320</span> * VEC_UNIT, <span class=n>400</span> * VEC_UNIT);
+        list.line_to(x * VEC_UNIT, <span class=n>80</span> * VEC_UNIT);
         list.submit();
         wait_frame();
     }
@@ -52,7 +52,7 @@ fn main() {
 </ul>
 <h2 id="test-it-without-a-window">Test it without a window</h2>
 <p>With the <code>keys.txt</code> of the last page (Left at frames 5 and 6),</p>
-<pre>terse run line.terse --frames 10 --events keys.txt \
+<pre class="sh"><span class=k>terse</span> run line.terse --frames 10 --events keys.txt \
     --dump --dump-vectors</pre>
 <p>prints the same list as the C program, byte for byte:</p>
 <pre>-- vectors: 11 list bytes --

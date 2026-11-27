@@ -6,7 +6,7 @@ The reader is where you spend most of your time in Tersenet. It has a few views,
 
 The timeline lists the articles of every feed you follow, newest first. Each has its title and, below it, the feed's name and short key, the date and time (UTC) and the size:
 
-```
+```text
 Timeline
 2 articles  ·  1 feed
 A game for you

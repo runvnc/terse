@@ -42,29 +42,29 @@
 <p>A test compares its screen after 30 frames with <code>expected-30-frames.txt</code>.</p>
 <h2 id="the-same-in-c">The same in C</h2>
 <p><code>programs/hello/hello.c</code> is the whole hello program in C. Its core, typing and Esc, is this:</p>
-<pre>#include &quot;terse.h&quot;
+<pre><span class=m>#include</span> <span class=s>&quot;terse.h&quot;</span>
 
-int main(void)
+<span class=t>int</span> main(<span class=t>void</span>)
 {
     terse_event e;
-    term_color(15, 4);
-    term_puts(&quot; hello&quot;);
+    term_color(<span class=n>15</span>, <span class=n>4</span>);
+    term_puts(<span class=s>&quot; hello&quot;</span>);
     term_cmd(TERM_CLEAR_EOL);
-    term_color(7, 0);
-    term_goto(0, 2);
-    term_puts(&quot;&gt; &quot;);
-    for (;;) {
+    term_color(<span class=n>7</span>, <span class=n>0</span>);
+    term_goto(<span class=n>0</span>, <span class=n>2</span>);
+    term_puts(<span class=s>&quot;&gt; &quot;</span>);
+    <span class=k>for</span> (;;) {
         terse_wait_frame();
-        while (terse_event_pop(&amp;e)) {
-            if (e.type == EV_TEXT) {
-                uint32_t cp = e.a | e.b &lt;&lt; 8
-                    | (uint32_t)(e.c &amp; 0x1F) &lt;&lt; 16;
-                term_put_cp(cp &gt; 0xFFFF ? 0xFFFD : cp);
-            } else if (e.type == EV_KEY_DOWN) {
-                if (e.a == KEY_ENTER)
-                    term_puts(&quot;\n&gt; &quot;);
-                else if (e.a == KEY_ESCAPE)
-                    return 0;
+        <span class=k>while</span> (terse_event_pop(&amp;e)) {
+            <span class=k>if</span> (e.type == EV_TEXT) {
+                <span class=t>uint32_t</span> cp = e.a | e.b &lt;&lt; <span class=n>8</span>
+                    | (<span class=t>uint32_t</span>)(e.c &amp; <span class=n>0x1F</span>) &lt;&lt; <span class=n>16</span>;
+                term_put_cp(cp &gt; <span class=n>0xFFFF</span> ? <span class=n>0xFFFD</span> : cp);
+            } <span class=k>else</span> <span class=k>if</span> (e.type == EV_KEY_DOWN) {
+                <span class=k>if</span> (e.a == KEY_ENTER)
+                    term_puts(<span class=s>&quot;\n&gt; &quot;</span>);
+                <span class=k>else</span> <span class=k>if</span> (e.a == KEY_ESCAPE)
+                    <span class=k>return</span> <span class=n>0</span>;
             }
         }
     }

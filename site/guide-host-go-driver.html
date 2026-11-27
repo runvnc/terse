@@ -13,138 +13,138 @@
 <h1 id="make-a-host-in-go-step-3-a-driver-shows-hello">Make a host in Go, step 3: a driver shows hello</h1>
 <p>Text on a Terse32 screen comes from device 2, the terminal: 80 by 30 character cells. Rather than write it, use the device bus: each device is a separate program, a driver, that talks to your core over a Unix-domain socket. The Tersenet sources have a reference driver for every device. This step adds <code>bus.go</code>: start one driver, the terminal&#39;s, pass it the terminal&#39;s calls, and ask it for the grid to print.</p>
 <p>The reference drivers are in the downloads&#39; <code>bus</code> folder, for Linux, macOS and Windows. Or build them from the top folder of the sources:</p>
-<pre>cargo build --release -p terse-devices</pre>
+<pre class="sh"><span class=k>cargo</span> build --release -p terse-devices</pre>
 <h2 id="messages">Messages</h2>
 <p>Every message is a length (4 bytes, of the rest), an address (the machine, 4 bytes, always 0 here; a slot; 3 zero bytes) and a body whose first byte is its type. Integers are little-endian. <code>send</code> writes one; <code>request</code> writes one and reads the reply, whose type must be the request&#39;s plus <code>REPLY</code>. Anything else, an <code>ERROR</code> from the driver included, ends the run with status 3:</p>
-<pre>const (
-    HELLO       = 0x01
-    OPEN        = 0x03
-    CALL        = 0x10
-    BEGIN       = 0x30
-    END         = 0x31
-    STATE       = 0x40
-    SHUTDOWN    = 0x60
-    REPLY       = 0x80
-    protocol    = 1
-    addressSize = 8
-    noSlot      = 0
+<pre><span class=k>const</span> (
+    HELLO       = <span class=n>0x01</span>
+    OPEN        = <span class=n>0x03</span>
+    CALL        = <span class=n>0x10</span>
+    BEGIN       = <span class=n>0x30</span>
+    END         = <span class=n>0x31</span>
+    STATE       = <span class=n>0x40</span>
+    SHUTDOWN    = <span class=n>0x60</span>
+    REPLY       = <span class=n>0x80</span>
+    protocol    = <span class=n>1</span>
+    addressSize = <span class=n>8</span>
+    noSlot      = <span class=n>0</span>
 )</pre>
-<pre>func check(err error) {
-    if err != nil {
-        fmt.Fprintln(os.Stderr, &quot;bus:&quot;, err)
-        os.Exit(3)
+<pre><span class=k>func</span> check(err <span class=t>error</span>) {
+    <span class=k>if</span> err != <span class=k>nil</span> {
+        fmt.Fprintln(os.Stderr, <span class=s>&quot;bus:&quot;</span>, err)
+        os.Exit(<span class=n>3</span>)
     }
 }
 
-func words(b []byte, values ...uint32) []byte {
-    for _, v := range values {
+<span class=k>func</span> words(b []<span class=t>byte</span>, values ...<span class=t>uint32</span>) []<span class=t>byte</span> {
+    <span class=k>for</span> _, v := <span class=k>range</span> values {
         b = le.AppendUint32(b, v)
     }
-    return b
+    <span class=k>return</span> b
 }
 
-func (b *Bus) send(slot byte, body []byte) {
-    message := words(nil, uint32(addressSize+len(body)))
-    message = append(message, 0, 0, 0, 0, slot, 0, 0, 0)
+<span class=k>func</span> (b *Bus) send(slot <span class=t>byte</span>, body []<span class=t>byte</span>) {
+    message := words(<span class=k>nil</span>, <span class=t>uint32</span>(addressSize+len(body)))
+    message = append(message, <span class=n>0</span>, <span class=n>0</span>, <span class=n>0</span>, <span class=n>0</span>, slot, <span class=n>0</span>, <span class=n>0</span>, <span class=n>0</span>)
     _, err := b.conn.Write(append(message, body...))
     check(err)
 }
 
-func (b *Bus) request(slot byte, body []byte) []byte {
+<span class=k>func</span> (b *Bus) request(slot <span class=t>byte</span>, body []<span class=t>byte</span>) []<span class=t>byte</span> {
     b.send(slot, body)
-    var length uint32
+    <span class=k>var</span> length <span class=t>uint32</span>
     check(binary.Read(b.conn, le, &amp;length))
-    reply := make([]byte, length)
+    reply := make([]<span class=t>byte</span>, length)
     _, err := io.ReadFull(b.conn, reply)
     check(err)
     reply = reply[addressSize:]
-    if len(reply) == 0 || reply[0] != body[0]|REPLY {
-        check(fmt.Errorf(&quot;the driver said %q&quot;, reply))
+    <span class=k>if</span> len(reply) == <span class=n>0</span> || reply[<span class=n>0</span>] != body[<span class=n>0</span>]|REPLY {
+        check(fmt.Errorf(<span class=s>&quot;the driver said %q&quot;</span>, reply))
     }
-    return reply
+    <span class=k>return</span> reply
 }</pre>
 <h2 id="starting-the-driver">Starting the driver</h2>
-<pre>type Bus struct {
+<pre><span class=k>type</span> Bus <span class=k>struct</span> {
     m      *Machine
     conn   net.Conn
     driver *exec.Cmd
-    dir    string
-    tables map[uint32]map[uint32][]byte
-    Grants []byte
+    dir    <span class=t>string</span>
+    tables <span class=k>map</span>[<span class=t>uint32</span>]<span class=k>map</span>[<span class=t>uint32</span>][]<span class=t>byte</span>
+    Grants []<span class=t>byte</span>
 }
 
-func Start(command string, m *Machine, file []byte,
+<span class=k>func</span> Start(command <span class=t>string</span>, m *Machine, file []<span class=t>byte</span>,
     devices []Device) *Bus {
-    dir, err := os.MkdirTemp(&quot;&quot;, &quot;terse-bus&quot;)
+    dir, err := os.MkdirTemp(<span class=s>&quot;&quot;</span>, <span class=s>&quot;terse-bus&quot;</span>)
     check(err)
-    path := filepath.Join(dir, &quot;bus.sock&quot;)
-    listener, err := net.Listen(&quot;unix&quot;, path)
+    path := filepath.Join(dir, <span class=s>&quot;bus.sock&quot;</span>)
+    listener, err := net.Listen(<span class=s>&quot;unix&quot;</span>, path)
     check(err)
     driver := exec.Command(command)
-    driver.Env = append(os.Environ(), &quot;TERSE_BUS_SOCKET=&quot;+path)
+    driver.Env = append(os.Environ(), <span class=s>&quot;TERSE_BUS_SOCKET=&quot;</span>+path)
     driver.Stdout, driver.Stderr = os.Stderr, os.Stderr
     check(driver.Start())
     conn, err := listener.Accept()
     check(err)
     listener.Close()
     b := &amp;Bus{m: m, conn: conn, driver: driver, dir: dir,
-        tables: map[uint32]map[uint32][]byte{}}
+        tables: <span class=k>map</span>[<span class=t>uint32</span>]<span class=k>map</span>[<span class=t>uint32</span>][]<span class=t>byte</span>{}}
 
-    var ask []byte
-    for _, d := range devices {
-        if d.Slot == Terminal || d.Slot == FullText {
+    <span class=k>var</span> ask []<span class=t>byte</span>
+    <span class=k>for</span> _, d := <span class=k>range</span> devices {
+        <span class=k>if</span> d.Slot == Terminal || d.Slot == FullText {
             ask = append(ask, d.Slot)
         }
     }
-    hello := []byte{HELLO, protocol, 0, 0, 0, 0, 0, 0}
-    hello = append(append(hello, byte(len(ask))), ask...)
-    hello = le.AppendUint16(hello, uint16(len(dir)))
-    hello = append(append(hello, dir...), 0, 0)
+    hello := []<span class=t>byte</span>{HELLO, protocol, <span class=n>0</span>, <span class=n>0</span>, <span class=n>0</span>, <span class=n>0</span>, <span class=n>0</span>, <span class=n>0</span>}
+    hello = append(append(hello, <span class=t>byte</span>(len(ask))), ask...)
+    hello = le.AppendUint16(hello, <span class=t>uint16</span>(len(dir)))
+    hello = append(append(hello, dir...), <span class=n>0</span>, <span class=n>0</span>)
     rest := b.request(noSlot, hello)[nameAt:]
-    take := func(n int) []byte {
+    take := <span class=k>func</span>(n <span class=t>int</span>) []<span class=t>byte</span> {
         taken := rest[:n]
         rest = rest[n:]
-        return taken
+        <span class=k>return</span> taken
     }
     length := le.Uint16(take(lengthSize))
-    take(int(length) + nativeSize)
-    versions := map[byte]byte{}
-    for range take(1)[0] {
-        slot, version := take(1)[0], take(1)[0]
-        layers := int(take(1)[0])
+    take(<span class=t>int</span>(length) + nativeSize)
+    versions := <span class=k>map</span>[<span class=t>byte</span>]<span class=t>byte</span>{}
+    <span class=k>for</span> <span class=k>range</span> take(<span class=n>1</span>)[<span class=n>0</span>] {
+        slot, version := take(<span class=n>1</span>)[<span class=n>0</span>], take(<span class=n>1</span>)[<span class=n>0</span>]
+        layers := <span class=t>int</span>(take(<span class=n>1</span>)[<span class=n>0</span>])
         take(layerSize * layers)
-        table := map[uint32][]byte{}
-        for range take(1)[0] {
+        table := <span class=k>map</span>[<span class=t>uint32</span>][]<span class=t>byte</span>{}
+        <span class=k>for</span> <span class=k>range</span> take(<span class=n>1</span>)[<span class=n>0</span>] {
             entry := take(entrySize)
-            table[uint32(entry[functionAt])] = entry
+            table[<span class=t>uint32</span>(entry[functionAt])] = entry
         }
-        b.tables[uint32(slot)], versions[slot] = table, version
+        b.tables[<span class=t>uint32</span>(slot)], versions[slot] = table, version
     }
 
-    var has []byte
-    for _, d := range devices {
+    <span class=k>var</span> has []<span class=t>byte</span>
+    <span class=k>for</span> _, d := <span class=k>range</span> devices {
         version, served := versions[d.Slot]
         granted := served &amp;&amp; version == d.Version
-        if !granted &amp;&amp; !d.Optional {
-            check(fmt.Errorf(&quot;no driver for device %d&quot;, d.Slot))
+        <span class=k>if</span> !granted &amp;&amp; !d.Optional {
+            check(fmt.Errorf(<span class=s>&quot;no driver for device %d&quot;</span>, d.Slot))
         }
-        if d.Optional {
-            b.Grants = append(b.Grants, byte(flag(granted)))
+        <span class=k>if</span> d.Optional {
+            b.Grants = append(b.Grants, <span class=t>byte</span>(flag(granted)))
         }
-        if granted {
+        <span class=k>if</span> granted {
             has = append(has, d.Slot, d.Version)
         }
     }
     id := blake3.Sum256(file)
-    open := append([]byte{OPEN, 0, 0, 0}, id[:]...)
-    open = words(open, uint32(len(m.ROM)), uint32(len(m.RAM)))
-    open = append(open, 0, 0, byte(len(has)/deviceSize))
-    open = append(append(open, has...), 0)
+    open := append([]<span class=t>byte</span>{OPEN, <span class=n>0</span>, <span class=n>0</span>, <span class=n>0</span>}, id[:]...)
+    open = words(open, <span class=t>uint32</span>(len(m.ROM)), <span class=t>uint32</span>(len(m.RAM)))
+    open = append(open, <span class=n>0</span>, <span class=n>0</span>, <span class=t>byte</span>(len(has)/deviceSize))
+    open = append(append(open, has...), <span class=n>0</span>)
     reply := b.request(noSlot, append(open, m.ROM...))
-    if reply[tookAt] != took {
-        check(fmt.Errorf(&quot;the driver will not run the program&quot;))
+    <span class=k>if</span> reply[tookAt] != took {
+        check(fmt.Errorf(<span class=s>&quot;the driver will not run the program&quot;</span>))
     }
-    return b
+    <span class=k>return</span> b
 }</pre>
 <p>In order:</p>
 <ul>
@@ -154,172 +154,172 @@ func Start(command string, m *Machine, file []byte,
 <li>OPEN (<code>03h</code>) gives the driver the machine: its image ID, the BLAKE3 hash of the program file; the ROM and RAM lengths; an empty memory file (two zero bytes); the slots it has; no program identity (0); the ROM. The reply says if the driver took it.</li>
 </ul>
 <h2 id="calls-through-the-table">Calls through the table</h2>
-<pre>func (b *Bus) Call(slot, fn uint32) (uint32, int64) {
+<pre><span class=k>func</span> (b *Bus) Call(slot, fn <span class=t>uint32</span>) (<span class=t>uint32</span>, <span class=t>int64</span>) {
     m := b.m
     entry := b.tables[slot][fn]
-    if entry == nil {
-        return UnknownCall, BaseCharge
+    <span class=k>if</span> entry == <span class=k>nil</span> {
+        <span class=k>return</span> UnknownCall, BaseCharge
     }
-    field := func(at int) uint32 {
-        return le.Uint32(entry[at:])
+    field := <span class=k>func</span>(at <span class=t>int</span>) <span class=t>uint32</span> {
+        <span class=k>return</span> le.Uint32(entry[at:])
     }
     flags, access := entry[flagsAt], entry[accessAt]
-    charge := int64(answeredCharge)
-    if flags&amp;deferred != 0 {
+    charge := <span class=t>int64</span>(answeredCharge)
+    <span class=k>if</span> flags&amp;deferred != <span class=n>0</span> {
         charge = BaseCharge
     }
-    args := m.X[A0 : A5+1]
+    args := m.X[A0 : A5+<span class=n>1</span>]
     addr := args[entry[bufferAt]]
-    var buffer []byte
-    if flags&amp;buffered != 0 {
-        size := uint64(field(scaleAt))
-        if entry[lengthAt] != none {
-            size *= uint64(args[entry[lengthAt]])
+    <span class=k>var</span> buffer []<span class=t>byte</span>
+    <span class=k>if</span> flags&amp;buffered != <span class=n>0</span> {
+        size := <span class=t>uint64</span>(field(scaleAt))
+        <span class=k>if</span> entry[lengthAt] != none {
+            size *= <span class=t>uint64</span>(args[entry[lengthAt]])
         }
-        if size &lt; uint64(field(leastAt)) ||
-            size &gt; uint64(field(mostAt)) {
-            return field(lengthResultAt), charge
+        <span class=k>if</span> size &lt; <span class=t>uint64</span>(field(leastAt)) ||
+            size &gt; <span class=t>uint64</span>(field(mostAt)) {
+            <span class=k>return</span> field(lengthResultAt), charge
         }
-        ramOnly := access&amp;inROM == 0 || access&amp;writes != 0
-        buffer = m.Memory(addr, uint32(size), ramOnly)
-        if buffer == nil &amp;&amp; size &gt; 0 {
-            return field(placeResultAt), charge
+        ramOnly := access&amp;inROM == <span class=n>0</span> || access&amp;writes != <span class=n>0</span>
+        buffer = m.Memory(addr, <span class=t>uint32</span>(size), ramOnly)
+        <span class=k>if</span> buffer == <span class=k>nil</span> &amp;&amp; size &gt; <span class=n>0</span> {
+            <span class=k>return</span> field(placeResultAt), charge
         }
     }
     checked := entry[checkedAt]
-    if checked != none &amp;&amp; args[checked] &gt; field(checkedMostAt) {
-        return field(placeResultAt), charge
+    <span class=k>if</span> checked != none &amp;&amp; args[checked] &gt; field(checkedMostAt) {
+        <span class=k>return</span> field(placeResultAt), charge
     }
 
-    call := words([]byte{CALL, byte(fn), 0, 0}, args...)
-    call = le.AppendUint64(call, uint64(m.Budget-BaseCharge))
-    if access&amp;reads == 0 {
-        call = words(call, 0)
-    } else {
-        call = words(call, uint32(len(buffer)))
+    call := words([]<span class=t>byte</span>{CALL, <span class=t>byte</span>(fn), <span class=n>0</span>, <span class=n>0</span>}, args...)
+    call = le.AppendUint64(call, <span class=t>uint64</span>(m.Budget-BaseCharge))
+    <span class=k>if</span> access&amp;reads == <span class=n>0</span> {
+        call = words(call, <span class=n>0</span>)
+    } <span class=k>else</span> {
+        call = words(call, <span class=t>uint32</span>(len(buffer)))
         call = append(call, buffer...)
     }
-    reply := b.request(byte(slot), call)
-    if reply[flagsAt]&amp;setsA1 != 0 {
+    reply := b.request(<span class=t>byte</span>(slot), call)
+    <span class=k>if</span> reply[flagsAt]&amp;setsA1 != <span class=n>0</span> {
         m.X[A1] = le.Uint32(reply[a1At:])
     }
     at := writesAt
-    for range le.Uint32(reply[writeCountAt:]) {
+    <span class=k>for</span> <span class=k>range</span> le.Uint32(reply[writeCountAt:]) {
         write := reply[at:]
-        offset := uint64(le.Uint32(write) - addr)
+        offset := <span class=t>uint64</span>(le.Uint32(write) - addr)
         size := le.Uint32(write[writeLengthAt:])
-        end := offset + uint64(size)
-        if access&amp;writes == 0 || end &gt; uint64(len(buffer)) {
-            check(fmt.Errorf(&quot;a write outside the buffer&quot;))
+        end := offset + <span class=t>uint64</span>(size)
+        <span class=k>if</span> access&amp;writes == <span class=n>0</span> || end &gt; <span class=t>uint64</span>(len(buffer)) {
+            check(fmt.Errorf(<span class=s>&quot;a write outside the buffer&quot;</span>))
         }
         copy(buffer[offset:], write[writeDataAt:][:size])
-        at += writeDataAt + int(size)
+        at += writeDataAt + <span class=t>int</span>(size)
     }
-    extra := int64(le.Uint32(reply[chargeAt:]))
-    return le.Uint32(reply[a0At:]), charge + extra
+    extra := <span class=t>int64</span>(le.Uint32(reply[chargeAt:]))
+    <span class=k>return</span> le.Uint32(reply[a0At:]), charge + extra
 }</pre>
 <p>A function the table does not have is a call the machine does not have: <code>FFFF_FFFFh</code>, charge 4. Otherwise the charge starts at 4 for a deferred call (flag 2: its result and charge follow from its arguments) or 64 for one the driver must answer. Before anything is sent, the table&#39;s checks: the buffer&#39;s length within its range, the buffer wholly in RAM (or in ROM, for one the device only reads), and a checked argument no larger than its limit; a call that fails gets the table&#39;s failure result and goes no further. Then CALL (<code>10h</code>) carries <code>a0</code> to <code>a5</code>, the budget, and the bytes of a buffer the device reads, and RESULT (<code>90h</code>) gives <code>a0</code>, maybe <code>a1</code>, the charge on top, and bytes to write into the call&#39;s buffer.</p>
 <p>The <code>…At</code> names are offsets in an entry and in RESULT; <code>deferred</code>, <code>buffered</code>, <code>reads</code>, <code>writes</code> and <code>inROM</code> are the entry&#39;s flag and access bits, and <code>none</code> (<code>FFh</code>) no argument. All of them: DEVICES.md sections 1.4 and 5.</p>
 <h2 id="frames">Frames</h2>
 <p>BEGIN (<code>30h</code>) starts each frame: the frame counter, the time (0 here), no input events, an empty replay field. The reply, INPUTS, may charge the frame and bring events; the terminal does neither, and this host reads only the charge:</p>
-<pre>func (b *Bus) Begin(frame uint32) int64 {
-    begin := words([]byte{BEGIN, 0, 0, 0}, frame, 0, 0, 0)
+<pre><span class=k>func</span> (b *Bus) Begin(frame <span class=t>uint32</span>) <span class=t>int64</span> {
+    begin := words([]<span class=t>byte</span>{BEGIN, <span class=n>0</span>, <span class=n>0</span>, <span class=n>0</span>}, frame, <span class=n>0</span>, <span class=n>0</span>, <span class=n>0</span>)
     reply := b.request(noSlot, begin)
-    return int64(le.Uint32(reply[inputsChargeAt:]))
+    <span class=k>return</span> <span class=t>int64</span>(le.Uint32(reply[inputsChargeAt:]))
 }</pre>
 <p>END (<code>31h</code>) ends the frame, with no reply. STATE (<code>40h</code>) asks for a slot&#39;s part of the machine&#39;s state; the terminal&#39;s starts with its 2,400 cells, 4 bytes each: a character (16 bits), a foreground and a background colour. SHUTDOWN (<code>60h</code>) stops the driver:</p>
-<pre>func (b *Bus) End() {
-    stopped := byte(flag(b.m.Stopped != Running))
-    end := words([]byte{END, stopped, 0, 0}, b.m.Frame)
+<pre><span class=k>func</span> (b *Bus) End() {
+    stopped := <span class=t>byte</span>(flag(b.m.Stopped != Running))
+    end := words([]<span class=t>byte</span>{END, stopped, <span class=n>0</span>, <span class=n>0</span>}, b.m.Frame)
     b.send(noSlot, end)
 }
 
-func (b *Bus) State(slot byte) []byte {
-    return b.request(slot, []byte{STATE})[sectionAt:]
+<span class=k>func</span> (b *Bus) State(slot <span class=t>byte</span>) []<span class=t>byte</span> {
+    <span class=k>return</span> b.request(slot, []<span class=t>byte</span>{STATE})[sectionAt:]
 }
 
-func (b *Bus) Close() {
-    b.send(noSlot, []byte{SHUTDOWN})
+<span class=k>func</span> (b *Bus) Close() {
+    b.send(noSlot, []<span class=t>byte</span>{SHUTDOWN})
     b.conn.Close()
     b.driver.Wait()
     os.RemoveAll(b.dir)
 }</pre>
 <h2 id="the-program">The program</h2>
-<pre>package main
+<pre><span class=k>package</span> main
 
-import (
-    &quot;encoding/binary&quot;
-    &quot;fmt&quot;
-    &quot;os&quot;
-    &quot;strconv&quot;
-    &quot;strings&quot;
+<span class=k>import</span> (
+    <span class=s>&quot;encoding/binary&quot;</span>
+    <span class=s>&quot;fmt&quot;</span>
+    <span class=s>&quot;os&quot;</span>
+    <span class=s>&quot;strconv&quot;</span>
+    <span class=s>&quot;strings&quot;</span>
 
-    &quot;host/machine&quot;
+    <span class=s>&quot;host/machine&quot;</span>
 )
 
-func main() {
-    file, err := os.ReadFile(os.Args[1])
-    if err != nil {
+<span class=k>func</span> main() {
+    file, err := os.ReadFile(os.Args[<span class=n>1</span>])
+    <span class=k>if</span> err != <span class=k>nil</span> {
         fmt.Fprintln(os.Stderr, err)
-        os.Exit(2)
+        os.Exit(<span class=n>2</span>)
     }
-    frames, _ := strconv.Atoi(os.Args[2])
+    frames, _ := strconv.Atoi(os.Args[<span class=n>2</span>])
     cpu, devices, err := machine.Load(file)
-    if err != nil {
+    <span class=k>if</span> err != <span class=k>nil</span> {
         fmt.Fprintln(os.Stderr, err)
-        os.Exit(2)
+        os.Exit(<span class=n>2</span>)
     }
     m := &amp;machine.Machine{CPU: cpu}
-    bus := machine.Start(os.Args[3], m, file, devices)
+    bus := machine.Start(os.Args[<span class=n>3</span>], m, file, devices)
     m.Devices = bus.Call
-    for m.Stopped == machine.Running &amp;&amp; int(m.Frame) &lt; frames {
+    <span class=k>for</span> m.Stopped == machine.Running &amp;&amp; <span class=t>int</span>(m.Frame) &lt; frames {
         m.Budget -= bus.Begin(m.Frame)
         m.RunFrame()
         bus.End()
     }
     fmt.Print(screen(bus.State(machine.Terminal)))
     bus.Close()
-    if m.Fault != nil {
+    <span class=k>if</span> m.Fault != <span class=k>nil</span> {
         fmt.Fprintln(os.Stderr, m.Fault)
-        os.Exit(1)
+        os.Exit(<span class=n>1</span>)
     }
-    os.Exit(int(m.ExitCode))
+    os.Exit(<span class=t>int</span>(m.ExitCode))
 }
 
-const (
-    columns      = 80
-    rows         = 30
-    cellSize     = 4
-    continuation = 0xffff
+<span class=k>const</span> (
+    columns      = <span class=n>80</span>
+    rows         = <span class=n>30</span>
+    cellSize     = <span class=n>4</span>
+    continuation = <span class=n>0xffff</span>
 )
 
-func screen(grid []byte) string {
-    code := func(cell int) rune {
+<span class=k>func</span> screen(grid []<span class=t>byte</span>) <span class=t>string</span> {
+    code := <span class=k>func</span>(cell <span class=t>int</span>) <span class=t>rune</span> {
         at := cellSize * cell
-        return rune(binary.LittleEndian.Uint16(grid[at:]))
+        <span class=k>return</span> <span class=t>rune</span>(binary.LittleEndian.Uint16(grid[at:]))
     }
-    var text strings.Builder
-    for row := range rows {
-        var line []rune
-        for col := range columns {
+    <span class=k>var</span> text strings.Builder
+    <span class=k>for</span> row := <span class=k>range</span> rows {
+        <span class=k>var</span> line []<span class=t>rune</span>
+        <span class=k>for</span> col := <span class=k>range</span> columns {
             cell := row*columns + col
-            rightHalf := col &gt; 0 &amp;&amp; code(cell-1) != continuation
-            switch {
-            case code(cell) != continuation:
+            rightHalf := col &gt; <span class=n>0</span> &amp;&amp; code(cell-<span class=n>1</span>) != continuation
+            <span class=k>switch</span> {
+            <span class=k>case</span> code(cell) != continuation:
                 line = append(line, code(cell))
-            case !rightHalf:
-                line = append(line, &#39; &#39;)
+            <span class=k>case</span> !rightHalf:
+                line = append(line, <span class=s>&#39; &#39;</span>)
             }
         }
-        trimmed := strings.TrimRight(string(line), &quot; &quot;)
-        text.WriteString(trimmed + &quot;\n&quot;)
+        trimmed := strings.TrimRight(<span class=t>string</span>(line), <span class=s>&quot; &quot;</span>)
+        text.WriteString(trimmed + <span class=s>&quot;\n&quot;</span>)
     }
-    return text.String()
+    <span class=k>return</span> text.String()
 }</pre>
 <p><code>screen</code> prints the grid as <code>terse run --dump</code> does: a row&#39;s 80 cells, stripped of spaces at the end. <code>FFFFh</code> in a cell is the right half of a wide character, skipped after the character, else a space.</p>
 <h2 id="run-it">Run it</h2>
 <p>From <code>examples/host/go</code>, after <code>go build -o bin/ ./...</code>:</p>
-<pre>bin/step3 ../../../programs/hello/hello.terse 30 \
+<pre class="sh"><span class=k>bin/step3</span> ../../../programs/hello/hello.terse 30 \
     ../../../target/release/terse-dev-terminal</pre>
 <p>prints <code>hello</code>&#39;s screen after 30 frames, 30 lines, which begins</p>
 <pre> Tersenet · hello

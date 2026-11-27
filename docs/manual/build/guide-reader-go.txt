@@ -8,7 +8,7 @@ The program is in the Tersenet sources, in `examples/reader/go`, so you can run 
 
 This is `examples/reader/hello.txt`:
 
-```
+```article
 # Hello
 
 My first article. It has a heading, and this paragraph,
@@ -27,7 +27,7 @@ A line that starts with `# ` is a heading, and one that starts with `## ` a subh
 
 `article/article.go` shows an article:
 
-```
+```go
 package article
 
 import (
@@ -109,7 +109,7 @@ func Visible(text string) string {
 
 `show/main.go` is the program:
 
-```
+```go
 // Step 1: show an article from a file.
 package main
 
@@ -145,14 +145,14 @@ Then it reads the article a line at a time. A blank line, one of only spaces, ta
 
 Run it:
 
-```
+```sh
 cd examples/reader/go
 go run ./show ../hello.txt
 ```
 
 It prints:
 
-```
+```text
 Hello
 =====
 
@@ -171,11 +171,11 @@ be the lines written.
 
 Everything else in the article format is shown as plain text: a list item, a table row, a preformatted line or a fence becomes part of a paragraph as written, and links and code spans appear as the text they are made of.
 
-For an article of headings and paragraphs it is correct: the test `crates/terse-cli/tests/reader_examples.rs` runs it on every article of `vectors/articles` made only of those, and compares with what the reference reader finds in each. The rest of the format is in [Writing an article](terse:2c34635be0d3910e4131c8f41559778e0e4beea2e3e0e8dd2a5a20f080752eda). tersereader, the complete Go reader in `native/reader-go`, does all of it: `internal/article/parse.go` and `inline.go` read every construct, and `internal/render/render.go` lays them out for a terminal.
+For an article of headings and paragraphs it is correct: the test `crates/terse-cli/tests/reader_examples.rs` runs it on every article of `vectors/articles` made only of those, and compares with what the reference reader finds in each. The rest of the format is in [Writing an article](terse:50a1ba3a4f8c7ad968942e25597419478e8fd33e6fe39a1696fbee4fcf37fe8c). tersereader, the complete Go reader in `native/reader-go`, does all of it: `internal/article/parse.go` and `inline.go` read every construct, and `internal/render/render.go` lays them out for a terminal.
 
 ## What you have now
 
 A Go program of 94 lines that shows the headings and paragraphs of any Tersenet article file.
 
-- Next: [Make a reader in Go, step 2: fetch an article](terse:489e4ee645ee8d8a59ecaa8a55f622f4623f925256eb934de71cf58876234cbe).
-- The same step in Rust: [Make a reader in Rust, step 1: show an article](terse:c94bc49fb64dfc133079c0ada216092c867a7ce3bef245dc6ea5f27b1624cfd5).
+- Next: [Make a reader in Go, step 2: fetch an article](terse:bc40b928b7eec783a714c4a2e75936207f217f5da93251f10b760240f5458593).
+- The same step in Rust: [Make a reader in Rust, step 1: show an article](terse:6a017775d4033a8b4417f207ec5ddcf6cac24f57ba48da2d9cd19e61d7e2481c).

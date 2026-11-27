@@ -1,6 +1,6 @@
 # Content: blobs, requests and statuses (device 4)
 
-The content device, slot 4, version 0, is how a program reaches data outside its machine: blobs fetched from or published to the network, the user's feeds, and small named records kept on the host. Everything goes through one call, `submit` (`400h`), and one 52-byte request block. The program never hashes, verifies or transports anything; the host does all of that and only ever hands the program bytes that match the hash it asked for. How the host finds blobs is in [the network](terse:401c42853201f64f28c72d9acd2ae7dbf51a744e41003a2fa2280458107d139b). The exact rules are in spec/content.md.
+The content device, slot 4, version 0, is how a program reaches data outside its machine: blobs fetched from or published to the network, the user's feeds, and small named records kept on the host. Everything goes through one call, `submit` (`400h`), and one 52-byte request block. The program never hashes, verifies or transports anything; the host does all of that and only ever hands the program bytes that match the hash it asked for. How the host finds blobs is in [the network](terse:860a2aaebae93a8b6978505d6a8fe3cb2329eaeeda3a124d1e2c3786e7ff5187). The exact rules are in spec/content.md.
 
 An image gets the device by listing slot 4, version 0 in its header's device requirements (`terse pack ... --device 4:0`). If the image does not list it, `submit` returns `FFFF_FFFFh` and does nothing else. At reset no request is pending.
 
@@ -61,21 +61,21 @@ Fields an op does not use are ignored.
 |---|---|---|
 | `01h` | Get | below |
 | `02h` | Put | below |
-| `03h` | Subscriptions | [feeds](terse:0c0094ecc37408497dd40e0210b2ea42d0f62b13014ffe13a6e997b0f602d3a9) |
-| `04h` | Timeline | [feeds](terse:0c0094ecc37408497dd40e0210b2ea42d0f62b13014ffe13a6e997b0f602d3a9) |
-| `05h` | Subscribe | [feeds](terse:0c0094ecc37408497dd40e0210b2ea42d0f62b13014ffe13a6e997b0f602d3a9) |
-| `06h` | Unsubscribe | [feeds](terse:0c0094ecc37408497dd40e0210b2ea42d0f62b13014ffe13a6e997b0f602d3a9) |
-| `07h` | Publish | [feeds](terse:0c0094ecc37408497dd40e0210b2ea42d0f62b13014ffe13a6e997b0f602d3a9) |
-| `08h` | Identity | [feeds](terse:0c0094ecc37408497dd40e0210b2ea42d0f62b13014ffe13a6e997b0f602d3a9) |
-| `09h` | Names | [feeds](terse:0c0094ecc37408497dd40e0210b2ea42d0f62b13014ffe13a6e997b0f602d3a9) |
-| `0Ah` | Find | [feeds](terse:0c0094ecc37408497dd40e0210b2ea42d0f62b13014ffe13a6e997b0f602d3a9) |
-| `0Bh` | Set profile | [feeds](terse:0c0094ecc37408497dd40e0210b2ea42d0f62b13014ffe13a6e997b0f602d3a9) |
-| `0Ch` | Set nickname | [feeds](terse:0c0094ecc37408497dd40e0210b2ea42d0f62b13014ffe13a6e997b0f602d3a9) |
-| `0Dh` | Programs | [feeds](terse:0c0094ecc37408497dd40e0210b2ea42d0f62b13014ffe13a6e997b0f602d3a9) |
-| `0Eh` | Save | [named records](terse:bbd86d19c4c2cfb492bebe681c39505e4c76e01acf6b35c3836859462e4ba920) |
-| `0Fh` | Load | [named records](terse:bbd86d19c4c2cfb492bebe681c39505e4c76e01acf6b35c3836859462e4ba920) |
-| `10h` | Delete | [named records](terse:bbd86d19c4c2cfb492bebe681c39505e4c76e01acf6b35c3836859462e4ba920) |
-| `11h` | Records | [named records](terse:bbd86d19c4c2cfb492bebe681c39505e4c76e01acf6b35c3836859462e4ba920) |
+| `03h` | Subscriptions | [feeds](terse:593d468f17cde335492c6b9ecd45150b72417c385635494f4fc43eac2108dbd2) |
+| `04h` | Timeline | [feeds](terse:593d468f17cde335492c6b9ecd45150b72417c385635494f4fc43eac2108dbd2) |
+| `05h` | Subscribe | [feeds](terse:593d468f17cde335492c6b9ecd45150b72417c385635494f4fc43eac2108dbd2) |
+| `06h` | Unsubscribe | [feeds](terse:593d468f17cde335492c6b9ecd45150b72417c385635494f4fc43eac2108dbd2) |
+| `07h` | Publish | [feeds](terse:593d468f17cde335492c6b9ecd45150b72417c385635494f4fc43eac2108dbd2) |
+| `08h` | Identity | [feeds](terse:593d468f17cde335492c6b9ecd45150b72417c385635494f4fc43eac2108dbd2) |
+| `09h` | Names | [feeds](terse:593d468f17cde335492c6b9ecd45150b72417c385635494f4fc43eac2108dbd2) |
+| `0Ah` | Find | [feeds](terse:593d468f17cde335492c6b9ecd45150b72417c385635494f4fc43eac2108dbd2) |
+| `0Bh` | Set profile | [feeds](terse:593d468f17cde335492c6b9ecd45150b72417c385635494f4fc43eac2108dbd2) |
+| `0Ch` | Set nickname | [feeds](terse:593d468f17cde335492c6b9ecd45150b72417c385635494f4fc43eac2108dbd2) |
+| `0Dh` | Programs | [feeds](terse:593d468f17cde335492c6b9ecd45150b72417c385635494f4fc43eac2108dbd2) |
+| `0Eh` | Save | [named records](terse:c1747cb8a13bf9c5d05fe1d4cd2c66684d7f0248ddb6a534c04049ae9e0c6204) |
+| `0Fh` | Load | [named records](terse:c1747cb8a13bf9c5d05fe1d4cd2c66684d7f0248ddb6a534c04049ae9e0c6204) |
+| `10h` | Delete | [named records](terse:c1747cb8a13bf9c5d05fe1d4cd2c66684d7f0248ddb6a534c04049ae9e0c6204) |
+| `11h` | Records | [named records](terse:c1747cb8a13bf9c5d05fe1d4cd2c66684d7f0248ddb6a534c04049ae9e0c6204) |
 
 Get (`01h`) asks for up to `length` bytes of blob `id` starting at `offset`, delivered to `addr`. On success `length` is the number of bytes delivered (fewer if the blob ends first) and `size` is the blob's size. A get whose `offset` is at or beyond the end of the blob completes with `01h`, `length` 0 and `size` the blob's size.
 
@@ -178,7 +178,7 @@ The copied data itself (a put's bytes, a title) is not part of the state.
 
 Fetch the first 1,024 bytes of a blob and wait for them.
 
-```
+```c
 #include "terse.h"
 
 static content_req req;

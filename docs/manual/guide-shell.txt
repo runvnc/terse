@@ -31,14 +31,14 @@ Each machine is a whole separate Terse32 machine, with its own memory, devices a
 
 A shell lists device 8; this one needs nothing else:
 
-```
+```sh
 terse build myshell.c --device 8:0
 terse run --shell myshell.terse --frames 30 --dump
 ```
 
 The run prints the shell's own screen, then each machine's:
 
-```
+```text
 terse: image has no terminal device
 -- machine 1 running 0 0 640 480 hello --
  Tersenet · hello
@@ -47,7 +47,7 @@ terse: image has no terminal device
 
 and the rest of hello's screen. The first line says only that the shell itself has no text grid to print. In a window:
 
-```
+```sh
 terse-host --shell myshell.terse
 ```
 

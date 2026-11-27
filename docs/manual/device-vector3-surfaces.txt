@@ -51,7 +51,7 @@ Nothing more is charged: a Surface is 11 bytes of the list, which a submit charg
 
 A console below the middle of the screen, tilted back, showing the terminal's rows 4 to 11, columns 1 to 28; the text there stays where the program writes it:
 
-```
+```c
 #define U V3_UNIT
 
 v3_begin(list, sizeof list);

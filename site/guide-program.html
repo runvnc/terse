@@ -15,39 +15,39 @@
 <p>The program pages come in pairs, C and then Rust, the two languages with a runtime library for Terse32; Go, used on other pages of this guide, has no compiler for the machine&#39;s 32-bit RISC-V processor. This one is in C; <a href="guide-program-rust.html">the same in Rust</a> comes next.</p>
 <h2 id="the-program">The program</h2>
 <p><code>hello.c</code>:</p>
-<pre>#include &quot;terse.h&quot;
+<pre><span class=m>#include</span> <span class=s>&quot;terse.h&quot;</span>
 
-int main(void)
+<span class=t>int</span> main(<span class=t>void</span>)
 {
-    term_color(15, 4);
-    term_puts(&quot; Hello from hello! &quot;);
-    term_color(7, 0);
-    term_puts(&quot;\n\nPress Esc to exit.\n&quot;);
+    term_color(<span class=n>15</span>, <span class=n>4</span>);
+    term_puts(<span class=s>&quot; Hello from hello! &quot;</span>);
+    term_color(<span class=n>7</span>, <span class=n>0</span>);
+    term_puts(<span class=s>&quot;\n\nPress Esc to exit.\n&quot;</span>);
 
-    for (;;) {
+    <span class=k>for</span> (;;) {
         terse_event e;
         terse_wait_frame();
-        while (terse_event_pop(&amp;e)) {
-            if (e.type == EV_KEY_DOWN &amp;&amp; e.a == KEY_ESCAPE)
-                return 0;
+        <span class=k>while</span> (terse_event_pop(&amp;e)) {
+            <span class=k>if</span> (e.type == EV_KEY_DOWN &amp;&amp; e.a == KEY_ESCAPE)
+                <span class=k>return</span> <span class=n>0</span>;
         }
     }
 }</pre>
 <p><code>term_puts</code> writes on the text grid; <code>term_color</code> picks the colours, 15 on 4 being white on blue and 7 on 0 grey on black. The loop is the shape of every program. <code>terse_wait_frame</code> says &quot;done for this frame&quot; and returns at the next one, 60 times a second; then <code>terse_event_pop</code> takes the input that arrived meanwhile, one event at a time, until there is none. A key down event has the key in <code>e.a</code>. Returning from <code>main</code> ends the program.</p>
 <p>There are no threads and no interrupts. A program that does too much in one frame is simply paused, and goes on in the next.</p>
 <h2 id="build-it-and-run-it">Build it and run it</h2>
-<pre>terse new hello.c
-terse build hello.c
-terse-host hello.terse</pre>
+<pre class="sh"><span class=k>terse</span> new hello.c
+<span class=k>terse</span> build hello.c
+<span class=k>terse-host</span> hello.terse</pre>
 <p><code>terse new</code> writes this program, with a comment on each part. <code>terse build</code> compiles it into <code>hello.terse</code>, the program file, which lists the text grid and the line display as its devices. <code>terse-host</code> runs it in a window. <code>terse build</code> needs clang and its linker lld, and says in one sentence what to install if one is missing; the C library comes inside <code>terse</code>.</p>
 <h2 id="test-it-without-a-window">Test it without a window</h2>
-<pre>terse run hello.terse --frames 60 --dump</pre>
+<pre class="sh"><span class=k>terse</span> run hello.terse --frames 60 --dump</pre>
 <p>runs it for 60 frames with no window and prints the text grid:</p>
 <pre> Hello from hello!
 
 Press Esc to exit.</pre>
 <p>and then the grid&#39;s empty rows. Now give it a key. Save the line <code>5 press esc</code> as <code>esc.txt</code> (a frame number, then what happens) and run</p>
-<pre>terse run hello.terse --frames 60 --events esc.txt \
+<pre class="sh"><span class=k>terse</span> run hello.terse --frames 60 --events esc.txt \
     --hash-every 1</pre>
 <p>It prints one line per frame, the frame&#39;s number and the machine&#39;s state hash, and stops after frame 6: the program saw Esc and returned. The machine is deterministic, so the same program with the same input gives the same lines on every computer. That is how programs are tested.</p>
 <h2 id="what-you-have-now">What you have now</h2>

@@ -159,7 +159,7 @@ Identity, names, programs, subscriptions, timeline and find need no consent. The
 
 ## Example: list the timeline's titles
 
-```
+```c
 #include "terse.h"
 
 static content_req req;

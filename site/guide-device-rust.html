@@ -14,55 +14,55 @@
 <p>This driver is the terminal, device 2, in one file of Rust with no dependencies: <code>examples/device/rust/src/main.rs</code>, 415 lines, a crate and workspace of its own. It does what <code>programs/hello</code> needs, exactly as the reference does, and no more.</p>
 <h2 id="the-call-table">The call table</h2>
 <p>A driver tells the core, for each of its device&#39;s calls, where the call&#39;s buffer is and what the call costs: 64 bytes per function, in DEVICES.md section 5&#39;s layout. <code>Entry</code> has a field for each part of it, and <code>plain()</code> is a call with no buffer whose result is a constant 0. The table is the five calls <code>hello</code> makes, by the terminal&#39;s numbers:</p>
-<pre>const A0: u8 = 0;
-const A1: u8 = 1;
-const A2: u8 = 2;
-const NONE: u8 = 0xff;
-const DEFERRED: u8 = 2;
-const BUFFERED: u8 = 4;
-const READS: u8 = 1;
-const IN_ROM: u8 = 4;
-const FAILED: u32 = 0xffff_fffe;
-const RETURNS_VALUE: u8 = 1;
-const RETURNS_ARG: u8 = 2;
-const PER_FOUR: u8 = 1;</pre>
-<pre>fn table() -&gt; Vec&lt;Entry&gt; {
-    vec![
-        Entry {
+<pre><span class=k>const</span> A0: <span class=t>u8</span> = <span class=n>0</span>;
+<span class=k>const</span> A1: <span class=t>u8</span> = <span class=n>1</span>;
+<span class=k>const</span> A2: <span class=t>u8</span> = <span class=n>2</span>;
+<span class=k>const</span> NONE: <span class=t>u8</span> = <span class=n>0xff</span>;
+<span class=k>const</span> DEFERRED: <span class=t>u8</span> = <span class=n>2</span>;
+<span class=k>const</span> BUFFERED: <span class=t>u8</span> = <span class=n>4</span>;
+<span class=k>const</span> READS: <span class=t>u8</span> = <span class=n>1</span>;
+<span class=k>const</span> IN_ROM: <span class=t>u8</span> = <span class=n>4</span>;
+<span class=k>const</span> FAILED: <span class=t>u32</span> = <span class=n>0xffff_fffe</span>;
+<span class=k>const</span> RETURNS_VALUE: <span class=t>u8</span> = <span class=n>1</span>;
+<span class=k>const</span> RETURNS_ARG: <span class=t>u8</span> = <span class=n>2</span>;
+<span class=k>const</span> PER_FOUR: <span class=t>u8</span> = <span class=n>1</span>;</pre>
+<pre><span class=k>fn</span> table() -&gt; <span class=t>Vec</span>&lt;<span class=t>Entry</span>&gt; {
+    <span class=m>vec!</span>[
+        <span class=t>Entry</span> {
             function: WRITE,
             flags: DEFERRED | BUFFERED,
             buffer: A0,
             length: A1,
-            scale: 1,
-            most: 4096,
+            scale: <span class=n>1</span>,
+            most: <span class=n>4096</span>,
             access: READS | IN_ROM,
             length_result: FAILED,
             place_result: FAILED,
             rule: RETURNS_ARG,
             rule_arg: A1,
-            per_byte: 2,
+            per_byte: <span class=n>2</span>,
             ..plain()
         },
-        Entry {
+        <span class=t>Entry</span> {
             function: COMMAND,
             charge_arg: A0,
             low: CLEAR_SCREEN,
             high: SCROLL_DOWN,
-            add: 150,
+            add: <span class=n>150</span>,
             ..plain()
         },
-        Entry { function: SET_CURSOR, ..plain() },
-        Entry { function: SET_COLOURS, ..plain() },
-        Entry {
+        <span class=t>Entry</span> { function: SET_CURSOR, ..plain() },
+        <span class=t>Entry</span> { function: SET_COLOURS, ..plain() },
+        <span class=t>Entry</span> {
             function: CELLS_WRITE,
             flags: DEFERRED | BUFFERED,
             buffer: A1,
             length: A2,
-            scale: CELL_SIZE as u32,
-            most: (CELLS * CELL_SIZE) as u32,
+            scale: CELL_SIZE <span class=k>as</span> <span class=t>u32</span>,
+            most: (CELLS * CELL_SIZE) <span class=k>as</span> <span class=t>u32</span>,
             access: READS | IN_ROM,
             checked: A0,
-            checked_most: CELLS as u32 - 1,
+            checked_most: CELLS <span class=k>as</span> <span class=t>u32</span> - <span class=n>1</span>,
             length_result: FAILED,
             place_result: FAILED,
             rule: RETURNS_ARG,
@@ -73,22 +73,22 @@ const PER_FOUR: u8 = 1;</pre>
     ]
 }</pre>
 <p>All five are deferred: their result and charge follow from their arguments, so the core can work them out itself and send the calls later, in a batch. <code>write</code> returns <code>a1</code> and costs 2 units a byte; <code>command</code> costs 150 for commands 1 to 3; <code>cells_write</code> returns <code>a2</code> and costs a unit per 4 bytes. <code>encode</code> writes an entry, little-endian, the 0s being reserved bytes:</p>
-<pre>impl Entry {
-    fn encode(&amp;self) -&gt; Vec&lt;u8&gt; {
-        let e = self;
-        let mut b =
-            vec![e.function, e.flags, e.buffer, e.length];
-        words(&amp;mut b, &amp;[e.scale, e.least, e.most]);
-        b.extend([e.access, e.checked, 0, 0]);
+<pre><span class=k>impl</span> <span class=t>Entry</span> {
+    <span class=k>fn</span> encode(&amp;<span class=k>self</span>) -&gt; <span class=t>Vec</span>&lt;<span class=t>u8</span>&gt; {
+        <span class=k>let</span> e = <span class=k>self</span>;
+        <span class=k>let</span> <span class=k>mut</span> b =
+            <span class=m>vec!</span>[e.function, e.flags, e.buffer, e.length];
+        words(&amp;<span class=k>mut</span> b, &amp;[e.scale, e.least, e.most]);
+        b.extend([e.access, e.checked, <span class=n>0</span>, <span class=n>0</span>]);
         words(
-            &amp;mut b,
+            &amp;<span class=k>mut</span> b,
             &amp;[e.checked_most, e.length_result, e.place_result],
         );
-        b.extend([e.rule, e.rule_arg, 0, 0]);
-        words(&amp;mut b, &amp;[e.value, e.value2, e.charge]);
+        b.extend([e.rule, e.rule_arg, <span class=n>0</span>, <span class=n>0</span>]);
+        words(&amp;<span class=k>mut</span> b, &amp;[e.value, e.value2, e.charge]);
         b.extend([e.charge_flags, e.charge_arg]);
         b.extend(e.per_byte.to_le_bytes());
-        words(&amp;mut b, &amp;[e.low, e.high, e.add]);
+        words(&amp;<span class=k>mut</span> b, &amp;[e.low, e.high, e.add]);
         b
     }
 }</pre>
@@ -105,206 +105,206 @@ const PER_FOUR: u8 = 1;</pre>
 </tbody></table></div>
 <p><code>NONE</code> (FFh) is &quot;no argument&quot;, and <code>FAILED</code> (FFFF_FFFEh) the result of a bad buffer.</p>
 <h2 id="the-terminal">The terminal</h2>
-<pre>const COLUMNS: usize = 80;
-const ROWS: usize = 30;
-const CELLS: usize = COLUMNS * ROWS;
-const CELL_SIZE: usize = 4;
-const GRAYS: u8 = 24;
-const CONTINUATION: u16 = 0xffff;</pre>
+<pre><span class=k>const</span> COLUMNS: <span class=t>usize</span> = <span class=n>80</span>;
+<span class=k>const</span> ROWS: <span class=t>usize</span> = <span class=n>30</span>;
+<span class=k>const</span> CELLS: <span class=t>usize</span> = COLUMNS * ROWS;
+<span class=k>const</span> CELL_SIZE: <span class=t>usize</span> = <span class=n>4</span>;
+<span class=k>const</span> GRAYS: <span class=t>u8</span> = <span class=n>24</span>;
+<span class=k>const</span> CONTINUATION: <span class=t>u16</span> = <span class=n>0xffff</span>;</pre>
 <p><code>Terminal</code> holds the grid, the cursor, the colours and the palette. The grid is <code>CELLS</code> cells of <code>CELL_SIZE</code> bytes: the character (u16), then its foreground and background colours. At reset (<code>Terminal::new</code>) every cell is a space in colour 7 on 0. The palette is xterm&#39;s 256 colours, 3 bytes each: xterm&#39;s own 16 (<code>XTERM</code>), a 6 × 6 × 6 cube, and <code>GRAYS</code> grays from 8 in steps of 10.</p>
-<pre>    fn write(&amp;mut self, text: &amp;[u8]) {
-        for c in String::from_utf8_lossy(text).chars() {
-            if c == &#39;\n&#39; {
-                self.newline();
+<pre>    <span class=k>fn</span> write(&amp;<span class=k>mut</span> <span class=k>self</span>, text: &amp;[<span class=t>u8</span>]) {
+        <span class=k>for</span> c <span class=k>in</span> <span class=t>String</span>::from_utf8_lossy(text).chars() {
+            <span class=k>if</span> c == <span class=s>&#39;\n&#39;</span> {
+                <span class=k>self</span>.newline();
             }
-            if c &lt; &#39; &#39; || c == &#39;\x7f&#39; {
-                continue;
+            <span class=k>if</span> c &lt; <span class=s>&#39; &#39;</span> || c == <span class=s>&#39;\x7f&#39;</span> {
+                <span class=k>continue</span>;
             }
-            if self.wrap {
-                self.newline();
+            <span class=k>if</span> <span class=k>self</span>.wrap {
+                <span class=k>self</span>.newline();
             }
-            let code = match u16::try_from(c) {
-                Ok(CONTINUATION) | Err(_) =&gt; {
-                    char::REPLACEMENT_CHARACTER as u16
+            <span class=k>let</span> code = <span class=k>match</span> <span class=t>u16</span>::try_from(c) {
+                <span class=t>Ok</span>(CONTINUATION) | <span class=t>Err</span>(_) =&gt; {
+                    <span class=t>char</span>::REPLACEMENT_CHARACTER <span class=k>as</span> <span class=t>u16</span>
                 }
-                Ok(code) =&gt; code,
+                <span class=t>Ok</span>(code) =&gt; code,
             };
-            self.put(self.row * COLUMNS + self.col, code);
-            if self.col == COLUMNS - 1 {
-                self.wrap = true;
-            } else {
-                self.col += 1;
+            <span class=k>self</span>.put(<span class=k>self</span>.row * COLUMNS + <span class=k>self</span>.col, code);
+            <span class=k>if</span> <span class=k>self</span>.col == COLUMNS - <span class=n>1</span> {
+                <span class=k>self</span>.wrap = <span class=k>true</span>;
+            } <span class=k>else</span> {
+                <span class=k>self</span>.col += <span class=n>1</span>;
             }
         }
     }</pre>
 <p><code>write</code> decodes its bytes as UTF-8 with the standard library (<code>from_utf8_lossy</code>), prints each character at the cursor and moves on, wrapping at the end of a row and scrolling at the bottom (<code>newline</code>). A cell holds a character up to FFFFh, which is the <code>CONTINUATION</code> of a wide character, so that and anything above it is written as the replacement character.</p>
-<pre>    fn call(&amp;mut self, body: &amp;[u8]) -&gt; (u32, u32) {
-        let a = |i: usize| word(body, ARGS_AT + 4 * i);
-        let size = word(body, SIZE_AT) as usize;
-        let data = &amp;body[DATA_AT..DATA_AT + size];
-        match body[FUNCTION_AT] {
+<pre>    <span class=k>fn</span> call(&amp;<span class=k>mut</span> <span class=k>self</span>, body: &amp;[<span class=t>u8</span>]) -&gt; (<span class=t>u32</span>, <span class=t>u32</span>) {
+        <span class=k>let</span> a = |i: <span class=t>usize</span>| word(body, ARGS_AT + <span class=n>4</span> * i);
+        <span class=k>let</span> size = word(body, SIZE_AT) <span class=k>as</span> <span class=t>usize</span>;
+        <span class=k>let</span> data = &amp;body[DATA_AT..DATA_AT + size];
+        <span class=k>match</span> body[FUNCTION_AT] {
             WRITE =&gt; {
-                self.write(data);
-                return (a(1), 2 * a(1));
+                <span class=k>self</span>.write(data);
+                <span class=k>return</span> (a(<span class=n>1</span>), <span class=n>2</span> * a(<span class=n>1</span>));
             }
-            COMMAND =&gt; match a(0) {
-                CLEAR_SCREEN..=SCROLL_DOWN =&gt; return (0, 150),
+            COMMAND =&gt; <span class=k>match</span> a(<span class=n>0</span>) {
+                CLEAR_SCREEN..=SCROLL_DOWN =&gt; <span class=k>return</span> (<span class=n>0</span>, <span class=n>150</span>),
                 CLEAR_TO_END =&gt; {
-                    let line = self.row * COLUMNS;
-                    for col in self.col..COLUMNS {
-                        self.put(line + col, &#39; &#39; as u16);
+                    <span class=k>let</span> line = <span class=k>self</span>.row * COLUMNS;
+                    <span class=k>for</span> col <span class=k>in</span> <span class=k>self</span>.col..COLUMNS {
+                        <span class=k>self</span>.put(line + col, <span class=s>&#39; &#39;</span> <span class=k>as</span> <span class=t>u16</span>);
                     }
                 }
                 _ =&gt; {}
             },
             SET_CURSOR =&gt; {
-                self.col = (a(0) as usize).min(COLUMNS - 1);
-                self.row = (a(1) as usize).min(ROWS - 1);
-                self.wrap = false;
+                <span class=k>self</span>.col = (a(<span class=n>0</span>) <span class=k>as</span> <span class=t>usize</span>).min(COLUMNS - <span class=n>1</span>);
+                <span class=k>self</span>.row = (a(<span class=n>1</span>) <span class=k>as</span> <span class=t>usize</span>).min(ROWS - <span class=n>1</span>);
+                <span class=k>self</span>.wrap = <span class=k>false</span>;
             }
             SET_COLOURS =&gt; {
-                self.fg = u8::try_from(a(0)).unwrap_or(self.fg);
-                self.bg = u8::try_from(a(1)).unwrap_or(self.bg);
+                <span class=k>self</span>.fg = <span class=t>u8</span>::try_from(a(<span class=n>0</span>)).unwrap_or(<span class=k>self</span>.fg);
+                <span class=k>self</span>.bg = <span class=t>u8</span>::try_from(a(<span class=n>1</span>)).unwrap_or(<span class=k>self</span>.bg);
             }
             CELLS_WRITE =&gt; {
-                let start = CELL_SIZE * a(0) as usize;
-                let size = self.grid.len();
-                for (i, &amp;byte) in data.iter().enumerate() {
-                    self.grid[(start + i) % size] = byte;
+                <span class=k>let</span> start = CELL_SIZE * a(<span class=n>0</span>) <span class=k>as</span> <span class=t>usize</span>;
+                <span class=k>let</span> size = <span class=k>self</span>.grid.len();
+                <span class=k>for</span> (i, &amp;byte) <span class=k>in</span> data.iter().enumerate() {
+                    <span class=k>self</span>.grid[(start + i) % size] = byte;
                 }
-                return (a(2), (data.len() as u32).div_ceil(4));
+                <span class=k>return</span> (a(<span class=n>2</span>), (data.len() <span class=k>as</span> <span class=t>u32</span>).div_ceil(<span class=n>4</span>));
             }
             _ =&gt; {}
         }
-        (0, 0)
+        (<span class=n>0</span>, <span class=n>0</span>)
     }
 
-    fn state(&amp;self) -&gt; Vec&lt;u8&gt; {
-        let mut state = self.grid.clone();
-        let (col, row) = (self.col as u8, self.row as u8);
-        state.extend([col, row, self.fg, self.bg, self.shown]);
-        state.push(self.wrap as u8);
-        state.extend(&amp;self.palette);
-        state.extend(self.partial);
+    <span class=k>fn</span> state(&amp;<span class=k>self</span>) -&gt; <span class=t>Vec</span>&lt;<span class=t>u8</span>&gt; {
+        <span class=k>let</span> <span class=k>mut</span> state = <span class=k>self</span>.grid.clone();
+        <span class=k>let</span> (col, row) = (<span class=k>self</span>.col <span class=k>as</span> <span class=t>u8</span>, <span class=k>self</span>.row <span class=k>as</span> <span class=t>u8</span>);
+        state.extend([col, row, <span class=k>self</span>.fg, <span class=k>self</span>.bg, <span class=k>self</span>.shown]);
+        state.push(<span class=k>self</span>.wrap <span class=k>as</span> <span class=t>u8</span>);
+        state.extend(&amp;<span class=k>self</span>.palette);
+        state.extend(<span class=k>self</span>.partial);
         state
     }</pre>
 <p><code>call</code> carries a call out and returns its result and the charge on top of the base one, which must be what the table&#39;s rules say. <code>state</code> is the device&#39;s part of the machine&#39;s state, the bytes the state hash covers: the cells, the cursor, the colours, cursor shown, a pending wrap, the palette, and <code>partial</code>, a UTF-8 character cut between two writes (a count and 3 bytes; none here).</p>
 <h2 id="the-messages">The messages</h2>
-<pre>const HELLO: u8 = 0x01;
-const OPEN: u8 = 0x03;
-const CLOSE: u8 = 0x04;
-const CALL: u8 = 0x10;
-const BATCH: u8 = 0x11;
-const BEGIN: u8 = 0x30;
-const END: u8 = 0x31;
-const STATE: u8 = 0x40;
-const SHUTDOWN: u8 = 0x60;
-const ERROR: u8 = 0x7f;
-const REPLY: u8 = 0x80;
+<pre><span class=k>const</span> HELLO: <span class=t>u8</span> = <span class=n>0x01</span>;
+<span class=k>const</span> OPEN: <span class=t>u8</span> = <span class=n>0x03</span>;
+<span class=k>const</span> CLOSE: <span class=t>u8</span> = <span class=n>0x04</span>;
+<span class=k>const</span> CALL: <span class=t>u8</span> = <span class=n>0x10</span>;
+<span class=k>const</span> BATCH: <span class=t>u8</span> = <span class=n>0x11</span>;
+<span class=k>const</span> BEGIN: <span class=t>u8</span> = <span class=n>0x30</span>;
+<span class=k>const</span> END: <span class=t>u8</span> = <span class=n>0x31</span>;
+<span class=k>const</span> STATE: <span class=t>u8</span> = <span class=n>0x40</span>;
+<span class=k>const</span> SHUTDOWN: <span class=t>u8</span> = <span class=n>0x60</span>;
+<span class=k>const</span> ERROR: <span class=t>u8</span> = <span class=n>0x7f</span>;
+<span class=k>const</span> REPLY: <span class=t>u8</span> = <span class=n>0x80</span>;
 
-const ADDRESS_SIZE: usize = 8;
-const PROTOCOL: u8 = 1;
-const ON_SOCKET: u8 = 0;
-const TOOK: u8 = 1;
-const TERMINAL_SLOT: u8 = 2;
-const DEVICE_VERSION: u8 = 0;
-const SLOTS_AT: usize = 8;
-const FUNCTION_AT: usize = 1;
-const ARGS_AT: usize = 4;
-const SIZE_AT: usize = 36;
-const DATA_AT: usize = 40;
-const BATCH_COUNT_AT: usize = 4;
-const BATCH_CALLS_AT: usize = 8;
+<span class=k>const</span> ADDRESS_SIZE: <span class=t>usize</span> = <span class=n>8</span>;
+<span class=k>const</span> PROTOCOL: <span class=t>u8</span> = <span class=n>1</span>;
+<span class=k>const</span> ON_SOCKET: <span class=t>u8</span> = <span class=n>0</span>;
+<span class=k>const</span> TOOK: <span class=t>u8</span> = <span class=n>1</span>;
+<span class=k>const</span> TERMINAL_SLOT: <span class=t>u8</span> = <span class=n>2</span>;
+<span class=k>const</span> DEVICE_VERSION: <span class=t>u8</span> = <span class=n>0</span>;
+<span class=k>const</span> SLOTS_AT: <span class=t>usize</span> = <span class=n>8</span>;
+<span class=k>const</span> FUNCTION_AT: <span class=t>usize</span> = <span class=n>1</span>;
+<span class=k>const</span> ARGS_AT: <span class=t>usize</span> = <span class=n>4</span>;
+<span class=k>const</span> SIZE_AT: <span class=t>usize</span> = <span class=n>36</span>;
+<span class=k>const</span> DATA_AT: <span class=t>usize</span> = <span class=n>40</span>;
+<span class=k>const</span> BATCH_COUNT_AT: <span class=t>usize</span> = <span class=n>4</span>;
+<span class=k>const</span> BATCH_CALLS_AT: <span class=t>usize</span> = <span class=n>8</span>;
 
-fn hello(body: &amp;[u8]) -&gt; Vec&lt;u8&gt; {
-    let name = &quot;terminal (Rust example)&quot;;
-    let mut reply = vec![HELLO | REPLY, PROTOCOL, ON_SOCKET, 0];
-    reply.extend((name.len() as u16).to_le_bytes());
+<span class=k>fn</span> hello(body: &amp;[<span class=t>u8</span>]) -&gt; <span class=t>Vec</span>&lt;<span class=t>u8</span>&gt; {
+    <span class=k>let</span> name = <span class=s>&quot;terminal (Rust example)&quot;</span>;
+    <span class=k>let</span> <span class=k>mut</span> reply = <span class=m>vec!</span>[HELLO | REPLY, PROTOCOL, ON_SOCKET, <span class=n>0</span>];
+    reply.extend((name.len() <span class=k>as</span> <span class=t>u16</span>).to_le_bytes());
     reply.extend(name.as_bytes());
-    let count = body[SLOTS_AT] as usize;
-    let slots = &amp;body[SLOTS_AT + 1..][..count];
-    reply.extend([0, 0, 0, 0, count as u8]);
-    for &amp;slot in slots {
-        let mut entries = vec![];
-        if slot == TERMINAL_SLOT {
+    <span class=k>let</span> count = body[SLOTS_AT] <span class=k>as</span> <span class=t>usize</span>;
+    <span class=k>let</span> slots = &amp;body[SLOTS_AT + <span class=n>1</span>..][..count];
+    reply.extend([<span class=n>0</span>, <span class=n>0</span>, <span class=n>0</span>, <span class=n>0</span>, count <span class=k>as</span> <span class=t>u8</span>]);
+    <span class=k>for</span> &amp;slot <span class=k>in</span> slots {
+        <span class=k>let</span> <span class=k>mut</span> entries = <span class=m>vec!</span>[];
+        <span class=k>if</span> slot == TERMINAL_SLOT {
             entries = table();
         }
-        let count = entries.len() as u8;
-        reply.extend([slot, DEVICE_VERSION, 0, count]);
-        for entry in &amp;entries {
+        <span class=k>let</span> count = entries.len() <span class=k>as</span> <span class=t>u8</span>;
+        reply.extend([slot, DEVICE_VERSION, <span class=n>0</span>, count]);
+        <span class=k>for</span> entry <span class=k>in</span> &amp;entries {
             reply.extend(entry.encode());
         }
     }
-    reply.extend([0, 0, 0]);
+    reply.extend([<span class=n>0</span>, <span class=n>0</span>, <span class=n>0</span>]);
     reply
 }
 
-fn main() {
-    let path = env::var(&quot;TERSE_BUS_SOCKET&quot;).unwrap();
-    let mut stream = UnixStream::connect(path).unwrap();
-    let mut machines = HashMap::new();
-    loop {
-        let mut size = [0; 4];
-        if stream.read_exact(&amp;mut size).is_err() {
-            return;
+<span class=k>fn</span> main() {
+    <span class=k>let</span> path = env::var(<span class=s>&quot;TERSE_BUS_SOCKET&quot;</span>).unwrap();
+    <span class=k>let</span> <span class=k>mut</span> stream = <span class=t>UnixStream</span>::connect(path).unwrap();
+    <span class=k>let</span> <span class=k>mut</span> machines = <span class=t>HashMap</span>::new();
+    <span class=k>loop</span> {
+        <span class=k>let</span> <span class=k>mut</span> size = [<span class=n>0</span>; <span class=n>4</span>];
+        <span class=k>if</span> stream.read_exact(&amp;<span class=k>mut</span> size).is_err() {
+            <span class=k>return</span>;
         }
-        let mut message = vec![0; word(&amp;size, 0) as usize];
-        if stream.read_exact(&amp;mut message).is_err() {
-            return;
+        <span class=k>let</span> <span class=k>mut</span> message = <span class=m>vec!</span>[<span class=n>0</span>; word(&amp;size, <span class=n>0</span>) <span class=k>as</span> <span class=t>usize</span>];
+        <span class=k>if</span> stream.read_exact(&amp;<span class=k>mut</span> message).is_err() {
+            <span class=k>return</span>;
         }
-        let (address, body) = message.split_at(ADDRESS_SIZE);
-        let instance = word(address, 0);
-        let reply = match body[0] {
+        <span class=k>let</span> (address, body) = message.split_at(ADDRESS_SIZE);
+        <span class=k>let</span> instance = word(address, <span class=n>0</span>);
+        <span class=k>let</span> reply = <span class=k>match</span> body[<span class=n>0</span>] {
             HELLO =&gt; hello(body),
             OPEN =&gt; {
-                machines.insert(instance, Terminal::new());
-                vec![OPEN | REPLY, TOOK, 0, 0, 0, 0]
+                machines.insert(instance, <span class=t>Terminal</span>::new());
+                <span class=m>vec!</span>[OPEN | REPLY, TOOK, <span class=n>0</span>, <span class=n>0</span>, <span class=n>0</span>, <span class=n>0</span>]
             }
             CLOSE =&gt; {
                 machines.remove(&amp;instance);
-                continue;
+                <span class=k>continue</span>;
             }
             CALL =&gt; {
-                let t = machines.get_mut(&amp;instance).unwrap();
-                let (result, charge) = t.call(body);
-                let mut reply = vec![CALL | REPLY, 0, 0, 0];
-                words(&amp;mut reply, &amp;[result, 0, charge, 0]);
+                <span class=k>let</span> t = machines.get_mut(&amp;instance).unwrap();
+                <span class=k>let</span> (result, charge) = t.call(body);
+                <span class=k>let</span> <span class=k>mut</span> reply = <span class=m>vec!</span>[CALL | REPLY, <span class=n>0</span>, <span class=n>0</span>, <span class=n>0</span>];
+                words(&amp;<span class=k>mut</span> reply, &amp;[result, <span class=n>0</span>, charge, <span class=n>0</span>]);
                 reply
             }
             BATCH =&gt; {
-                let mut calls = &amp;body[BATCH_CALLS_AT..];
-                for _ in 0..word(body, BATCH_COUNT_AT) {
-                    let size = word(calls, 0) as usize;
-                    let call = &amp;calls[4..4 + size];
-                    let t = machines.get_mut(&amp;word(call, 0));
+                <span class=k>let</span> <span class=k>mut</span> calls = &amp;body[BATCH_CALLS_AT..];
+                <span class=k>for</span> _ <span class=k>in</span> <span class=n>0</span>..word(body, BATCH_COUNT_AT) {
+                    <span class=k>let</span> size = word(calls, <span class=n>0</span>) <span class=k>as</span> <span class=t>usize</span>;
+                    <span class=k>let</span> call = &amp;calls[<span class=n>4</span>..<span class=n>4</span> + size];
+                    <span class=k>let</span> t = machines.get_mut(&amp;word(call, <span class=n>0</span>));
                     t.unwrap().call(&amp;call[ADDRESS_SIZE..]);
-                    calls = &amp;calls[4 + size..];
+                    calls = &amp;calls[<span class=n>4</span> + size..];
                 }
-                continue;
+                <span class=k>continue</span>;
             }
             BEGIN =&gt; {
-                let mut reply = vec![BEGIN | REPLY, 0, 0, 0];
-                words(&amp;mut reply, &amp;[0, 0, 0, 0]);
+                <span class=k>let</span> <span class=k>mut</span> reply = <span class=m>vec!</span>[BEGIN | REPLY, <span class=n>0</span>, <span class=n>0</span>, <span class=n>0</span>];
+                words(&amp;<span class=k>mut</span> reply, &amp;[<span class=n>0</span>, <span class=n>0</span>, <span class=n>0</span>, <span class=n>0</span>]);
                 reply
             }
-            END =&gt; continue,
+            END =&gt; <span class=k>continue</span>,
             STATE =&gt; {
-                let state = machines[&amp;instance].state();
-                let mut reply = vec![STATE | REPLY, 0, 0, 0];
-                words(&amp;mut reply, &amp;[state.len() as u32]);
+                <span class=k>let</span> state = machines[&amp;instance].state();
+                <span class=k>let</span> <span class=k>mut</span> reply = <span class=m>vec!</span>[STATE | REPLY, <span class=n>0</span>, <span class=n>0</span>, <span class=n>0</span>];
+                words(&amp;<span class=k>mut</span> reply, &amp;[state.len() <span class=k>as</span> <span class=t>u32</span>]);
                 reply.extend(state);
                 reply
             }
-            SHUTDOWN =&gt; return,
-            _ =&gt; [&amp;[ERROR], &amp;b&quot;not handled&quot;[..]].concat(),
+            SHUTDOWN =&gt; <span class=k>return</span>,
+            _ =&gt; [&amp;[ERROR], &amp;<span class=s>b&quot;not handled&quot;</span>[..]].concat(),
         };
-        let mut out = Vec::new();
-        words(&amp;mut out, &amp;[(ADDRESS_SIZE + reply.len()) as u32]);
+        <span class=k>let</span> <span class=k>mut</span> out = <span class=t>Vec</span>::new();
+        words(&amp;<span class=k>mut</span> out, &amp;[(ADDRESS_SIZE + reply.len()) <span class=k>as</span> <span class=t>u32</span>]);
         out.extend(address);
         out.extend(&amp;reply);
-        let sent = stream.write_all(&amp;out);
-        if sent.is_err() || reply[0] == ERROR {
-            return;
+        <span class=k>let</span> sent = stream.write_all(&amp;out);
+        <span class=k>if</span> sent.is_err() || reply[<span class=n>0</span>] == ERROR {
+            <span class=k>return</span>;
         }
     }
 }</pre>
@@ -324,14 +324,14 @@ fn main() {
 <p>HELLO answers for the slots asked: 2 with its table, 10 (full text) with none. OPEN makes a machine&#39;s terminal, CLOSE drops it. BATCH holds deferred calls, carried out in order with no replies. SHUTDOWN, or the socket closed, ends the driver; anything else gets an ERROR, and the driver exits.</p>
 <h2 id="run-it">Run it</h2>
 <p>Build it, then run <code>hello</code> under the reference core with it, from the top folder of the sources (<code>cargo build --release -p terse-bus -p terse-devices</code> builds the core and the reference drivers):</p>
-<pre>cargo build --release \
+<pre class="sh"><span class=k>cargo</span> build --release \
     --manifest-path examples/device/rust/Cargo.toml
-target/release/terse-bus programs/hello/hello.terse \
+<span class=k>target/release/terse-bus</span> programs/hello/hello.terse \
     --frames 30 --hash \
-    --driver 2=$PWD/examples/device/rust/target/release/terminal</pre>
+    --driver 2=<span class=m>$PWD</span>/examples/device/rust/target/release/terminal</pre>
 <pre>819432152b38626f8fc54b43f50d5d4c501dc99e6904315b61dc78b796c611e2</pre>
 <p>the hash the reference terminal gives, and with <code>--hash-every 1</code>, the same 30 hashes. The hosts of &quot;Make a host&quot; take it too: this is a Go core with a Rust driver, from <code>examples/host/go</code> after <code>go build -o bin/ ./...</code>:</p>
-<pre>bin/step4 ../../../programs/hello/hello.terse 30 \
+<pre class="sh"><span class=k>bin/step4</span> ../../../programs/hello/hello.terse 30 \
     ../../device/rust/target/release/terminal</pre>
 <pre>819432152b38626f8fc54b43f50d5d4c501dc99e6904315b61dc78b796c611e2</pre>
 <h2 id="what-is-missing">What is missing</h2>

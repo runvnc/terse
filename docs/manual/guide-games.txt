@@ -10,7 +10,7 @@ You fly a lamp skiff at the edge of the Reef, drawn in glowing wireframe lines, 
 
 The other game is sparks:
 
-```
+```text
   SPARKS    HIGH 0000         demo - Enter or Start to play
                                    S P A R K S
                      Collect the sparks, avoid the sweepers.
@@ -31,7 +31,7 @@ Anyone can publish a program in their feed, as they publish an article. There ar
 - In the launcher. Under FROM YOUR FEEDS it lists the programs of the feeds you follow, each with the name of the feed it came from. Enter starts one.
 - In an article. Following a link to a program asks you first, in the bar at the top, naming the program and its publisher (here with the nickname from the last page), with Y/N at the end:
 
-```
+```text
 reader asks to start Sparks by Ana from choir 73670a…a9ee5f.
 ```
 
@@ -45,7 +45,7 @@ There is not much to find yet, though. Tersenet has no public relay and no catal
 
 Machines in Tersenet can be saved whole. In the launcher, S saves the session: every program you have open, exactly where it is, mid-game included. The next time you start the window, the launcher's first line offers to bring it back:
 
-```
+```text
 Restore last session (1 program)
 ```
 

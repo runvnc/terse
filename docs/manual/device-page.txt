@@ -126,7 +126,7 @@ Each call costs 4 units; an accepted `submit` 1 more per 4 bytes, rounded up. La
 
 A heading, a paragraph with an anchored word and a table. The library has no builder for the table commands, so `op` appends their bytes: 09h, 2 columns, flags 1 (header), aligns start and end; 0Ah before each cell; 0Bh.
 
-```
+```c
 #include "terse.h"
 #define T(s) doc_text(s, sizeof(s) - 1)
 static uint8_t doc[1024];

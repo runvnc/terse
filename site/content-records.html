@@ -89,41 +89,41 @@
 <p>An owner is written <code>builtin:&lt;title&gt;</code>, <code>program:&lt;feed key&gt;:&lt;name&gt;</code> or <code>image:&lt;image id&gt;</code>.</p>
 <h2 id="example-a-high-score">Example: a high score</h2>
 <p>This is how the game Sparks (programs/sparks) keeps its high score in a 4-byte record named <code>high-score</code>. The load is asked for at start and handled when it arrives, so the first frame does not wait; a save is sent at game over and its completion is ignored.</p>
-<pre>#include &quot;terse.h&quot;
+<pre><span class=m>#include</span> <span class=s>&quot;terse.h&quot;</span>
 
-static content_req load_req, save_req;
-static uint8_t buf[4], load_handle;
-static uint32_t high;
+<span class=k>static</span> content_req load_req, save_req;
+<span class=k>static</span> <span class=t>uint8_t</span> buf[<span class=n>4</span>], load_handle;
+<span class=k>static</span> <span class=t>uint32_t</span> high;
 
-void start(void)
+<span class=t>void</span> start(<span class=t>void</span>)
 {
-    load_handle = record_load(&amp;load_req, &quot;high-score&quot;,
-                              0, 4, buf);
+    load_handle = record_load(&amp;load_req, <span class=s>&quot;high-score&quot;</span>,
+                              <span class=n>0</span>, <span class=n>4</span>, buf);
 }
 
-/* For each event in the main loop. */
-void on_event(const terse_event *ev)
+<span class=c>/* For each event in the main loop. */</span>
+<span class=t>void</span> on_event(<span class=k>const</span> terse_event *ev)
 {
-    if (ev-&gt;type != EV_CONTENT_DONE || ev-&gt;a != load_handle)
-        return;
-    load_handle = 0;
-    if (load_req.status == STATUS_DONE
-        &amp;&amp; load_req.length == 4) {
-        uint32_t v = buf[0] | buf[1] &lt;&lt; 8 | buf[2] &lt;&lt; 16
-                   | (uint32_t)buf[3] &lt;&lt; 24;
-        if (v &gt; high) /* a score made meanwhile wins */
+    <span class=k>if</span> (ev-&gt;type != EV_CONTENT_DONE || ev-&gt;a != load_handle)
+        <span class=k>return</span>;
+    load_handle = <span class=n>0</span>;
+    <span class=k>if</span> (load_req.status == STATUS_DONE
+        &amp;&amp; load_req.length == <span class=n>4</span>) {
+        <span class=t>uint32_t</span> v = buf[<span class=n>0</span>] | buf[<span class=n>1</span>] &lt;&lt; <span class=n>8</span> | buf[<span class=n>2</span>] &lt;&lt; <span class=n>16</span>
+                   | (<span class=t>uint32_t</span>)buf[<span class=n>3</span>] &lt;&lt; <span class=n>24</span>;
+        <span class=k>if</span> (v &gt; high) <span class=c>/* a score made meanwhile wins */</span>
             high = v;
     }
 }
 
-void game_over(uint32_t score)
+<span class=t>void</span> game_over(<span class=t>uint32_t</span> score)
 {
-    if (score &lt;= high)
-        return;
+    <span class=k>if</span> (score &lt;= high)
+        <span class=k>return</span>;
     high = score;
-    for (int i = 0; i &lt; 4; i++)
-        buf[i] = (uint8_t)(high &gt;&gt; (8 * i));
-    record_save(&amp;save_req, &quot;high-score&quot;, buf, 4);
+    <span class=k>for</span> (<span class=t>int</span> i = <span class=n>0</span>; i &lt; <span class=n>4</span>; i++)
+        buf[i] = (<span class=t>uint8_t</span>)(high &gt;&gt; (<span class=n>8</span> * i));
+    record_save(&amp;save_req, <span class=s>&quot;high-score&quot;</span>, buf, <span class=n>4</span>);
 }</pre>
 <p>The save copies its 4 bytes at submit, so <code>buf</code> may change at once. The first time the game runs there is no record and the load completes with <code>02h</code>; <code>high</code> stays 0. Use separate request blocks for requests that may be pending at the same time, as here: submitting a block again while it is pending makes two requests that both write their results into it.</p>
 </article>

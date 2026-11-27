@@ -127,29 +127,29 @@
 <h2 id="the-system-frame-snapshots-and-state">The system frame, snapshots and state</h2>
 <p>The order in which a system runs its machines each frame, what a snapshot holds and how it is restored, what each machine&#39;s determinism rests on and what device 8&#39;s calls cost are in <a href="device-machines-frame.html">the system frame, snapshots and state</a>.</p>
 <h2 id="example-a-minimal-shell">Example: a minimal shell</h2>
-<pre>#include &quot;terse.h&quot;
+<pre><span class=m>#include</span> <span class=s>&quot;terse.h&quot;</span>
 
-static uint8_t id[32], req[82];
+<span class=k>static</span> <span class=t>uint8_t</span> id[<span class=n>32</span>], req[<span class=n>82</span>];
 
-int main(void)
+<span class=t>int</span> main(<span class=t>void</span>)
 {
     terse_event ev;
-    uint32_t h = mach_builtin(0, id) ? mach_start(id) : 0;
-    if (h) {
-        mach_place(h, 0, 0, 640, 480);
+    <span class=t>uint32_t</span> h = mach_builtin(<span class=n>0</span>, id) ? mach_start(id) : <span class=n>0</span>;
+    <span class=k>if</span> (h) {
+        mach_place(h, <span class=n>0</span>, <span class=n>0</span>, <span class=n>640</span>, <span class=n>480</span>);
         mach_focus(h);
     }
-    for (;;) {
-        while (terse_event_pop(&amp;ev)) {
-            if (ev.type == EV_MACHINE_PRESSED)
+    <span class=k>for</span> (;;) {
+        <span class=k>while</span> (terse_event_pop(&amp;ev)) {
+            <span class=k>if</span> (ev.type == EV_MACHINE_PRESSED)
                 mach_focus(ev.a);
-            else if (ev.type == EV_MACHINE_CHANGED
+            <span class=k>else</span> <span class=k>if</span> (ev.type == EV_MACHINE_CHANGED
                      &amp;&amp; ev.b &gt;= MACH_EXITED)
                 mach_stop(ev.a);
-            else if (ev.type == EV_OPEN_REQUESTED
-                     &amp;&amp; mach_request(ev.a, req) &amp;&amp; req[0] == 1
-                     &amp;&amp; (h = mach_start(req + 1)) != 0)
-                mach_place(h, 0, 0, 640, 480);
+            <span class=k>else</span> <span class=k>if</span> (ev.type == EV_OPEN_REQUESTED
+                     &amp;&amp; mach_request(ev.a, req) &amp;&amp; req[<span class=n>0</span>] == <span class=n>1</span>
+                     &amp;&amp; (h = mach_start(req + <span class=n>1</span>)) != <span class=n>0</span>)
+                mach_place(h, <span class=n>0</span>, <span class=n>0</span>, <span class=n>640</span>, <span class=n>480</span>);
         }
         terse_wait_frame();
     }

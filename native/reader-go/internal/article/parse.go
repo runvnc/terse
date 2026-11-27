@@ -44,6 +44,7 @@ type Block struct {
 	Table  *Table
 	Figure *Figure
 	Source []string // a figure's fence lines (its text, for a reader that does not draw it)
+	Info   string   // pre: a fence's info string, blanks trimmed (the format ignores it; code is coloured by it)
 }
 
 // Doc is a parsed article.
@@ -203,7 +204,7 @@ func fenceBlocks(open []byte, body [][]byte, closed bool) []Block {
 	for _, l := range body {
 		pl = append(pl, parseInline(l, false, false))
 	}
-	return []Block{{Kind: Pre, Lines: pl}}
+	return []Block{{Kind: Pre, Lines: pl, Info: string(bytes.Trim(open[3:], " \t\r"))}}
 }
 
 // figureSize reads a fence's info string as `path W H` (ARTICLE.md 6).

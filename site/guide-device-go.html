@@ -14,67 +14,67 @@
 <p>This driver is the terminal, device 2, in one file of Go with no dependencies: <code>examples/device/go/main.go</code>, 328 lines. It does what <code>programs/hello</code> needs, exactly as the reference does, and no more. <code>gofmt</code> indents with tabs; here they are shown as four spaces.</p>
 <h2 id="the-call-table">The call table</h2>
 <p>A driver tells the core, for each of its device&#39;s calls, where the call&#39;s buffer is and what the call costs: 64 bytes per function. With that the core checks a call before sending it, and for a deferred call, one whose result and charge follow from its arguments, it can work them out itself and send the call later in a batch.</p>
-<pre>const (
-    columns      = 80
-    rows         = 30
+<pre><span class=k>const</span> (
+    columns      = <span class=n>80</span>
+    rows         = <span class=n>30</span>
     cells        = columns * rows
-    cellSize     = 4
-    grays        = 24
-    continuation = 0xffff
+    cellSize     = <span class=n>4</span>
+    grays        = <span class=n>24</span>
+    continuation = <span class=n>0xffff</span>
 )
 
-const (
-    write      = 0
-    command    = 1
-    setCursor  = 2
-    setColours = 4
-    cellsWrite = 7
+<span class=k>const</span> (
+    write      = <span class=n>0</span>
+    command    = <span class=n>1</span>
+    setCursor  = <span class=n>2</span>
+    setColours = <span class=n>4</span>
+    cellsWrite = <span class=n>7</span>
 )
 
-const (
-    clearScreen = 1
-    scrollDown  = 3
-    clearToEnd  = 4
+<span class=k>const</span> (
+    clearScreen = <span class=n>1</span>
+    scrollDown  = <span class=n>3</span>
+    clearToEnd  = <span class=n>4</span>
 )
 
-const (
-    a0, a1, a2   = 0, 1, 2
-    none         = 0xff
-    deferred     = 2
-    buffered     = 4
-    reads        = 1
-    inROM        = 4
-    failed       = 0xfffffffe
-    returnsValue = 1
-    returnsArg   = 2
-    perFour      = 1
+<span class=k>const</span> (
+    a0, a1, a2   = <span class=n>0</span>, <span class=n>1</span>, <span class=n>2</span>
+    none         = <span class=n>0xff</span>
+    deferred     = <span class=n>2</span>
+    buffered     = <span class=n>4</span>
+    reads        = <span class=n>1</span>
+    inROM        = <span class=n>4</span>
+    failed       = <span class=n>0xfffffffe</span>
+    returnsValue = <span class=n>1</span>
+    returnsArg   = <span class=n>2</span>
+    perFour      = <span class=n>1</span>
 )
 
-type entry struct {
-    function, flags, buffer, length byte
-    scale, least, most              uint32
-    access, checked                 byte
-    _                               [2]byte
-    checkedMost                     uint32
-    lengthResult, placeResult       uint32
-    rule, ruleArg                   byte
-    _                               [2]byte
-    value, value2, charge           uint32
-    chargeFlags, chargeArg          byte
-    perByte                         uint16
-    low, high, add                  uint32
+<span class=k>type</span> entry <span class=k>struct</span> {
+    function, flags, buffer, length <span class=t>byte</span>
+    scale, least, most              <span class=t>uint32</span>
+    access, checked                 <span class=t>byte</span>
+    _                               [<span class=n>2</span>]<span class=t>byte</span>
+    checkedMost                     <span class=t>uint32</span>
+    lengthResult, placeResult       <span class=t>uint32</span>
+    rule, ruleArg                   <span class=t>byte</span>
+    _                               [<span class=n>2</span>]<span class=t>byte</span>
+    value, value2, charge           <span class=t>uint32</span>
+    chargeFlags, chargeArg          <span class=t>byte</span>
+    perByte                         <span class=t>uint16</span>
+    low, high, add                  <span class=t>uint32</span>
 }
 
-var table = []entry{
+<span class=k>var</span> table = []entry{
     {function: write, flags: deferred | buffered, buffer: a0,
-        length: a1, scale: 1, most: 4096,
+        length: a1, scale: <span class=n>1</span>, most: <span class=n>4096</span>,
         access: reads | inROM, checked: none,
         lengthResult: failed, placeResult: failed,
         rule: returnsArg, ruleArg: a1, chargeArg: none,
-        perByte: 2},
+        perByte: <span class=n>2</span>},
     {function: command, flags: deferred, length: none,
         checked: none, rule: returnsValue, chargeArg: a0,
-        low: clearScreen, high: scrollDown, add: 150},
+        low: clearScreen, high: scrollDown, add: <span class=n>150</span>},
     {function: setCursor, flags: deferred, length: none,
         checked: none, rule: returnsValue, chargeArg: none},
     {function: setColours, flags: deferred, length: none,
@@ -82,7 +82,7 @@ var table = []entry{
     {function: cellsWrite, flags: deferred | buffered,
         buffer: a1, length: a2, scale: cellSize,
         most: cells * cellSize, access: reads | inROM,
-        checked: a0, checkedMost: cells - 1,
+        checked: a0, checkedMost: cells - <span class=n>1</span>,
         lengthResult: failed, placeResult: failed,
         rule: returnsArg, ruleArg: a2, chargeFlags: perFour,
         chargeArg: none},
@@ -102,224 +102,224 @@ var table = []entry{
 </tbody></table></div>
 <p><code>none</code> (FFh) is &quot;no argument&quot;, and <code>failed</code> (FFFF_FFFEh) the result of a bad buffer.</p>
 <h2 id="the-terminal">The terminal</h2>
-<pre>type terminal struct {
-    grid                          [cells * cellSize]byte
-    col, row, fg, bg, shown, wrap byte
-    palette                       []byte
-    partial                       [4]byte
+<pre><span class=k>type</span> terminal <span class=k>struct</span> {
+    grid                          [cells * cellSize]<span class=t>byte</span>
+    col, row, fg, bg, shown, wrap <span class=t>byte</span>
+    palette                       []<span class=t>byte</span>
+    partial                       [<span class=n>4</span>]<span class=t>byte</span>
 }
 
-func newTerminal() *terminal {
-    t := &amp;terminal{fg: 7, shown: 1}
+<span class=k>func</span> newTerminal() *terminal {
+    t := &amp;terminal{fg: <span class=n>7</span>, shown: <span class=n>1</span>}
     t.palette = slices.Clone(xterm)
-    for cell := range cells {
-        t.put(cell, &#39; &#39;)
+    <span class=k>for</span> cell := <span class=k>range</span> cells {
+        t.put(cell, <span class=s>&#39; &#39;</span>)
     }
-    levels := []byte{0, 95, 135, 175, 215, 255}
-    for _, r := range levels {
-        for _, g := range levels {
-            for _, b := range levels {
+    levels := []<span class=t>byte</span>{<span class=n>0</span>, <span class=n>95</span>, <span class=n>135</span>, <span class=n>175</span>, <span class=n>215</span>, <span class=n>255</span>}
+    <span class=k>for</span> _, r := <span class=k>range</span> levels {
+        <span class=k>for</span> _, g := <span class=k>range</span> levels {
+            <span class=k>for</span> _, b := <span class=k>range</span> levels {
                 t.palette = append(t.palette, r, g, b)
             }
         }
     }
-    for i := range byte(grays) {
-        gray := 8 + 10*i
+    <span class=k>for</span> i := <span class=k>range</span> <span class=t>byte</span>(grays) {
+        gray := <span class=n>8</span> + <span class=n>10</span>*i
         t.palette = append(t.palette, gray, gray, gray)
     }
-    return t
+    <span class=k>return</span> t
 }</pre>
 <p>The grid is <code>cells</code> cells of <code>cellSize</code> bytes: the character (u16), then its foreground and background colours. At reset every cell is a space in colour 7 on 0. The palette is xterm&#39;s 256 colours, 3 bytes each: the 16 of xterm&#39;s own (the bytes <code>xterm</code>, in the file), a 6 × 6 × 6 cube of <code>levels</code>, and <code>grays</code> grays from 8 in steps of 10.</p>
-<pre>func (t *terminal) put(cell int, code uint16) {
-    bytes := append(le.AppendUint16(nil, code), t.fg, t.bg)
+<pre><span class=k>func</span> (t *terminal) put(cell <span class=t>int</span>, code <span class=t>uint16</span>) {
+    bytes := append(le.AppendUint16(<span class=k>nil</span>, code), t.fg, t.bg)
     copy(t.grid[cellSize*cell:], bytes)
 }</pre>
-<pre>func (t *terminal) write(text []byte) {
-    for _, r := range string(text) {
-        if r == &#39;\n&#39; {
+<pre><span class=k>func</span> (t *terminal) write(text []<span class=t>byte</span>) {
+    <span class=k>for</span> _, r := <span class=k>range</span> <span class=t>string</span>(text) {
+        <span class=k>if</span> r == <span class=s>&#39;\n&#39;</span> {
             t.newline()
         }
-        if r &lt; &#39; &#39; || r == &#39;\x7f&#39; {
-            continue
+        <span class=k>if</span> r &lt; <span class=s>&#39; &#39;</span> || r == <span class=s>&#39;\x7f&#39;</span> {
+            <span class=k>continue</span>
         }
-        if t.wrap == 1 {
+        <span class=k>if</span> t.wrap == <span class=n>1</span> {
             t.newline()
         }
-        code := uint16(r)
-        if r &gt;= continuation {
+        code := <span class=t>uint16</span>(r)
+        <span class=k>if</span> r &gt;= continuation {
             code = utf8.RuneError
         }
-        t.put(int(t.row)*columns+int(t.col), code)
-        if t.col == columns-1 {
-            t.wrap = 1
-        } else {
+        t.put(<span class=t>int</span>(t.row)*columns+<span class=t>int</span>(t.col), code)
+        <span class=k>if</span> t.col == columns-<span class=n>1</span> {
+            t.wrap = <span class=n>1</span>
+        } <span class=k>else</span> {
             t.col++
         }
     }
 }</pre>
 <p><code>write</code> decodes its bytes as UTF-8 with Go&#39;s own decoder (<code>range</code> over a string), prints each character at the cursor and moves on, wrapping at the end of a row and scrolling at the bottom (<code>newline</code>). A cell holds a character up to FFFFh, which is the <code>continuation</code> of a wide character, so that and anything above it is written as <code>utf8.RuneError</code>.</p>
-<pre>func (t *terminal) call(body []byte) (result, charge uint32) {
+<pre><span class=k>func</span> (t *terminal) call(body []<span class=t>byte</span>) (result, charge <span class=t>uint32</span>) {
     args := body[argsAt:]
-    a := func(i int) uint32 { return le.Uint32(args[4*i:]) }
+    a := <span class=k>func</span>(i <span class=t>int</span>) <span class=t>uint32</span> { <span class=k>return</span> le.Uint32(args[<span class=n>4</span>*i:]) }
     data := body[dataAt:][:le.Uint32(body[sizeAt:])]
-    switch body[functionAt] {
-    case write:
+    <span class=k>switch</span> body[functionAt] {
+    <span class=k>case</span> write:
         t.write(data)
-        return a(1), 2 * a(1)
-    case command:
-        if a(0) == clearToEnd {
-            for col := int(t.col); col &lt; columns; col++ {
-                t.put(int(t.row)*columns+col, &#39; &#39;)
+        <span class=k>return</span> a(<span class=n>1</span>), <span class=n>2</span> * a(<span class=n>1</span>)
+    <span class=k>case</span> command:
+        <span class=k>if</span> a(<span class=n>0</span>) == clearToEnd {
+            <span class=k>for</span> col := <span class=t>int</span>(t.col); col &lt; columns; col++ {
+                t.put(<span class=t>int</span>(t.row)*columns+col, <span class=s>&#39; &#39;</span>)
             }
         }
-        if a(0) &gt;= clearScreen &amp;&amp; a(0) &lt;= scrollDown {
-            return 0, 150
+        <span class=k>if</span> a(<span class=n>0</span>) &gt;= clearScreen &amp;&amp; a(<span class=n>0</span>) &lt;= scrollDown {
+            <span class=k>return</span> <span class=n>0</span>, <span class=n>150</span>
         }
-    case setCursor:
-        t.col = byte(min(a(0), columns-1))
-        t.row = byte(min(a(1), rows-1))
-        t.wrap = 0
-    case setColours:
-        if a(0) &lt;= math.MaxUint8 {
-            t.fg = byte(a(0))
+    <span class=k>case</span> setCursor:
+        t.col = <span class=t>byte</span>(min(a(<span class=n>0</span>), columns-<span class=n>1</span>))
+        t.row = <span class=t>byte</span>(min(a(<span class=n>1</span>), rows-<span class=n>1</span>))
+        t.wrap = <span class=n>0</span>
+    <span class=k>case</span> setColours:
+        <span class=k>if</span> a(<span class=n>0</span>) &lt;= math.MaxUint8 {
+            t.fg = <span class=t>byte</span>(a(<span class=n>0</span>))
         }
-        if a(1) &lt;= math.MaxUint8 {
-            t.bg = byte(a(1))
+        <span class=k>if</span> a(<span class=n>1</span>) &lt;= math.MaxUint8 {
+            t.bg = <span class=t>byte</span>(a(<span class=n>1</span>))
         }
-    case cellsWrite:
-        for i, b := range data {
-            at := cellSize*int(a(0)) + i
+    <span class=k>case</span> cellsWrite:
+        <span class=k>for</span> i, b := <span class=k>range</span> data {
+            at := cellSize*<span class=t>int</span>(a(<span class=n>0</span>)) + i
             t.grid[at%len(t.grid)] = b
         }
-        return a(2), uint32(len(data)+3) / 4
+        <span class=k>return</span> a(<span class=n>2</span>), <span class=t>uint32</span>(len(data)+<span class=n>3</span>) / <span class=n>4</span>
     }
-    return 0, 0
+    <span class=k>return</span> <span class=n>0</span>, <span class=n>0</span>
 }
 
-func (t *terminal) state() []byte {
+<span class=k>func</span> (t *terminal) state() []<span class=t>byte</span> {
     state := append(t.grid[:], t.col, t.row, t.fg, t.bg)
     state = append(state, t.shown, t.wrap)
     state = append(state, t.palette...)
-    return append(state, t.partial[:]...)
+    <span class=k>return</span> append(state, t.partial[:]...)
 }</pre>
 <p><code>call</code> carries a call out and returns its result and the charge on top of the base one, which must be what the table&#39;s rules say. <code>state</code> is the device&#39;s part of the machine&#39;s state, the bytes the state hash covers: the cells, the cursor, the colours, cursor shown, a pending wrap, the palette, and <code>partial</code>, a UTF-8 character cut between two writes (a count and 3 bytes; none here).</p>
 <h2 id="the-messages">The messages</h2>
-<pre>const (
-    HELLO    = 0x01
-    OPEN     = 0x03
-    CLOSE    = 0x04
-    CALL     = 0x10
-    BATCH    = 0x11
-    BEGIN    = 0x30
-    END      = 0x31
-    STATE    = 0x40
-    SHUTDOWN = 0x60
-    ERROR    = 0x7f
-    REPLY    = 0x80
+<pre><span class=k>const</span> (
+    HELLO    = <span class=n>0x01</span>
+    OPEN     = <span class=n>0x03</span>
+    CLOSE    = <span class=n>0x04</span>
+    CALL     = <span class=n>0x10</span>
+    BATCH    = <span class=n>0x11</span>
+    BEGIN    = <span class=n>0x30</span>
+    END      = <span class=n>0x31</span>
+    STATE    = <span class=n>0x40</span>
+    SHUTDOWN = <span class=n>0x60</span>
+    ERROR    = <span class=n>0x7f</span>
+    REPLY    = <span class=n>0x80</span>
 )
 
-const (
-    addressSize   = 8
-    protocol      = 1
-    onSocket      = 0
-    took          = 1
-    terminalSlot  = 2
-    deviceVersion = 0
-    slotsAt       = 8
-    functionAt    = 1
-    argsAt        = 4
-    sizeAt        = 36
-    dataAt        = 40
-    batchCountAt  = 4
-    batchCallsAt  = 8
+<span class=k>const</span> (
+    addressSize   = <span class=n>8</span>
+    protocol      = <span class=n>1</span>
+    onSocket      = <span class=n>0</span>
+    took          = <span class=n>1</span>
+    terminalSlot  = <span class=n>2</span>
+    deviceVersion = <span class=n>0</span>
+    slotsAt       = <span class=n>8</span>
+    functionAt    = <span class=n>1</span>
+    argsAt        = <span class=n>4</span>
+    sizeAt        = <span class=n>36</span>
+    dataAt        = <span class=n>40</span>
+    batchCountAt  = <span class=n>4</span>
+    batchCallsAt  = <span class=n>8</span>
 )
 
-func words(b []byte, values ...uint32) []byte {
-    for _, v := range values {
+<span class=k>func</span> words(b []<span class=t>byte</span>, values ...<span class=t>uint32</span>) []<span class=t>byte</span> {
+    <span class=k>for</span> _, v := <span class=k>range</span> values {
         b = le.AppendUint32(b, v)
     }
-    return b
+    <span class=k>return</span> b
 }
 
-func hello(body []byte) []byte {
-    name := &quot;terminal (Go example)&quot;
-    reply := []byte{HELLO | REPLY, protocol, onSocket, 0}
-    reply = le.AppendUint16(reply, uint16(len(name)))
+<span class=k>func</span> hello(body []<span class=t>byte</span>) []<span class=t>byte</span> {
+    name := <span class=s>&quot;terminal (Go example)&quot;</span>
+    reply := []<span class=t>byte</span>{HELLO | REPLY, protocol, onSocket, <span class=n>0</span>}
+    reply = le.AppendUint16(reply, <span class=t>uint16</span>(len(name)))
     reply = append(reply, name...)
-    slots := body[slotsAt+1:][:body[slotsAt]]
-    reply = append(reply, 0, 0, 0, 0, byte(len(slots)))
-    for _, slot := range slots {
-        var entries []entry
-        if slot == terminalSlot {
+    slots := body[slotsAt+<span class=n>1</span>:][:body[slotsAt]]
+    reply = append(reply, <span class=n>0</span>, <span class=n>0</span>, <span class=n>0</span>, <span class=n>0</span>, <span class=t>byte</span>(len(slots)))
+    <span class=k>for</span> _, slot := <span class=k>range</span> slots {
+        <span class=k>var</span> entries []entry
+        <span class=k>if</span> slot == terminalSlot {
             entries = table
         }
-        count := byte(len(entries))
-        reply = append(reply, slot, deviceVersion, 0, count)
+        count := <span class=t>byte</span>(len(entries))
+        reply = append(reply, slot, deviceVersion, <span class=n>0</span>, count)
         reply, _ = binary.Append(reply, le, entries)
     }
-    return append(reply, 0, 0, 0)
+    <span class=k>return</span> append(reply, <span class=n>0</span>, <span class=n>0</span>, <span class=n>0</span>)
 }
 
-func main() {
-    conn, err := net.Dial(&quot;unix&quot;, os.Getenv(&quot;TERSE_BUS_SOCKET&quot;))
-    if err != nil {
+<span class=k>func</span> main() {
+    conn, err := net.Dial(<span class=s>&quot;unix&quot;</span>, os.Getenv(<span class=s>&quot;TERSE_BUS_SOCKET&quot;</span>))
+    <span class=k>if</span> err != <span class=k>nil</span> {
         panic(err)
     }
-    send := func(address, body []byte) {
-        message := words(nil, uint32(addressSize+len(body)))
+    send := <span class=k>func</span>(address, body []<span class=t>byte</span>) {
+        message := words(<span class=k>nil</span>, <span class=t>uint32</span>(addressSize+len(body)))
         conn.Write(append(append(message, address...), body...))
     }
-    machines := map[uint32]*terminal{}
-    for {
-        var size [4]byte
-        if _, err := io.ReadFull(conn, size[:]); err != nil {
-            return
+    machines := <span class=k>map</span>[<span class=t>uint32</span>]*terminal{}
+    <span class=k>for</span> {
+        <span class=k>var</span> size [<span class=n>4</span>]<span class=t>byte</span>
+        <span class=k>if</span> _, err := io.ReadFull(conn, size[:]); err != <span class=k>nil</span> {
+            <span class=k>return</span>
         }
-        message := make([]byte, le.Uint32(size[:]))
-        if _, err := io.ReadFull(conn, message); err != nil {
-            return
+        message := make([]<span class=t>byte</span>, le.Uint32(size[:]))
+        <span class=k>if</span> _, err := io.ReadFull(conn, message); err != <span class=k>nil</span> {
+            <span class=k>return</span>
         }
         address := message[:addressSize]
         body := message[addressSize:]
         instance := le.Uint32(address)
         t := machines[instance]
-        switch body[0] {
-        case HELLO:
+        <span class=k>switch</span> body[<span class=n>0</span>] {
+        <span class=k>case</span> HELLO:
             send(address, hello(body))
-        case OPEN:
+        <span class=k>case</span> OPEN:
             machines[instance] = newTerminal()
-            reply := []byte{OPEN | REPLY, took, 0, 0, 0, 0}
+            reply := []<span class=t>byte</span>{OPEN | REPLY, took, <span class=n>0</span>, <span class=n>0</span>, <span class=n>0</span>, <span class=n>0</span>}
             send(address, reply)
-        case CLOSE:
+        <span class=k>case</span> CLOSE:
             delete(machines, instance)
-        case CALL:
+        <span class=k>case</span> CALL:
             result, charge := t.call(body)
-            reply := []byte{CALL | REPLY, 0, 0, 0}
-            send(address, words(reply, result, 0, charge, 0))
-        case BATCH:
+            reply := []<span class=t>byte</span>{CALL | REPLY, <span class=n>0</span>, <span class=n>0</span>, <span class=n>0</span>}
+            send(address, words(reply, result, <span class=n>0</span>, charge, <span class=n>0</span>))
+        <span class=k>case</span> BATCH:
             calls := body[batchCallsAt:]
-            for range le.Uint32(body[batchCountAt:]) {
+            <span class=k>for</span> <span class=k>range</span> le.Uint32(body[batchCountAt:]) {
                 size := le.Uint32(calls)
-                call := calls[4:][:size]
+                call := calls[<span class=n>4</span>:][:size]
                 instance := le.Uint32(call)
                 machines[instance].call(call[addressSize:])
-                calls = calls[4+size:]
+                calls = calls[<span class=n>4</span>+size:]
             }
-        case BEGIN:
-            reply := []byte{BEGIN | REPLY, 0, 0, 0}
-            send(address, words(reply, 0, 0, 0, 0))
-        case END:
-        case STATE:
+        <span class=k>case</span> BEGIN:
+            reply := []<span class=t>byte</span>{BEGIN | REPLY, <span class=n>0</span>, <span class=n>0</span>, <span class=n>0</span>}
+            send(address, words(reply, <span class=n>0</span>, <span class=n>0</span>, <span class=n>0</span>, <span class=n>0</span>))
+        <span class=k>case</span> END:
+        <span class=k>case</span> STATE:
             state := t.state()
-            reply := []byte{STATE | REPLY, 0, 0, 0}
-            reply = words(reply, uint32(len(state)))
+            reply := []<span class=t>byte</span>{STATE | REPLY, <span class=n>0</span>, <span class=n>0</span>, <span class=n>0</span>}
+            reply = words(reply, <span class=t>uint32</span>(len(state)))
             send(address, append(reply, state...))
-        case SHUTDOWN:
-            return
-        default:
-            reply := append([]byte{ERROR}, &quot;not handled&quot;...)
+        <span class=k>case</span> SHUTDOWN:
+            <span class=k>return</span>
+        <span class=k>default</span>:
+            reply := append([]<span class=t>byte</span>{ERROR}, <span class=s>&quot;not handled&quot;</span>...)
             send(address, reply)
-            return
+            <span class=k>return</span>
         }
     }
 }</pre>
@@ -339,14 +339,14 @@ func main() {
 <p>HELLO answers for the slots asked: 2 with its table, 10 (full text) with none. OPEN makes a machine&#39;s terminal, CLOSE drops it. BATCH holds deferred calls, carried out in order with no replies. SHUTDOWN, or the socket closed, ends the driver; anything else gets an ERROR, and the driver exits.</p>
 <h2 id="run-it">Run it</h2>
 <p>Build it, then run <code>hello</code> under the reference core with it, from the top folder of the sources (<code>cargo build --release -p terse-bus -p terse-devices</code> builds the core and the reference drivers):</p>
-<pre>go build -C examples/device/go
-target/release/terse-bus programs/hello/hello.terse \
+<pre class="sh"><span class=k>go</span> build -C examples/device/go
+<span class=k>target/release/terse-bus</span> programs/hello/hello.terse \
     --frames 30 --hash \
-    --driver 2=$PWD/examples/device/go/terminal</pre>
+    --driver 2=<span class=m>$PWD</span>/examples/device/go/terminal</pre>
 <pre>819432152b38626f8fc54b43f50d5d4c501dc99e6904315b61dc78b796c611e2</pre>
 <p><code>--driver 2=</code> makes the program the driver of slot 2. Without it the reference terminal serves, and the hash is the same; with <code>--hash-every 1</code> instead of <code>--hash</code>, so are all 30. <code>--dump</code> prints the screen.</p>
 <p>The hosts of &quot;Make a host&quot; take it too, the Rust one as well as the Go one: this is a Rust core with a Go driver, from <code>examples/host/rust</code> after <code>cargo build --release</code>:</p>
-<pre>target/release/step4 ../../../programs/hello/hello.terse 30 \
+<pre class="sh"><span class=k>target/release/step4</span> ../../../programs/hello/hello.terse 30 \
     ../../device/go/terminal</pre>
 <pre>819432152b38626f8fc54b43f50d5d4c501dc99e6904315b61dc78b796c611e2</pre>
 <h2 id="what-is-missing">What is missing</h2>

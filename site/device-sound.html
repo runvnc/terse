@@ -76,29 +76,29 @@
 <h2 id="state">State</h2>
 <p>The device&#39;s state is every voice&#39;s registers (38 bytes each, its last two outputs among them), the 32 wavetables and the four sample slots with their lengths and loop starts, held after the 3D display&#39;s section, and only for a machine that has device 6. The samples a frame rendered are not state: they follow from it. The article State, replay and conformance gives the layout&#39;s place; <code>programs/tune/expected-audio.txt</code> holds the hashes of the demonstration&#39;s samples.</p>
 <h2 id="example">Example</h2>
-<pre>#include &quot;terse.h&quot;
+<pre><span class=m>#include</span> <span class=s>&quot;terse.h&quot;</span>
 
-static uint8_t list[64];
-static const int8_t square[64] = { /* 32 x 90, 32 x -90 */ };
+<span class=k>static</span> <span class=t>uint8_t</span> list[<span class=n>64</span>];
+<span class=k>static</span> <span class=k>const</span> <span class=t>int8_t</span> square[<span class=n>64</span>] = { <span class=c>/* 32 x 90, 32 x -90 */</span> };
 
-int main(void)
+<span class=t>int</span> main(<span class=t>void</span>)
 {
-    snd_load_wave(0, square);
-    snd_begin(list, sizeof list);
-    snd_voice(0);
-    snd_wave(0);
-    snd_envelope(0xFFFF, 200, 100, 800);
-    snd_frequency(SND_HZ(440));
+    snd_load_wave(<span class=n>0</span>, square);
+    snd_begin(list, <span class=k>sizeof</span> list);
+    snd_voice(<span class=n>0</span>);
+    snd_wave(<span class=n>0</span>);
+    snd_envelope(<span class=n>0xFFFF</span>, <span class=n>200</span>, <span class=n>100</span>, <span class=n>800</span>);
+    snd_frequency(SND_HZ(<span class=n>440</span>));
     snd_key_on();
-    snd_submit_list(list);          /* 18 bytes: 4 + 36 units */
-    for (int i = 0; i &lt; 30; i++)
+    snd_submit_list(list);          <span class=c>/* 18 bytes: 4 + 36 units */</span>
+    <span class=k>for</span> (<span class=t>int</span> i = <span class=n>0</span>; i &lt; <span class=n>30</span>; i++)
         terse_wait_frame();
-    snd_begin(list, sizeof list);
-    snd_key_off();                  /* voice 0 again */
+    snd_begin(list, <span class=k>sizeof</span> list);
+    snd_key_off();                  <span class=c>/* voice 0 again */</span>
     snd_submit_list(list);
-    for (int i = 0; i &lt; 60; i++)
+    <span class=k>for</span> (<span class=t>int</span> i = <span class=n>0</span>; i &lt; <span class=n>60</span>; i++)
         terse_wait_frame();
-    return 0;
+    <span class=k>return</span> <span class=n>0</span>;
 }</pre>
 <p><code>programs/tune</code> plays a piece through every kind of voice. <code>terse run programs/tune/tune.terse --audio-out tune.wav</code> writes it to a file; <code>terse-host</code> plays it when built with the <code>audio</code> feature. Its charges are in <a href="charges.html">charges</a>.</p>
 </article>

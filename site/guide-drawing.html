@@ -14,28 +14,28 @@
 <p>This page adds what most programs need besides text: drawing, and keys that change what is drawn. The program draws one line; Left and Right swing its top end, and Esc quits. In C here, and in Rust on <a href="guide-drawing-rust.html">the next page</a>.</p>
 <h2 id="the-program">The program</h2>
 <p><code>line.c</code>:</p>
-<pre>#include &quot;terse.h&quot;
+<pre><span class=m>#include</span> <span class=s>&quot;terse.h&quot;</span>
 
-static uint8_t list[64];
+<span class=k>static</span> <span class=t>uint8_t</span> list[<span class=n>64</span>];
 
-int main(void)
+<span class=t>int</span> main(<span class=t>void</span>)
 {
-    int x = 320;
+    <span class=t>int</span> x = <span class=n>320</span>;
     terse_event e;
-    for (;;) {
-        while (terse_event_pop(&amp;e)) {
-            if (e.type != EV_KEY_DOWN)
-                continue;
-            if (e.a == KEY_LEFT)
-                x -= 10;
-            if (e.a == KEY_RIGHT)
-                x += 10;
-            if (e.a == KEY_ESCAPE)
-                return 0;
+    <span class=k>for</span> (;;) {
+        <span class=k>while</span> (terse_event_pop(&amp;e)) {
+            <span class=k>if</span> (e.type != EV_KEY_DOWN)
+                <span class=k>continue</span>;
+            <span class=k>if</span> (e.a == KEY_LEFT)
+                x -= <span class=n>10</span>;
+            <span class=k>if</span> (e.a == KEY_RIGHT)
+                x += <span class=n>10</span>;
+            <span class=k>if</span> (e.a == KEY_ESCAPE)
+                <span class=k>return</span> <span class=n>0</span>;
         }
-        vec_begin(list, sizeof list);
-        vec_move(320 * VEC_UNIT, 400 * VEC_UNIT);
-        vec_line(x * VEC_UNIT, 80 * VEC_UNIT);
+        vec_begin(list, <span class=k>sizeof</span> list);
+        vec_move(<span class=n>320</span> * VEC_UNIT, <span class=n>400</span> * VEC_UNIT);
+        vec_line(x * VEC_UNIT, <span class=n>80</span> * VEC_UNIT);
         vec_end();
         vec_submit_list(list);
         terse_wait_frame();
@@ -49,10 +49,10 @@ int main(void)
 <p><code>terse_event_pop</code> takes the next event, as in hello. A key down event carries the key in <code>e.a</code>, and <code>terse.h</code> names the common ones: <code>KEY_LEFT</code>, <code>KEY_ENTER</code>, <code>KEY_ESCAPE</code> and so on. Typed text comes as separate text events, one per character, so a program that wants words reads those instead.</p>
 <h2 id="test-it-without-a-window">Test it without a window</h2>
 <p>Save two presses of Left as <code>keys.txt</code>:</p>
-<pre>5 press left
-6 press left</pre>
+<pre><span class=n>5</span> <span class=k>press</span> left
+<span class=n>6</span> <span class=k>press</span> left</pre>
 <p>and run</p>
-<pre>terse run line.terse --frames 10 --events keys.txt \
+<pre class="sh"><span class=k>terse</span> run line.terse --frames 10 --events keys.txt \
     --dump --dump-vectors</pre>
 <p>After the text grid (empty here) it prints the display list as the host draws it, one shape per line:</p>
 <pre>-- vectors: 11 list bytes --

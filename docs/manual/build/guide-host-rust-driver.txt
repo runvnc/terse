@@ -4,7 +4,7 @@ Text on a Terse32 screen comes from device 2, the terminal: 80 by 30 character c
 
 The reference drivers are in the downloads' `bus` folder, for Linux, macOS and Windows. Or build them from the top folder of the sources:
 
-```
+```sh
 cargo build --release -p terse-devices
 ```
 
@@ -330,14 +330,14 @@ fn screen(grid: &[u8]) -> String {
 
 From `examples/host/rust`, after `cargo build --release`:
 
-```
+```sh
 target/release/step3 ../../../programs/hello/hello.terse 30 \
     ../../../target/release/terse-dev-terminal
 ```
 
 prints `hello`'s screen after 30 frames, 30 lines, which begins
 
-```
+```text
  Tersenet · hello
 
   héllo, wörld — привет, мир
@@ -346,12 +346,12 @@ prints `hello`'s screen after 30 frames, 30 lines, which begins
 
 and is the reference's exactly: from the top folder, `terse run programs/hello/hello.terse --frames 30 --dump` prints the same 30 lines.
 
-The driver can be any program that speaks the bus. [Make a device in Rust](terse:66e4cb92b7c491b3213dfd8941bcb1503d09c832c9e8d822bcc287dbaa230309) writes a terminal of 347 lines that is enough for `hello`; give its path instead of the reference's. So can a driver in another language: the Go one of "Make a device in Go" works here too.
+The driver can be any program that speaks the bus. [Make a device in Rust](terse:75b038ad3f454ca794130cff1a60bec49634fee586488d8f635282e8570500b7) writes a terminal of 347 lines that is enough for `hello`; give its path instead of the reference's. So can a driver in another language: the Go one of "Make a device in Go" works here too.
 
 ## What you have now
 
-A core that shows `hello` through a driver: `bus.rs`, 295 lines, and `bin/step3.rs`, 60. What it leaves out: input events and writes from drivers (the terminal has none), more than one driver, READ (a driver asking for guest memory; the content driver does), sending deferred calls in batches (only faster), and timeouts. Next: [Make a host in Rust, step 4: prove it exact](terse:4239f7a6b8489dafcbcf0d73c1c446530c48fea0be80ea7f01da77d72462c858).
+A core that shows `hello` through a driver: `bus.rs`, 295 lines, and `bin/step3.rs`, 60. What it leaves out: input events and writes from drivers (the terminal has none), more than one driver, READ (a driver asking for guest memory; the content driver does), sending deferred calls in batches (only faster), and timeouts. Next: [Make a host in Rust, step 4: prove it exact](terse:9d9c9c5715ed9ecf2a5e99f4a7eb3ba154a5072dbd54b310fe2d1e4d5419f58f).
 
 - The same step in Go: "Make a host in Go, step 3: a driver shows hello", the page before this one.
 - Full implementations: `native/core-c/bus.c` (every reference driver, batching, 663 lines of C) and `crates/terse-bus`.
-- The rules: DEVICES.md sections 1 (the messages), 2 and 3 (starting a driver, the socket), 5 (the call table) and 12 (a minimal core); [The terminal (device 2)](terse:2320c61ee19368dc03275f54529d1e0a6d5886d3fc4654b275bfc321cb23db09).
+- The rules: DEVICES.md sections 1 (the messages), 2 and 3 (starting a driver, the socket), 5 (the call table) and 12 (a minimal core); [The terminal (device 2)](terse:efa4fedc95f0b89f2003f8056d57ea8339ecf479eec1d9af97234ae8e6f6bfc7).

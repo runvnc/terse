@@ -2,7 +2,7 @@
 
 An article is a plain text file. Write it in any text editor and save it as `hello.txt`:
 
-```
+```article
 # Hello, Tersenet
 
 This is my first article. Lines next to each other
@@ -30,15 +30,15 @@ It looks like Markdown, and what the two have in common is written the same way 
 - Tersenet's own: `terse:` links to articles, feeds and programs, and figures: drawings, written as a fence whose opening backquotes are followed by `path` and a size.
 - Read differently: a table needs no `|---|` line (without one it simply has no header), and a line indented four spaces starts a code block even right after a paragraph's line.
 
-So an article that keeps to what the two share shows much the same on GitHub, and a Markdown file mostly reads well in Tersenet, with its emphasis marks showing. [Writing an article](terse:2c34635be0d3910e4131c8f41559778e0e4beea2e3e0e8dd2a5a20f080752eda) shows every rule.
+So an article that keeps to what the two share shows much the same on GitHub, and a Markdown file mostly reads well in Tersenet, with its emphasis marks showing. [Writing an article](terse:50a1ba3a4f8c7ad968942e25597419478e8fd33e6fe39a1696fbee4fcf37fe8c) shows every rule.
 
 ## Publish it
 
-```
+```sh
 terse feed publish hello.txt --title "Hello, Tersenet"
 ```
 
-```
+```text
 seq 2 blob 5d86159d495906bb…ad537da380d
 ```
 
@@ -48,7 +48,7 @@ The article is now entry #2 of your feed (your profile was #1), signed with your
 
 An article can link to another by its blob ID, `terse:` and 64 hex digits (the `blob` that `terse feed publish` printed). Before publishing, `terse feed publish` lists each link of the article and what becomes of it:
 
-```
+```text
 link terse:5d86159d…ad537da380d: held here, uploaded now (taken by 1 of 1 relays); kept: your feed's entry #2 names it, and relays keep it while they keep that entry
 ```
 
@@ -58,17 +58,17 @@ An entry names one article, and a public relay drops an article no entry names a
 
 The timeline shows the feeds you follow, so follow your own:
 
-```
+```sh
 terse feed subscribe $(terse key show)
 ```
 
-```
+```text
 subscribed to 7105227f05be8a2efd…6854b14db7680ef9987e084c
 ```
 
 (That works in bash, zsh, fish and PowerShell; or paste your key after `subscribe`.) The window reads the list of feeds you follow when it starts, so close it, run `terse-host` again and start the reader:
 
-```
+```text
 Timeline
 1 article  ·  1 feed
 Hello, Tersenet
@@ -81,4 +81,4 @@ The heading is the title, so the reader shows it once. A shortcut for trying thi
 
 ## What you have now
 
-A feed with an article in it, and a reader that shows it. Next, the reader itself: [Read articles and follow links](terse:b9de97b929ded8dc0568680a6e1a9b14b777f01842d3fc4fc51dc3113b3dcc39).
+A feed with an article in it, and a reader that shows it. Next, the reader itself: [Read articles and follow links](terse:2a439f452c32e7be73b4a78e51c3747c34ded1b567fd54a8b773c4815d71078b).

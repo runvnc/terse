@@ -1,6 +1,6 @@
 # Draw a line and read a key
 
-This page adds what most programs need besides text: drawing, and keys that change what is drawn. The program draws one line; Left and Right swing its top end, and Esc quits. In C here, and in Rust on [the next page](terse:d0d50f883f27176adce3df4e1aab5624d98007c348681b58947285382c411261).
+This page adds what most programs need besides text: drawing, and keys that change what is drawn. The program draws one line; Left and Right swing its top end, and Esc quits. In C here, and in Rust on [the next page](terse:fbfb5eb6a6cab824eb3cbbb9ab78f46172429fb5ed6cff5d9e5ca686e6bdcb54).
 
 ## The program
 
@@ -52,21 +52,21 @@ The screen is 640 by 480 units, (0, 0) at the top left, and a list's coordinates
 
 Save two presses of Left as `keys.txt`:
 
-```
+```events
 5 press left
 6 press left
 ```
 
 and run
 
-```
+```sh
 terse run line.terse --frames 10 --events keys.txt \
     --dump --dump-vectors
 ```
 
 After the text grid (empty here) it prints the display list as the host draws it, one shape per line:
 
-```
+```text
 -- vectors: 11 list bytes --
 line 5120 6400 4800 1280 w 16 c ffffffff
 ```
@@ -75,6 +75,6 @@ A line from (320, 400) to (300, 80) in screen units, written in sixteenths, one 
 
 ## What you have now
 
-A program that draws and reacts to keys: the shape of most games and tools. It is `examples/program/c/line.c` in the Tersenet sources. Next, [the same in Rust](terse:d0d50f883f27176adce3df4e1aab5624d98007c348681b58947285382c411261), or, staying with C, a small game: [Make a small game](terse:cb5d86d539893f2066da8a2934a9a7aed0febe61962b365af70d1b6b59b04785).
+A program that draws and reacts to keys: the shape of most games and tools. It is `examples/program/c/line.c` in the Tersenet sources. Next, [the same in Rust](terse:fbfb5eb6a6cab824eb3cbbb9ab78f46172429fb5ed6cff5d9e5ca686e6bdcb54), or, staying with C, a small game: [Make a small game](terse:86fbf31d7c3405a407c7c30513d3ce1a035869a384cf1461f148cfed5cfefa91).
 
-Every drawing command is in [The 2D vector display](terse:3f558b8d18d32657c7ccf91702ba5af38db49c1442bb8ba108386f38e86960c6), and every event and key in [Events and input](terse:90c9d1da494e9438aeddf510a212a2f0cfd43daccb0b085d942e30639ef9d438).
+Every drawing command is in [The 2D vector display](terse:8e70d93127c04072ee7ef89862fedd55d8ac64a5d7aa244cefeaa6accb3d38bc), and every event and key in [Events and input](terse:90c9d1da494e9438aeddf510a212a2f0cfd43daccb0b085d942e30639ef9d438).

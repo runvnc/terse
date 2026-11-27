@@ -36,88 +36,88 @@ require (
 <p><code>go.sum</code>, beside it, pins their exact contents. Go downloads them the first time you build.</p>
 <h2 id="the-code">The code</h2>
 <p><code>relay/relay.go</code> gets a blob from a relay:</p>
-<pre>package relay
+<pre><span class=k>package</span> relay
 
-import (
-    &quot;encoding/binary&quot;
-    &quot;errors&quot;
+<span class=k>import</span> (
+    <span class=s>&quot;encoding/binary&quot;</span>
+    <span class=s>&quot;errors&quot;</span>
 
-    &quot;github.com/gorilla/websocket&quot;
-    &quot;lukechampine.com/blake3&quot;
+    <span class=s>&quot;github.com/gorilla/websocket&quot;</span>
+    <span class=s>&quot;lukechampine.com/blake3&quot;</span>
 )
 
-type ID = [IDSize]byte
+<span class=k>type</span> ID = [IDSize]<span class=t>byte</span>
 
-const (
-    IDSize         = 32
-    typeGet        = 0x01
-    typeGetReply   = 0x81
-    requestNumber  = 1
-    statusAt       = 5
-    blobAt         = 6
-    statusFound    = 1
-    statusNotFound = 2
+<span class=k>const</span> (
+    IDSize         = <span class=n>32</span>
+    typeGet        = <span class=n>0x01</span>
+    typeGetReply   = <span class=n>0x81</span>
+    requestNumber  = <span class=n>1</span>
+    statusAt       = <span class=n>5</span>
+    blobAt         = <span class=n>6</span>
+    statusFound    = <span class=n>1</span>
+    statusNotFound = <span class=n>2</span>
 )
 
-func Get(conn *websocket.Conn, id ID) ([]byte, error) {
-    request := []byte{typeGet}
+<span class=k>func</span> Get(conn *websocket.Conn, id ID) ([]<span class=t>byte</span>, <span class=t>error</span>) {
+    request := []<span class=t>byte</span>{typeGet}
     le := binary.LittleEndian
     request = le.AppendUint32(request, requestNumber)
     request = append(request, id[:]...)
     err := conn.WriteMessage(websocket.BinaryMessage, request)
-    if err != nil {
-        return nil, err
+    <span class=k>if</span> err != <span class=k>nil</span> {
+        <span class=k>return</span> <span class=k>nil</span>, err
     }
-    for {
+    <span class=k>for</span> {
         _, reply, err := conn.ReadMessage()
-        switch {
-        case err != nil:
-            return nil, err
-        case len(reply) &lt; blobAt || reply[0] != typeGetReply:
-            continue
-        case reply[statusAt] == statusNotFound:
-            return nil, errors.New(&quot;the relay does not have it&quot;)
-        case reply[statusAt] != statusFound:
-            return nil, errors.New(&quot;the relay refused it&quot;)
-        case blake3.Sum256(reply[blobAt:]) != id:
-            return nil, errors.New(&quot;hash check failed&quot;)
+        <span class=k>switch</span> {
+        <span class=k>case</span> err != <span class=k>nil</span>:
+            <span class=k>return</span> <span class=k>nil</span>, err
+        <span class=k>case</span> len(reply) &lt; blobAt || reply[<span class=n>0</span>] != typeGetReply:
+            <span class=k>continue</span>
+        <span class=k>case</span> reply[statusAt] == statusNotFound:
+            <span class=k>return</span> <span class=k>nil</span>, errors.New(<span class=s>&quot;the relay does not have it&quot;</span>)
+        <span class=k>case</span> reply[statusAt] != statusFound:
+            <span class=k>return</span> <span class=k>nil</span>, errors.New(<span class=s>&quot;the relay refused it&quot;</span>)
+        <span class=k>case</span> blake3.Sum256(reply[blobAt:]) != id:
+            <span class=k>return</span> <span class=k>nil</span>, errors.New(<span class=s>&quot;hash check failed&quot;</span>)
         }
-        return reply[blobAt:], nil
+        <span class=k>return</span> reply[blobAt:], <span class=k>nil</span>
     }
 }</pre>
 <p><code>fetch/main.go</code> is the program:</p>
-<pre>// Step 2: fetch an article from a relay by its ID.
-package main
+<pre><span class=c>// Step 2: fetch an article from a relay by its ID.</span>
+<span class=k>package</span> main
 
-import (
-    &quot;bytes&quot;
-    &quot;encoding/hex&quot;
-    &quot;log&quot;
-    &quot;os&quot;
+<span class=k>import</span> (
+    <span class=s>&quot;bytes&quot;</span>
+    <span class=s>&quot;encoding/hex&quot;</span>
+    <span class=s>&quot;log&quot;</span>
+    <span class=s>&quot;os&quot;</span>
 
-    &quot;github.com/gorilla/websocket&quot;
+    <span class=s>&quot;github.com/gorilla/websocket&quot;</span>
 
-    &quot;reader/article&quot;
-    &quot;reader/relay&quot;
+    <span class=s>&quot;reader/article&quot;</span>
+    <span class=s>&quot;reader/relay&quot;</span>
 )
 
-func main() {
-    id, err := hex.DecodeString(os.Args[2])
-    if err != nil || len(id) != relay.IDSize {
-        log.Fatal(&quot;an ID is 64 hexadecimal digits&quot;)
+<span class=k>func</span> main() {
+    id, err := hex.DecodeString(os.Args[<span class=n>2</span>])
+    <span class=k>if</span> err != <span class=k>nil</span> || len(id) != relay.IDSize {
+        log.Fatal(<span class=s>&quot;an ID is 64 hexadecimal digits&quot;</span>)
     }
-    url := os.Args[1]
-    conn, _, err := websocket.DefaultDialer.Dial(url, nil)
-    if err != nil {
+    url := os.Args[<span class=n>1</span>]
+    conn, _, err := websocket.DefaultDialer.Dial(url, <span class=k>nil</span>)
+    <span class=k>if</span> err != <span class=k>nil</span> {
         log.Fatal(err)
     }
     blob, err := relay.Get(conn, relay.ID(id))
-    if err != nil {
+    <span class=k>if</span> err != <span class=k>nil</span> {
         log.Fatal(err)
     }
-    if bytes.HasPrefix(blob, []byte(&quot;TERS&quot;)) ||
-        bytes.HasPrefix(blob, []byte(&quot;TDOC&quot;)) {
-        log.Fatal(&quot;not an article&quot;)
+    <span class=k>if</span> bytes.HasPrefix(blob, []<span class=t>byte</span>(<span class=s>&quot;TERS&quot;</span>)) ||
+        bytes.HasPrefix(blob, []<span class=t>byte</span>(<span class=s>&quot;TDOC&quot;</span>)) {
+        log.Fatal(<span class=s>&quot;not an article&quot;</span>)
     }
     article.Show(blob)
 }</pre>
@@ -145,15 +145,15 @@ func main() {
 <p><code>main</code> reads the relay&#39;s address and the ID, connects, and gets the blob. A blob that starts with <code>TERS</code> is a program and one that starts with <code>TDOC</code> a document: neither is an article, so neither is shown as text. Anything else it shows with <code>article.Show</code>.</p>
 <h2 id="run-it">Run it</h2>
 <p>You need a relay. <code>terse-relay</code> comes with every Tersenet download. In another terminal, start one of your own on port 7979, apart from the one a running Tersenet host keeps on 7878:</p>
-<pre>terse-relay --listen 127.0.0.1:7979 --store try-relay</pre>
+<pre class="sh"><span class=k>terse-relay</span> --listen 127.0.0.1:7979 --store try-relay</pre>
 <p>It prints <code>listening on ws&#58;//127.0.0.1:7979</code> and keeps what it is given in the folder <code>try-relay</code>. Put the article on it, from <code>examples/reader/go</code>:</p>
-<pre>terse put ../hello.txt --relay ws&#58;//127.0.0.1:7979</pre>
+<pre class="sh"><span class=k>terse</span> put ../hello.txt --relay ws&#58;//127.0.0.1:7979</pre>
 <pre>terse: taken by 1 of 1 relays: ws&#58;//127.0.0.1:7979
 e01027372f56996fa53fde7ae45aed656e196ccb4e7d79d3b66a51d9590be3a8</pre>
 <p>The last line is the article&#39;s ID. <code>terse hash</code> prints the same ID without asking a relay, which saves typing it:</p>
-<pre>go run ./fetch ws&#58;//127.0.0.1:7979 $(terse hash ../hello.txt)</pre>
+<pre class="sh"><span class=k>go</span> run ./fetch ws&#58;//127.0.0.1:7979 <span class=m>$(</span><span class=k>terse</span> hash ../hello.txt)</pre>
 <p>It prints the article exactly as step 1 did. Ask for a blob the relay does not hold, such as <code>go.mod</code>, and it says so:</p>
-<pre>go run ./fetch ws&#58;//127.0.0.1:7979 $(terse hash go.mod)</pre>
+<pre class="sh"><span class=k>go</span> run ./fetch ws&#58;//127.0.0.1:7979 <span class=m>$(</span><span class=k>terse</span> hash go.mod)</pre>
 <pre>2026/11/21 23:22:50 the relay does not have it
 exit status 1</pre>
 <p><code>log.Fatal</code> puts the date and time before the message, and <code>go run</code> adds the exit status.</p>

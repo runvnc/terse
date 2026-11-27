@@ -50,20 +50,20 @@ Build it with `terse build line.rs` and run it with `terse-host line.terse`.
 
 With the `keys.txt` of the last page (Left at frames 5 and 6),
 
-```
+```sh
 terse run line.terse --frames 10 --events keys.txt \
     --dump --dump-vectors
 ```
 
 prints the same list as the C program, byte for byte:
 
-```
+```text
 -- vectors: 11 list bytes --
 line 5120 6400 4800 1280 w 16 c ffffffff
 ```
 
 ## What you have now
 
-A Rust program that draws and reacts to keys. It is `examples/program/rust/line.rs` in the Tersenet sources. Next, a small game: [Make a small game](terse:cb5d86d539893f2066da8a2934a9a7aed0febe61962b365af70d1b6b59b04785), in C, then in Rust.
+A Rust program that draws and reacts to keys. It is `examples/program/rust/line.rs` in the Tersenet sources. Next, a small game: [Make a small game](terse:86fbf31d7c3405a407c7c30513d3ce1a035869a384cf1461f148cfed5cfefa91), in C, then in Rust.
 
-`VecList` and the other drawing calls of the runtime are in [Rust programs](terse:3efa338181143c256c79b66dc9493a9c4e6a67372c326eaf7501bdf70415f5ff); every command of the display in [The 2D vector display](terse:3f558b8d18d32657c7ccf91702ba5af38db49c1442bb8ba108386f38e86960c6).
+`VecList` and the other drawing calls of the runtime are in [Rust programs](terse:2f9625c44ad014264f7202aeb100e736789282efcf6e66f7d39432da0b99070c); every command of the display in [The 2D vector display](terse:8e70d93127c04072ee7ef89862fedd55d8ac64a5d7aa244cefeaa6accb3d38bc).

@@ -90,7 +90,7 @@ The device's state is every voice's registers (38 bytes each, its last two outpu
 
 ## Example
 
-```
+```c
 #include "terse.h"
 
 static uint8_t list[64];
