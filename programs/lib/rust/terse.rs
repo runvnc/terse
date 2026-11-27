@@ -604,6 +604,54 @@ pub fn vec_fill(f: u32) -> u8 {
     unsafe { call(CALL_VEC_FILL, f, 0, 0) as u8 }
 }
 
+// ------------------------------------------------- device 7, Page
+
+pub const CALL_PAGE_SUBMIT: u32 = 0x700;
+pub const CALL_PAGE_CLEAR: u32 = 0x701;
+pub const CALL_PAGE_REGION: u32 = 0x702;
+pub const CALL_PAGE_SCROLL: u32 = 0x703;
+pub const CALL_PAGE_BACKGROUND: u32 = 0x704;
+pub const CALL_PAGE_LOCATE: u32 = 0x705;
+pub const CALL_PAGE_LAYER: u32 = 0x706;
+/// A figure's path command: the paths after it are in layer `id` (0-63).
+pub const PATH_LAYER: u8 = 0x08;
+pub const PAGE_LAYERS: u32 = 64;
+pub const PAGE_LAYER_SHOWN: u32 = 1;
+pub const PAGE_LAYER_MIRRORED: u32 = 2;
+pub const PAGE_SCALE_FULL: u32 = 256;
+
+/// Submits a document (SPEC §page.document; 1 to 65,536 bytes): 0 done,
+/// 1 rejected.
+pub fn page_submit(doc: &[u8]) -> u32 {
+    unsafe { call(CALL_PAGE_SUBMIT, doc.as_ptr() as u32, doc.len() as u32, 0) }
+}
+/// No document.
+pub fn page_clear() {
+    unsafe { call(CALL_PAGE_CLEAR, 0, 0, 0) };
+}
+/// The page's rectangle in screen units.
+pub fn page_region(x: u32, y: u32, w: u32, h: u32) {
+    unsafe { call6(CALL_PAGE_REGION, x, y, w, h, 0, 0) };
+}
+/// Units from the top of the document to the top of the rectangle.
+pub fn page_scroll(y: i32) {
+    unsafe { call(CALL_PAGE_SCROLL, y as u32, 0, 0) };
+}
+/// The colour behind the text.
+pub fn page_background(r: u8, g: u8, b: u8, a: u8) {
+    unsafe { call(CALL_PAGE_BACKGROUND, r as u32 | (g as u32) << 8 | (b as u32) << 16 | (a as u32) << 24, 0, 0) };
+}
+/// Asks where anchor `id` is (answered by events 0Dh and 0Eh): 0, or 1.
+pub fn page_locate(id: u32) -> u32 {
+    unsafe { call(CALL_PAGE_LOCATE, id, 0, 0) }
+}
+/// Sets layer `id` (0-63, SPEC §page.layers): `flags` PAGE_LAYER_SHOWN |
+/// PAGE_LAYER_MIRRORED, the offset in sixteenths of a unit, the scale in
+/// 256ths (1-256). No new layout; 4 units. 0, or 1 for an id above 63.
+pub fn page_layer(id: u32, flags: u32, x: i32, y: i32, scale: u32) -> u32 {
+    unsafe { call6(CALL_PAGE_LAYER, id, flags, x as u32, y as u32, scale, 0) }
+}
+
 // ------------------------------------------------- device 8, Machines
 
 /// For a shell (an image that lists device 8, SPEC §machines): starts the

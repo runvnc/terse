@@ -94,7 +94,9 @@
  *     stroke, 1 unit, is scaled too). Its path string becomes absolute
  *     binary commands: H and V as Line, S as Cubic, T as Quadratic, the
  *     relative forms resolved, a Move before the first segment after a Z
- *     or a word (unless it is an M), colours as RGBA with fg the body text
+ *     or a word (unless it is an M), a `layer` word as the end of a path
+ *     (the stroke written again; every layer is drawn, in order),
+ *     colours as RGBA with fg the body text
  *     colour (218, 218, 218), opaque; the document's text colour at the
  *     figure is the body colour, so the initial stroke is fg. A figure
  *     that is malformed, has no closing line, or whose commands do not fit
@@ -728,7 +730,7 @@ static uint8_t hd_len;
  * read and how many are, a word whose operands are awaited, the current
  * point, the subpath's start and the last control point (sixteenths, not
  * scaled), and what the last segment was. */
-enum { FW_NONE, FW_FILL, FW_STROKE, FW_WIDTH };
+enum { FW_NONE, FW_FILL, FW_STROKE, FW_WIDTH, FW_LAYER };
 static uint16_t f_w, f_h, f_scale, f_pos;
 static uint8_t *f_base;
 static uint8_t f_cmd, f_argc, f_n, f_word, f_moved, f_need, f_last;
@@ -738,6 +740,10 @@ static uint8_t f_none;
 static int32_t f_arg[6], f_cx, f_cy, f_sx, f_sy, f_qx, f_qy;
 static int8_t f_ex[6]; /* the sign of what rounding took off each of f_arg */
 static uint8_t f_rgba[4];
+/* The stroke in force as written to the path (colour, scaled width), so a
+ * `layer` word can end the path by writing it again. */
+static uint8_t f_st[4];
+static int32_t f_stw;
 
 /* The scrolled views (article, help). */
 static uint8_t doc_state; /* 0: nothing (of this view's) submitted; 1: a part; 2: all of it */
@@ -3040,6 +3046,9 @@ static void figure_start(void)
     f_cmd = f_n = f_word = f_moved = f_need = f_last = f_none = 0;
     f_cx = f_cy = f_sx = f_sy = 0;
     f_scale = f_w > RECT_W ? f_w : 0;
+    memcpy(f_st, rgb_body, 3);
+    f_st[3] = 255;
+    f_stw = 16;
     if (f_scale) { /* the initial stroke's width scales too */
         memcpy(f_rgba, rgb_body, 3);
         f_rgba[3] = 255;
@@ -3050,7 +3059,9 @@ static void figure_start(void)
 static void stroke(int32_t w)
 {
     int32_t s = scaled(w);
-    path_stroke(f_rgba[0], f_rgba[1], f_rgba[2], f_rgba[3], w && !s ? 1 : s);
+    memcpy(f_st, f_rgba, 4);
+    f_stw = w && !s ? 1 : s;
+    path_stroke(f_st[0], f_st[1], f_st[2], f_st[3], f_stw);
     f_word = FW_NONE;
 }
 
@@ -3079,7 +3090,7 @@ static uint8_t figure_step(void)
             continue;
         }
         if (p == e) {
-            if (f_n || f_none || f_word == FW_FILL || f_word == FW_STROKE)
+            if (f_n || f_none || f_word == FW_FILL || f_word == FW_STROKE || f_word == FW_LAYER)
                 return 2;
             if (f_word == FW_WIDTH)
                 stroke(16);
@@ -3096,6 +3107,26 @@ static uint8_t figure_step(void)
             } else {
                 f_word = FW_WIDTH;
             }
+            continue;
+        }
+        if (f_word == FW_LAYER) {
+            /* `layer <n>`: 1 or 2 digits, 0 to 63, then a separator, a
+             * command letter or the end (ARTICLE.md 6.1). In an article it
+             * only ends the path: the stroke is written again (which
+             * ends it in the page's terms), not the page's Layer command,
+             * so the page's layer limits never cut an article. */
+            for (v = 0, k = 0; p < e && is_digit(*p); p++, k++)
+                v = v * 10 + (*p - '0');
+            if (!k || k > 2 || v > 63)
+                return 2;
+            if (p < e && !is_sep(*p)) {
+                for (k = 0; k < 9 && cmd_letter[k] != (*p & 0xDF); k++)
+                    ;
+                if (k == 9)
+                    return 2;
+            }
+            path_stroke(f_st[0], f_st[1], f_st[2], f_st[3], f_stw);
+            f_word = FW_NONE;
             continue;
         }
         if (is_digit(c) || c == '.' || c == '-' || c == '+') {
@@ -3134,6 +3165,9 @@ static uint8_t figure_step(void)
         } else if (is_sep(p[-1]) && e - p > 6 && !memcmp(p, "stroke", 6) && is_sep(p[6])) {
             p += 6;
             f_word = FW_STROKE;
+        } else if (is_sep(p[-1]) && e - p > 5 && !memcmp(p, "layer", 5) && is_sep(p[5])) {
+            p += 5;
+            f_word = FW_LAYER;
         } else {
             for (k = 0; k < 9 && cmd_letter[k] != (c & 0xDF); k++)
                 ;

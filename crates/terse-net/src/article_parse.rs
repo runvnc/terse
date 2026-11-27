@@ -85,6 +85,9 @@ pub struct Path {
     pub fill: Option<Colour>,
     /// Colour and width in sixteenths; `None`: not stroked.
     pub stroke: Option<(Colour, u32)>,
+    /// The layer of the latest `layer` word before it (ARTICLE.md 6.1),
+    /// `None` before the first. It changes nothing a reader draws.
+    pub layer: Option<u8>,
     pub segs: Vec<Seg>,
 }
 
@@ -780,10 +783,11 @@ fn path_string(s: &[u8]) -> Option<Vec<Path>> {
     let mut last_ctrl: Option<(bool, i64, i64)> = None;
     let mut cmd: Option<u8> = None;
     let mut first = true;
-    let flush = |paths: &mut Vec<Path>, segs: &mut Vec<Seg>, fill: Option<Colour>, stroke: Option<(Colour, u32)>| {
+    let mut layer: Option<u8> = None;
+    let flush = |paths: &mut Vec<Path>, segs: &mut Vec<Seg>, fill: Option<Colour>, stroke: Option<(Colour, u32)>, layer: Option<u8>| {
         let draws = segs.iter().any(|s| !matches!(s, Seg::Move(..)));
         if draws && (fill.is_some() || stroke.is_some()) {
-            paths.push(Path { fill, stroke, segs: std::mem::take(segs) });
+            paths.push(Path { fill, stroke, layer, segs: std::mem::take(segs) });
         }
         segs.clear();
     };
@@ -799,6 +803,32 @@ fn path_string(s: &[u8]) -> Option<Vec<Path>> {
         // Words: at the start of the path string or after a separator (a
         // command letter may follow a number directly; a word may not).
         let after_sep = at == 0 || is_sep(s[at - 1]);
+        if after_sep && s[at..].starts_with(b"layer") {
+            // `layer <n>`: 1 or 2 digits, 0 to 63, then a separator, a
+            // command letter or the end (ARTICLE.md 6.1).
+            at += 5;
+            if at >= s.len() || !is_sep(s[at]) {
+                return None;
+            }
+            while at < s.len() && is_sep(s[at]) {
+                at += 1;
+            }
+            let digits = s[at..].iter().take_while(|b| b.is_ascii_digit()).count();
+            if !(1..=2).contains(&digits) {
+                return None;
+            }
+            let n = s[at..at + digits].iter().fold(0u32, |v, d| v * 10 + (d - b'0') as u32);
+            at += digits;
+            let next_ok = at >= s.len() || is_sep(s[at]) || b"MLHVCSQTZmlhvcsqtz".contains(&s[at]);
+            if n > 63 || !next_ok {
+                return None;
+            }
+            flush(&mut paths, &mut segs, fill, stroke, layer);
+            layer = Some(n as u8);
+            start = None;
+            cmd = None;
+            continue;
+        }
         let word = if !after_sep {
             None
         } else if s[at..].starts_with(b"stroke") {
@@ -820,7 +850,7 @@ fn path_string(s: &[u8]) -> Option<Vec<Path>> {
                 return None;
             }
             let c = colour(s, &mut at)?;
-            flush(&mut paths, &mut segs, fill, stroke);
+            flush(&mut paths, &mut segs, fill, stroke, layer);
             start = None;
             cmd = None;
             if is_stroke {
@@ -969,7 +999,7 @@ fn path_string(s: &[u8]) -> Option<Vec<Path>> {
         last_ctrl = ctrl;
         cmd = Some(op);
     }
-    flush(&mut paths, &mut segs, fill, stroke);
+    flush(&mut paths, &mut segs, fill, stroke, layer);
     Some(paths)
 }
 
@@ -1075,7 +1105,8 @@ pub fn dump_block(out: &mut String, b: &Block) {
             for p in &f.paths {
                 let fill = p.fill.map_or("none".into(), colour_text);
                 let stroke = p.stroke.map_or("none".into(), |(c, w)| format!("{} {w}", colour_text(c)));
-                let _ = writeln!(out, "  path fill {fill} stroke {stroke}");
+                let layer = p.layer.map_or(String::new(), |l| format!(" layer {l}"));
+                let _ = writeln!(out, "  path fill {fill} stroke {stroke}{layer}");
                 for s in &p.segs {
                     let _ = match *s {
                         Seg::Move(x, y) => writeln!(out, "    M {x} {y}"),
@@ -1197,6 +1228,16 @@ mod tests {
         assert!(path_string(b"M0 0 L5 5fill #fff").is_none());
         assert!(path_string(b"M0 0 L5 5Zfill #fff").is_none());
         assert!(path_string(b"M0 0 L5 5Z fill #fff").is_some());
+        // Layers (ARTICLE.md 6.1): they only end a path.
+        let p = path_string(b"M0 0 L1 1 layer 3 L2 2 layer 07M5 5 L6 6 layer 63").unwrap();
+        assert_eq!(p.iter().map(|p| p.layer).collect::<Vec<_>>(), [None, Some(3), Some(7)]);
+        assert_eq!(p[1].segs, [Seg::Move(16, 16), Seg::Line(32, 32)], "the current point is kept");
+        let p = path_string(b"fill #f00 M0 0 C1 1 2 2 3 3 layer 1 S5 5 6 6").unwrap();
+        assert_eq!((p[1].fill, p[1].segs[1]), (Some(Colour::Rgba([255, 0, 0, 255])), Seg::Cubic(64, 64, 80, 80, 96, 96)), "fill and reflection kept");
+        for bad in [&b"M0 0 layer 64"[..], b"M0 0 layer", b"M0 0 layer -1", b"M0 0 layer +1", b"M0 0 layer 1.0", b"M0 0 layer 007", b"M0 0 layer3", b"M0 0 L1 1layer 3", b"M0 0 layer 3#", b"M0 0 layer x"] {
+            assert!(path_string(bad).is_none(), "{}", String::from_utf8_lossy(bad));
+        }
+        assert!(path_string(b"layer 0").unwrap().is_empty());
         assert!(path_string(b"M0 0L5 5L6 6").is_some());
     }
 

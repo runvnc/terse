@@ -81,14 +81,13 @@ pub fn draw_page(q: &PageQuads, px: &mut [u32], w: usize, run: IRect) {
                         }
                     }
                 }
-                Paint::Figure(f) => {
-                    let (qw, qh) = (quad.r.width() as f32, quad.r.height() as f32);
-                    let v = (((y - quad.r.y0) as f32 + 0.5) / qh * f.h as f32) as usize;
-                    let src = &f.data[v.min(f.h as usize - 1) * f.w as usize * 4..][..f.w as usize * 4];
+                Paint::Figure(f, tx) => {
+                    let v = f.row(&quad.r, tx, y);
+                    let src = &f.data[v * f.w as usize * 4..][..f.w as usize * 4];
                     for (i, p) in out.iter_mut().enumerate() {
                         let x = r.x0 + i as i32;
-                        let u = (((x - quad.r.x0) as f32 + 0.5) / qw * f.w as f32) as usize;
-                        let t = &src[u.min(f.w as usize - 1) * 4..][..4];
+                        let u = f.col(&quad.r, tx, x);
+                        let t = &src[u * 4..][..4];
                         if t[3] > 0 {
                             let a = t[3] as f32 / 255.0;
                             let k = 1.0 / a.max(1.0 / 255.0);
@@ -172,14 +171,13 @@ pub fn draw_page_light(q: &PageQuads, px: &mut [u32], w: usize, run: IRect) {
                         add_light(p, [t[0], t[1], t[2]], t[3]);
                     }
                 }
-                Paint::Figure(f) => {
-                    let (qw, qh) = (quad.r.width() as f32, quad.r.height() as f32);
-                    let v = (((y - quad.r.y0) as f32 + 0.5) / qh * f.h as f32) as usize;
-                    let src = &f.data[v.min(f.h as usize - 1) * f.w as usize * 4..][..f.w as usize * 4];
+                Paint::Figure(f, tx) => {
+                    let v = f.row(&quad.r, tx, y);
+                    let src = &f.data[v * f.w as usize * 4..][..f.w as usize * 4];
                     for (i, p) in out.iter_mut().enumerate() {
                         let x = r.x0 + i as i32;
-                        let u = (((x - quad.r.x0) as f32 + 0.5) / qw * f.w as f32) as usize;
-                        let t = &src[u.min(f.w as usize - 1) * 4..][..4];
+                        let u = f.col(&quad.r, tx, x);
+                        let t = &src[u * 4..][..4];
                         if t[3] > 0 {
                             // Premultiplied: the colour is the value over the coverage.
                             let k = 255.0 / t[3] as f32;

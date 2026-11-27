@@ -29,10 +29,18 @@ pub fn figure_id(f: &terse_core::page::Figure) -> u64 {
 /// filled (non-zero) then stroked with round joins and caps. With
 /// `outline` (the phosphor style, fill mode 1) nothing is filled: a path
 /// with a fill but no stroke is stroked one unit wide in its fill colour.
+#[cfg(test)]
 pub fn rasterize(paths: &[FigurePath], size: (u32, u32), scale: f32, outline: bool) -> Option<Pixmap> {
+    rasterize_at(paths, size, scale, (0, 0), outline)
+}
+
+/// As [`rasterize`], the image's top left corner at pixel `origin` of the
+/// figure rasterised whole (a group of a layered figure, SPEC §page.layers,
+/// is rasterised in its own box).
+pub fn rasterize_at(paths: &[FigurePath], size: (u32, u32), scale: f32, origin: (i32, i32), outline: bool) -> Option<Pixmap> {
     let mut pixmap = Pixmap::new(size.0.max(1), size.1.max(1))?;
     let k = scale / 16.0;
-    let t = Transform::from_scale(k, k);
+    let t = Transform::from_row(k, 0.0, 0.0, k, -origin.0 as f32, -origin.1 as f32);
     let paint = |[r, g, b, a]: [u8; 4]| {
         let mut p = Paint::default();
         p.set_color_rgba8(r, g, b, a);
@@ -77,6 +85,8 @@ pub struct Job {
     pub key: FigureKey,
     pub paths: Arc<Vec<FigurePath>>,
     pub scale: f32,
+    /// The image's corner in the pixels of the figure rasterised whole.
+    pub origin: (i32, i32),
 }
 
 /// A finished figure: premultiplied RGBA of the key's size.
@@ -90,7 +100,7 @@ pub struct Done {
 pub fn run(job: &Job) -> Done {
     let start = std::time::Instant::now();
     let (w, h) = job.key.1;
-    let data = rasterize(&job.paths, (w, h), job.scale, job.key.2)
+    let data = rasterize_at(&job.paths, (w, h), job.scale, job.origin, job.key.2)
         .map(Pixmap::take)
         .unwrap_or_else(|| vec![0; (w.max(1) * h.max(1) * 4) as usize]);
     Done { key: job.key, data, ms: start.elapsed().as_secs_f64() * 1000.0 }

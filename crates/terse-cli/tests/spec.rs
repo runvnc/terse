@@ -187,7 +187,7 @@ fn check_table(header: &str, what: &str, expect: usize, owners: &[&str]) {
 
 #[test]
 fn call_tables_equal_the_index() {
-    check_table("| `a7` | Call | Arguments | Result | Class |\n|---|---|---|---|---|\n", "calls", 59, &["SPEC.md", "spec/content.md", "spec/sound.md", "spec/page.md", "spec/machines.md", "spec/vector3d.md"]);
+    check_table("| `a7` | Call | Arguments | Result | Class |\n|---|---|---|---|---|\n", "calls", 60, &["SPEC.md", "spec/content.md", "spec/sound.md", "spec/page.md", "spec/machines.md", "spec/vector3d.md"]);
 }
 
 #[test]

@@ -255,7 +255,7 @@ impl Devices for InProcess {
 
     fn call(&mut self, slot: u8, function: u8, args: [u32; 6], _budget: i64, mem: GuestMem) -> Result<CallOutcome, String> {
         let n = (slot as u32) << 8 | function as u32;
-        let [a0, a1, a2, a3, ..] = args;
+        let [a0, a1, a2, a3, a4, _] = args;
         let (rom, ram) = (mem.rom, mem.ram);
         let mut units = if call::answered(n) { charge::ANSWERED - charge::CALL } else { 0 };
         let mut r1 = None;
@@ -419,6 +419,7 @@ impl Devices for InProcess {
                         0
                     }
                     call::PAGE_LOCATE => page.locate(a0),
+                    call::PAGE_LAYER => page.set_layer(a0, a1, a2, a3, a4),
                     _ => ERR_UNKNOWN,
                 }
             }

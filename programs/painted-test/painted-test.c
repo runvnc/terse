@@ -1,19 +1,22 @@
 /* painted-test: a test of technique for a walk-around graphic adventure
- * (CONCEPT.md). The scene is painted once, as one figure of the page
- * device (scene.paths, compiled by scene.py into scene_data.h and
- * submitted from ROM); the traveller, the boulder and the occluders are
- * the 2D vector display's, rebuilt only when something moves; the
- * terminal's bottom eight rows are the text area: a status line, six
- * lines of replies and a prompt.
+ * (CONCEPT.md). The whole picture is the page device's: the scene, painted
+ * once in two figures (scene.paths, compiled by scene.py into
+ * scene_data.h and submitted from ROM), holds in layers (spec/page.md
+ * §page.layers) the traveller's poses, the open door and copies of what
+ * stands in front of him; the program only shows, hides, moves and scales
+ * layers, and never submits the document again. The terminal's bottom
+ * eight rows are the text area: a status line, six lines of replies and a
+ * prompt.
  *
  * Arrows walk. Typed commands: look, look tower/rock/mountains, open door,
  * close door, enter, help, phosphor, outline, clean, stats.
  *
  * Depth: the traveller's size follows the height of the feet on the
- * ground (smaller toward the horizon), and anything that stands in front
- * of the feet is drawn again after the traveller: the boulder (a vector
- * shape anyway) and the foot of the tower (the page's art, repeated in
- * vector shapes only while the traveller is behind it). */
+ * ground (the layer's scale, smaller toward the horizon), and what stands
+ * in front of the feet is in layers after his, shown while he is behind
+ * it: the boulder and the foot of the tower, the same paths as the
+ * scene's. The 2D vector display is used only for the style (phosphor,
+ * fill mode). */
 #include "terse.h"
 #include "scene_data.h"
 
@@ -69,279 +72,94 @@ static int32_t px = 300 * U, py = 318 * U; /* the feet, in sixteenths */
 static uint8_t facing = FACE_DOWN, keys, phase, tick, moving;
 static uint8_t door_open, look_style; /* look_style: 0 clean, 1 phosphor, 2 outline */
 static uint8_t dirty = 1;
-static uint8_t list[2048];
-static uint32_t list_len;
 
-/* ---- drawing the traveller: local coordinates in quarter units, feet at
- * (0, 0), y up negative, x toward the facing; s256 the scale ---- */
+/* ---- the scene's layers (spec/page.md §page.layers; scene.paths) ---- */
 
-static int32_t fx, fy, s256, mir;
+/* The layers of the scene's lower figure: the traveller's poses (actor.py:
+ * side poses for strides 0, 12, 20, -12, -20, then toward the viewer and
+ * away for 0, 12, -12), the open door, and the copies of what stands in
+ * front of him. */
+#define LAYER_SIDE 1
+#define LAYER_FRONT 6
+#define LAYER_BACK 9
+#define LAYER_DOOR 12
+#define LAYER_ROCK_FRONT 13
+#define LAYER_TOWER_FRONT 14
+#define LAYER_DOOR_FRONT 15
+#define LAYER_COUNT 16
+/* Where actor.py painted the feet, in units of the scene; the lower
+ * figure, which holds the layers, starts at y 176 (scene.paths, `split
+ * 176`). */
+#define FEET_X 30
+#define FEET_Y 344
+#define LOWER_TOP 176
 
-static int16_t X(int32_t lx) { return (int16_t)(fx + ((mir * lx * s256) >> 6)); }
-static int16_t Y(int32_t ly) { return (int16_t)(fy + ((ly * s256) >> 6)); }
-static void width_q(int32_t w)
-{
-    int32_t v = (w * s256) >> 6;
-    vec_width((uint8_t)(v < 1 ? 1 : v > 255 ? 255 : v));
-}
-static void col(uint32_t rgb, uint8_t a) { vec_colour(rgb >> 16, rgb >> 8, rgb, a); }
-static void seg(int32_t x0, int32_t y0, int32_t x1, int32_t y1)
-{
-    vec_move(X(x0), Y(y0));
-    vec_line(X(x1), Y(y1));
-}
-static void tri(int32_t x0, int32_t y0, int32_t x1, int32_t y1, int32_t x2, int32_t y2)
-{
-    vec_move(X(x0), Y(y0));
-    vec_tri(X(x1), Y(y1), X(x2), Y(y2));
-}
-static void dot(int32_t x, int32_t y, int32_t r)
-{
-    int32_t v = (r * s256) >> 6;
-    vec_move(X(x), Y(y));
-    vec_disc((uint16_t)(v < 1 ? 1 : v));
-}
-static void box(int32_t x0, int32_t y0, int32_t x1, int32_t y1)
-{
-    vec_move(X(x0), Y(y0));
-    vec_rect(X(x1), Y(y1));
-}
+/* What each layer was last set to, so a call is made only for a change. */
+static uint8_t shown_flags[LAYER_COUNT];
+static int32_t shown_x[LAYER_COUNT], shown_y[LAYER_COUNT], shown_s[LAYER_COUNT];
+static uint32_t calls_last; /* layer calls in the last update, for STATS */
 
-#define CLOAK 0x2e7a78
-#define CLOAK_DARK 0x215c5a
-#define HAT 0x3b2f6e
-#define GOLD 0xe0b84a
-#define SKIN 0xeac6a0
-#define BEARD 0xe6e2da
-#define BOOTS 0x3a2a20
-#define STAFF 0x8a5a2c
+static void layer(uint32_t id, uint32_t flags, int32_t x, int32_t y, int32_t scale)
+{
+    if (!(flags & PAGE_LAYER_SHOWN))
+        x = y = 0, scale = PAGE_SCALE_FULL, flags = 0;
+    if (shown_flags[id] == flags && shown_x[id] == x && shown_y[id] == y && shown_s[id] == scale)
+        return;
+    shown_flags[id] = flags;
+    shown_x[id] = x;
+    shown_y[id] = y;
+    shown_s[id] = scale;
+    page_layer(id, flags, x, y, scale);
+    calls_last++;
+}
 
 /* Stride of the walk cycle, quarter units: the front foot's x. */
 static const int8_t stride[8] = {0, 12, 20, 12, 0, -12, -20, -12};
+static uint8_t pose_now, scale_now;
 
-static void traveller(void)
+/* The traveller's size at the feet's height: 256 at the bottom, smaller
+ * toward the horizon. */
+static int32_t scale_at(int32_t y)
+{
+    int32_t s = ((y - HORIZON * U) << 8) / ((NEAR - HORIZON) * U);
+    return s < 1 ? 1 : s > 256 ? 256 : s;
+}
+
+/* Shows the pose for the facing and the stride, the others hidden, placed
+ * so that the feet are at (px, py), scaled for depth; shows the open door
+ * and the copies of the boulder and the tower in front of him while he
+ * stands behind them (in the outline styles nothing is filled, so nothing
+ * hides anything: the copies would only add lines). */
+static void update_layers(void)
 {
     int32_t a = moving ? stride[phase] : 0;
-    int32_t bob = (a == 20 || a == -20 || a == 0) ? 0 : -4;
-    int side = facing == FACE_LEFT || facing == FACE_RIGHT;
-
-    fx = px;
-    fy = py;
-    s256 = ((py - HORIZON * U) << 8) / ((NEAR - HORIZON) * U);
-    mir = facing == FACE_LEFT || facing == FACE_UP ? -1 : 1;
-
-    /* Shadow: a fat line is a capsule, the nearest thing to an ellipse. */
-    col(0x000000, 70);
-    width_q(26);
-    seg(-36, 0, 36, 0);
-
-    /* Legs. */
-    col(BOOTS, 255);
-    width_q(15);
-    if (side) {
-        seg(0, -88 + bob, -a, a < 0 ? -6 : 0);
-        seg(0, -88 + bob, a, a > 0 ? -6 : 0);
-    } else {
-        seg(-10, -88 + bob, -12, a > 0 ? -10 : 0);
-        seg(10, -88 + bob, 12, a < 0 ? -10 : 0);
-    }
-    fy += (bob * s256) >> 6;
-
-    /* Cloak, with its shaded side. The width is that of the outlines
-     * filled shapes become in the phosphor style and fill mode 1. */
-    vec_width(U);
-    col(facing == FACE_UP ? CLOAK_DARK : CLOAK, 255);
-    tri(0, -188, -50, -56, 48, -56);
-    col(CLOAK_DARK, 255);
-    if (side)
-        tri(0, -188, -50, -56, -18, -56);
+    uint8_t pose;
+    if (facing == FACE_LEFT || facing == FACE_RIGHT)
+        pose = LAYER_SIDE + (a == 0 ? 0 : a == 12 ? 1 : a == 20 ? 2 : a == -12 ? 3 : 4);
     else
-        tri(0, -188, 22, -56, 48, -56);
-    col(GOLD, 255);
-    box(-24, -117, 24, -109);
+        pose = (facing == FACE_DOWN ? LAYER_FRONT : LAYER_BACK) + (a == 0 ? 0 : a > 0 ? 1 : 2);
+    int mirrored = facing == FACE_LEFT || facing == FACE_UP;
+    int32_t s = scale_at(py);
+    int32_t fx = (FEET_X * U * s) >> 8, fy = ((FEET_Y - LOWER_TOP) * U * s) >> 8;
+    int32_t x = mirrored ? px + fx : px - fx;
+    int32_t y = py - LOWER_TOP * U - fy;
+    calls_last = 0;
+    for (uint32_t id = LAYER_SIDE; id < LAYER_DOOR; id++)
+        if (id != pose)
+            layer(id, 0, 0, 0, 0);
+    layer(pose, PAGE_LAYER_SHOWN | (mirrored ? PAGE_LAYER_MIRRORED : 0), x, y, s);
+    pose_now = pose;
+    scale_now = s > 255 ? 255 : s;
 
-    /* Arm and staff, swinging a little with the stride. */
-    int32_t sx = side ? 44 - a / 2 : 58;
-    col(STAFF, 255);
-    width_q(9);
-    seg(sx - 2, -214, sx + 2, -2);
-    col(0xffe58a, 60);
-    dot(sx - 2, -218, 26);
-    col(0xfff2b8, 255);
-    dot(sx - 2, -218, 10);
-    col(CLOAK_DARK, 255);
-    width_q(15);
-    seg(side ? 6 : 26, -160, sx - 6, -124);
-    col(SKIN, 255);
-    vec_width(U);
-    dot(sx - 2, -124, 8);
-
-    /* Head: a face seen from the front or the side, the hat from behind. */
-    if (facing == FACE_UP) {
-        col(0xb9b4aa, 255);
-        dot(0, -202, 22);
-    } else {
-        col(SKIN, 255);
-        dot(side ? 4 : 0, -204, 22);
-        col(BEARD, 255);
-        if (side)
-            tri(-6, -198, 24, -198, 12, -156);
-        else
-            tri(-18, -198, 18, -198, 0, -150);
-        col(0x2a2030, 255);
-        if (side)
-            dot(17, -210, 3);
-        else {
-            dot(-8, -210, 3);
-            dot(8, -210, 3);
-        }
-    }
-    col(HAT, 255);
-    width_q(12);
-    seg(-42, -220, 44, -220);
-    if (side)
-        tri(-26, -220, 30, -220, -16, -294);
-    else
-        tri(-27, -220, 27, -220, 6, -298);
-    col(GOLD, 255);
-    width_q(6);
-    seg(-23, -228, 24, -228);
-}
-
-/* ---- the scenery in the vector display: screen units ---- */
-
-static void ux_rect(int32_t x0, int32_t y0, int32_t x1, int32_t y1)
-{
-    vec_move(x0 * U, y0 * U);
-    vec_rect(x1 * U, y1 * U);
-}
-static void ux_disc(int32_t x, int32_t y, int32_t r)
-{
-    vec_move(x * U, y * U);
-    vec_disc(r * U);
-}
-static void ux_line(int32_t x0, int32_t y0, int32_t x1, int32_t y1)
-{
-    vec_move(x0 * U, y0 * U);
-    vec_line(x1 * U, y1 * U);
-}
-
-/* The boulder: low-poly facets about a point inside it, lit from the
- * left as the tower is. */
-static const int16_t rock_pts[9][2] = {
-    {92, 334}, {98, 312}, {114, 294}, {136, 284}, {160, 288}, {178, 302}, {188, 320}, {186, 336}, {140, 340},
-};
-static const uint32_t rock_tone[9] = {
-    0x8a8f99, 0xa3a8b2, 0xb8bcc4, 0xa7acb5, 0x8f949e, 0x737882, 0x5f646e, 0x6a6f79, 0x7c818b,
-};
-
-static void rock_shadow(void)
-{
-    col(0x000000, 56);
-    vec_width(12 * U);
-    ux_line(104, 337, 186, 338);
-}
-
-static void rock(void)
-{
-    vec_width(U);
-    for (int i = 0; i < 9; i++) {
-        int j = (i + 1) % 9;
-        col(rock_tone[i], 255);
-        vec_move(138 * U, 316 * U);
-        vec_tri(rock_pts[i][0] * U, rock_pts[i][1] * U, rock_pts[j][0] * U, rock_pts[j][1] * U);
-    }
-    col(0x55606a, 120);
-    vec_width(U);
-    ux_line(120, 300, 132, 306);
-}
-
-/* The open door: the dark inside and the lamplight spilling out. */
-static void door_overlay(void)
-{
-    col(0x2a1c14, 255);
-    ux_rect(428, 234, 452, 265);
-    ux_disc(440, 234, 12);
-    col(0xffcf73, 150);
-    ux_rect(431, 244, 449, 265);
-    ux_disc(440, 244, 9);
-    col(0xffd88a, 48);
-    vec_move(430 * U, 267 * U);
-    vec_tri(450 * U, 267 * U, 462 * U, 292 * U);
-    vec_move(430 * U, 267 * U);
-    vec_tri(462 * U, 292 * U, 418 * U, 292 * U);
-}
-
-/* The foot of the tower again, as the page paints it (scene.paths), from
- * y 180 down to its base: drawn after the traveller who stands behind it. */
-static void tower_occluder(void)
-{
-    col(0xc9bda9, 255);
-    ux_rect(412, 180, 468, 262);
-    col(0xddd3c1, 255);
-    ux_rect(416, 180, 430, 263);
-    col(0xa39784, 255);
-    ux_rect(454, 180, 468, 262);
-    col(0x8d826f, 255);
-    ux_rect(462, 180, 468, 262);
-    col(0xab9f8a, 255);
-    vec_width(U);
-    ux_line(412, 210, 468, 210);
-    ux_line(412, 245, 468, 245);
-    ux_line(436, 180, 436, 210);
-    ux_line(424, 210, 424, 245);
-    ux_line(456, 210, 456, 245);
-    /* The small window on the curve of the wall. */
-    col(0x4a3626, 255);
-    ux_rect(453, 194, 461, 204);
-    ux_disc(457, 194, 4);
-    col(0xf5bd4f, 255);
-    ux_rect(455, 194, 459, 202);
-    ux_disc(457, 194, 2);
-    col(0x7e7362, 255);
-    ux_rect(425, 234, 455, 265);
-    ux_disc(440, 234, 15);
-    if (door_open) {
-        door_overlay();
-        return;
-    }
-    col(0x7a4a2a, 255);
-    ux_rect(428, 234, 452, 265);
-    ux_disc(440, 234, 12);
-    col(0x5c361d, 255);
-    ux_line(434, 224, 434, 265);
-    ux_line(440, 222, 440, 265);
-    ux_line(446, 224, 446, 265);
-    col(0xe2c060, 255);
-    vec_move(447 * U + 8, 246 * U);
-    vec_disc(26);
-}
-
-static void build_list(void)
-{
-    int32_t half = (((py - HORIZON * U) << 8) / ((NEAR - HORIZON) * U)) * 16 / 256; /* half the figure's width, units */
-    int32_t x = px / U, y = py / U;
-    int behind_rock = y < ROCK_BASE && x + half > ROCK_X0 && x - half < ROCK_X1;
-    int behind_tower = y < TOWER_BASE && x + half > 412 && x - half < 468;
-
-    vec_begin(list, sizeof list);
-    vec_limit--;
-    if (door_open)
-        door_overlay();
-    rock_shadow();
-    if (!behind_rock)
-        rock();
-    traveller();
-    if (behind_rock)
-        rock();
-    /* In the outline styles nothing is filled, so nothing hides anything:
-     * the occluder would only add lines. */
-    if (behind_tower && look_style == 0)
-        tower_occluder();
-    vec_limit++;
-    vec_end();
-    list_len = vec_length(list);
-    vec_submit(list, list_len);
+    int32_t half = s * 16 / 256; /* half the figure's width, units */
+    int32_t ux = px / U, uy = py / U;
+    int behind_rock = uy < ROCK_BASE && ux + half > ROCK_X0 && ux - half < ROCK_X1;
+    int behind_tower = uy < TOWER_BASE && ux + half > 412 && ux - half < 468;
+    int clean = look_style == 0;
+    layer(LAYER_DOOR, door_open ? PAGE_LAYER_SHOWN : 0, 0, 0, PAGE_SCALE_FULL);
+    layer(LAYER_ROCK_FRONT, behind_rock && clean ? PAGE_LAYER_SHOWN : 0, 0, 0, PAGE_SCALE_FULL);
+    layer(LAYER_TOWER_FRONT, behind_tower && clean ? PAGE_LAYER_SHOWN : 0, 0, 0, PAGE_SCALE_FULL);
+    layer(LAYER_DOOR_FRONT, behind_tower && clean && door_open ? PAGE_LAYER_SHOWN : 0, 0, 0, PAGE_SCALE_FULL);
 }
 
 /* ---- walking ---- */
@@ -583,17 +401,17 @@ static void command(void)
         set_style(0);
         say("Filled again.", C_TEXT);
     } else if (is(cmd, "stats")) {
-        char m[80] = "vector list ";
-        put_num(m + slen(m), list_len);
-        memcpy(m + slen(m), " bytes, ink ", 13);
-        put_num(m + slen(m), vec_list_ink(list, list_len, 0));
-        memcpy(m + slen(m), " filled / ", 11);
-        put_num(m + slen(m), vec_list_ink(list, list_len, 1));
-        memcpy(m + slen(m), " outlined of 230400", 20);
+        char m[80] = "page layer ";
+        put_num(m + slen(m), pose_now);
+        memcpy(m + slen(m), " at scale ", 11);
+        put_num(m + slen(m), scale_now);
+        memcpy(m + slen(m), "/256; layer calls last move ", 29);
+        put_num(m + slen(m), calls_last);
+        memcpy(m + slen(m), "; no vector list", 17);
         say(m, C_TEXT);
     } else if (is(cmd, "help") || is(cmd, "?")) {
         say("Arrows walk. Try LOOK, LOOK TOWER, OPEN DOOR (at the door), ENTER. PHOSPHOR, OUTLINE and CLEAN"
-            " change how the scene is drawn; STATS shows the vector list's size and ink.",
+            " change how the scene is drawn; STATS shows the traveller's layer and scale.",
             C_TEXT);
     } else {
         say("Nothing happens. (Try LOOK, OPEN DOOR or HELP.)", C_TEXT);
@@ -644,6 +462,11 @@ int main(void)
     page_region(0, 0, 640, PIC_H);
     page_background(0x26, 0x38, 0x6c, 255);
     page_submit(scene_doc, sizeof scene_doc);
+    /* Every layer is shown after reset: the program shows only its own. */
+    for (uint32_t id = 1; id < LAYER_COUNT; id++) {
+        page_layer(id, 0, 0, 0, PAGE_SCALE_FULL);
+        shown_s[id] = PAGE_SCALE_FULL;
+    }
 
     say("The path ends at a tower. Arrows walk; type a command and press Enter (HELP for a list).", C_TEXT);
     status_bar();
@@ -665,7 +488,7 @@ int main(void)
         walk();
         if (dirty) {
             dirty = 0;
-            build_list();
+            update_layers();
         }
         terse_wait_frame();
     }

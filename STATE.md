@@ -168,7 +168,7 @@ Each request record is 53 bytes:
 
 Let `P` be the offset after this section.
 
-### 1.9 Page (1 or 21 + d bytes)
+### 1.9 Page (1 or 21 + d + 8k bytes)
 
 | Offset | Size | Field |
 |---|---|---|
@@ -179,8 +179,24 @@ Let `P` be the offset after this section.
 | P + 7 | 2 | Rectangle height (u16) |
 | P + 9 | 4 | Scroll value (u32), as stored, not clamped |
 | P + 13 | 4 | Background (u32), as given to `background`; `FF00_0000h` after reset |
-| P + 17 | 4 | d (u32): length of the document, 1–65,536, or 0 for no document |
+| P + 17 | 4 | Bits 0–23: d, the length of the document, 1–65,536, or 0 for no document; bits 24–31: k, the number of layer records, 0–64 |
 | P + 21 | d | The document (the bytes of the last accepted submit) |
+| P + 21 + d | 8k | The layer records (SPEC §page.layers), one for each layer whose state is not as after reset, in increasing order of layer |
+
+Each layer record is 8 bytes:
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 1 | Layer, 0–63 |
+| 1 | 1 | Flags: bit 0 shown, bit 1 mirrored; other bits 0 |
+| 2 | 2 | Offset x (i16), sixteenths |
+| 4 | 2 | Offset y (i16) |
+| 6 | 2 | Scale (u16), 1–256 |
+
+A layer as after reset (shown, offset (0, 0), scale 256, not mirrored)
+has no record, so a machine that never called `layer` is serialized, and
+hashed, as before layers existed. A reader refuses a k above 64, records
+out of order and a record as after reset.
 
 Nothing about the layout is included: the height a host computed, the lines,
 the anchors' positions. They reach the machine only as events (SPEC §page.events),
@@ -340,7 +356,7 @@ first frame, SPEC §machines.calls, or by the snapshot it was restored from).
 
 That is the end of the serialization. Its length is
 `45 + 128 + 23 + 4 + L + k + 37 + 4n` plus 1 or 10,379 (terminal), 1 or 8 + m
-(vector), 1 or 425 (content), 1 or 21 + d (page), 0, 1 or 1,126 + 32b +
+(vector), 1 or 425 (content), 1 or 21 + d + 8k (page), 0, 1 or 1,126 + 32b +
 83r (machines), 0 or 4 + m (3D vector), 0 or 2,688 + s (sound), 4 + e
 for each experimental device (none for most machines) and 0 or 32
 (argument).

@@ -1,0 +1,46 @@
+figure 100 60
+  path fill #334455ff stroke none
+    M 0 0
+    L 1600 0
+    L 1600 960
+    L 0 960
+    Z
+  path fill #ffaa00ff stroke none layer 1
+    M 160 480
+    L 320 320
+    L 480 480
+    Z
+  path fill #ffaa00ff stroke none layer 2
+    M 640 480
+    L 800 320
+    L 960 480
+    Z
+  path fill #ffaa00ff stroke fg 32 layer 1
+    M 1120 800
+    L 1440 800
+figure 50 50
+  path fill #ff0000ff stroke fg 16
+    M 0 0
+    C 160 0 320 160 320 320
+  path fill #ff0000ff stroke fg 16 layer 3
+    M 320 320
+    C 320 480 640 640 800 800
+pre
+  line
+    text "M0 0 L1 1 layer 64"
+pre
+  line
+    text "M0 0 L1 1 layer 1.5"
+pre
+  line
+    text "M0 0 L1 1 layer"
+pre
+  line
+    text "M0 0 L1 1 layer 007"
+pre
+  line
+    text "M0 0 L1 1layer 1"
+figure 50 50
+  path fill none stroke fg 16 layer 2
+    M 0 0
+    L 16 16

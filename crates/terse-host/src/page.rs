@@ -27,7 +27,7 @@ use swash::scale::image::Content;
 use swash::scale::{Render, ScaleContext, Source, StrikeWith};
 use swash::zeno::{Angle, Format, Transform, Vector};
 use terse_core::page::{
-    self as core_page, Align, FigureBox, FigurePath, LayoutKey, Layouter, Page, PageWatch, Paragraph, Run, Table,
+    self as core_page, Align, FigureBox, FigurePath, LayerBudget, LayerState, LayoutKey, Layouter, Page, PageWatch, Paragraph, Run, Table, LAYERS,
 };
 use terse_core::Event;
 #[cfg(feature = "gpu")]
@@ -177,6 +177,8 @@ impl Typesetter {
         };
         let start = std::time::Instant::now();
         let mut y = 0.0f32;
+        // What the figures so far used of the layer limits (SPEC §page.layers).
+        let mut budget = LayerBudget::default();
         for p in core_page::parse(doc) {
             y += p.space as f32;
             if let Some(rgb) = p.rule {
@@ -188,14 +190,28 @@ impl Typesetter {
                 // SPEC §page.document: a block of its own, aligned in the rectangle and
                 // cut at its right edge; drawn from the decoded paths.
                 let b = FigureBox::place(f, p.align, width as u32);
+                let id = crate::figures::figure_id(f);
+                let groups = f.groups(&mut budget);
+                // A layered figure is drawn group by group (SPEC §page.layers).
+                let host_groups = if groups.len() > 1 {
+                    groups
+                        .iter()
+                        .enumerate()
+                        .map(|(i, g)| HostGroup { id: group_id(id, i), layer: g.layer, bounds: g.bounds, paths: Arc::new(g.paths.clone()) })
+                        .collect()
+                } else {
+                    Vec::new()
+                };
                 out.figures.push(HostFigure {
-                    id: crate::figures::figure_id(f),
+                    id,
                     top: y,
                     x: b.x as f32,
                     width: b.shown as f32,
+                    full_width: f.width as f32,
                     height: f.height as f32,
                     anchor: f.anchor,
-                    paths: Arc::new(f.paths()),
+                    paths: Arc::new(groups.into_iter().flat_map(|g| g.paths).collect()),
+                    groups: host_groups,
                 });
                 y += f.height as f32;
                 continue;
@@ -517,6 +533,80 @@ pub struct HostFigure {
     pub height: f32,
     pub anchor: u16,
     pub paths: Arc<Vec<FigurePath>>,
+    /// The figure's width, also where the rectangle cuts it off.
+    pub full_width: f32,
+    /// A layered figure's groups, in order (SPEC §page.layers); empty for a
+    /// figure without layers, drawn whole from `paths`.
+    pub groups: Vec<HostGroup>,
+}
+
+/// A group of a layered figure: what it draws ([`group_id`]), its layer
+/// (`None`: the base), its box in sixteenths from the figure's corner and
+/// its paths.
+#[derive(Clone, Debug)]
+pub struct HostGroup {
+    pub id: u64,
+    pub layer: Option<u8>,
+    pub bounds: [i32; 4],
+    pub paths: Arc<Vec<FigurePath>>,
+}
+
+/// What a group draws, as a number: the figure's and its place in it.
+pub fn group_id(figure: u64, index: usize) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    (figure, index, "group").hash(&mut h);
+    h.finish()
+}
+
+/// A group's image in the pixels of its figure rasterised whole at `scale`
+/// pixels per unit: its corner and size (whole pixels holding its box).
+pub fn group_pixels(b: [i32; 4], scale: f32) -> ((i32, i32), (u32, u32)) {
+    let k = scale / 16.0;
+    let x0 = (b[0] as f32 * k).floor() as i32;
+    let y0 = (b[1] as f32 * k).floor() as i32;
+    let x1 = (b[2] as f32 * k).ceil() as i32;
+    let y1 = (b[3] as f32 * k).ceil() as i32;
+    ((x0, y0), ((x1 - x0).max(0) as u32, (y1 - y0).max(0) as u32))
+}
+
+/// Where a group's image is drawn (SPEC §page.layers): the image (corner
+/// and size as [`group_pixels`] gives them) placed by `layer` (`None`: the
+/// base, where it is), the figure's corner at `corner` in target pixels,
+/// `s` target pixels per unit, the image `scale` pixels per unit; clipped
+/// to `clip` (the figure's box as shown, target pixels). The rectangle in
+/// target pixels and the image's texels over it (u0, v0, u1, v1; u0 > u1
+/// when mirrored), or `None` if nothing of it shows.
+pub fn place_group(
+    (at, size): ((i32, i32), (u32, u32)),
+    layer: Option<&LayerState>,
+    corner: (f32, f32),
+    s: f32,
+    scale: f32,
+    clip: [f32; 4],
+) -> Option<([f32; 4], [f32; 4])> {
+    if size.0 == 0 || size.1 == 0 {
+        return None;
+    }
+    let k = s / scale;
+    let base = LayerState::default();
+    let l = layer.unwrap_or(&base);
+    let sc = l.scale as f32 / 256.0;
+    let (ox, oy) = (corner.0 + l.x as f32 / 16.0 * s, corner.1 + l.y as f32 / 16.0 * s);
+    let (u0, u1) = (at.0 as f32, (at.0 + size.0 as i32) as f32);
+    let (v0, v1) = (at.1 as f32, (at.1 + size.1 as i32) as f32);
+    let (y0, y1) = (oy + sc * v0 * k, oy + sc * v1 * k);
+    let (x0, x1, su0, su1) =
+        if l.mirrored { (ox - sc * u1 * k, ox - sc * u0 * k, size.0 as f32, 0.0) } else { (ox + sc * u0 * k, ox + sc * u1 * k, 0.0, size.0 as f32) };
+    let (cx0, cy0, cx1, cy1) = (x0.max(clip[0]), y0.max(clip[1]), x1.min(clip[2]), y1.min(clip[3]));
+    if cx1 <= cx0 || cy1 <= cy0 || x1 <= x0 || y1 <= y0 {
+        return None;
+    }
+    let lerp = |a: f32, b: f32, t: f32| a + (b - a) * t;
+    let (tx0, tx1) = ((cx0 - x0) / (x1 - x0), (cx1 - x0) / (x1 - x0));
+    let (ty0, ty1) = ((cy0 - y0) / (y1 - y0), (cy1 - y0) / (y1 - y0));
+    let sv1 = size.1 as f32;
+    Some(([cx0, cy0, cx1, cy1], [lerp(su0, su1, tx0), lerp(0.0, sv1, ty0), lerp(su0, su1, tx1), lerp(0.0, sv1, ty1)]))
 }
 
 /// The text a laid-out run shows, in visual order of its glyphs (an
@@ -910,7 +1000,9 @@ fn fs(in: Out) -> @location(0) vec4<f32> {
         rgb = t.rgb;
         a *= t.a;
     } else if in.mode == 3u {
-        let t = textureLoad(atlas, vec2<i32>(floor(in.uv)), 0);
+        // Clamped: a mirrored layer's texels run down to the image's edge.
+        let at = clamp(vec2<i32>(floor(in.uv)), vec2<i32>(0), vec2<i32>(textureDimensions(atlas)) - 1);
+        let t = textureLoad(atlas, at, 0);
         rgb = t.rgb / max(t.a, 1.0 / 255.0);
         a *= t.a;
     }
@@ -971,6 +1063,14 @@ impl Shelves {
 pub struct PageView {
     pub region: terse_core::Region,
     pub background: [u8; 4],
+    /// The layers' state (SPEC §page.layers).
+    pub layers: [LayerState; LAYERS],
+}
+
+impl PageView {
+    pub fn of(p: &Page) -> Self {
+        PageView { region: p.region(), background: p.background(), layers: *p.layers() }
+    }
 }
 
 #[cfg(feature = "gpu")]
@@ -1202,7 +1302,7 @@ impl PageLayer {
     /// show, and moves the shown scroll towards the program's (clamped)
     /// scroll value.
     pub fn set(&mut self, page: Option<&Page>, layout: Option<Arc<HostLayout>>) {
-        self.view = page.map(|p| PageView { region: p.region(), background: p.background() });
+        self.view = page.map(PageView::of);
         self.layout = layout;
         let (Some(page), Some(layout)) = (page, &self.layout) else {
             self.shown_scroll = None;
@@ -1392,34 +1492,74 @@ impl PageLayer {
         let mut wanted = HashSet::new();
         let (mut keep, mut shown) = (HashSet::new(), HashMap::new());
         let mut jobs = Vec::new();
+        let layers = self.view.map(|v| v.layers).unwrap_or([LayerState::default(); LAYERS]);
         let first = layout.figures.partition_point(|f| f.top + f.height <= top);
         for (i, f) in layout.figures.iter().enumerate().skip(first).take_while(|(_, f)| f.top < bottom) {
             // The quad in target pixels, and the texture's size: the same
             // unless the figure is bigger than FIGURE_PIXELS or the GPU allows.
             let (qw, qh) = ((f.width * s).ceil().max(1.0), (f.height * s).ceil().max(1.0));
             let mut scale = s.min((FIGURE_PIXELS / (qw * qh)).sqrt() * s);
-            scale = scale.min(max_side as f32 / (f.width.max(f.height)));
+            scale = scale.min(max_side as f32 / (if f.groups.is_empty() { f.width } else { f.full_width }).max(f.height));
+            let in_view = f.top < scroll + h && f.top + f.height > scroll;
+            let x = (rx + f.x * s).round();
+            let y = (ry + (f.top - scroll) * s).round();
+            if !f.groups.is_empty() {
+                // A layered figure (SPEC §page.layers): a texture per group,
+                // every group's (hidden ones too, so that showing one is at
+                // once), the shown ones placed by their layers and clipped
+                // to the figure's box.
+                let clip = [x, y, x + f.width * s, y + f.height * s];
+                for (gi, g) in f.groups.iter().enumerate() {
+                    let px = group_pixels(g.bounds, scale);
+                    if px.1.0 == 0 || px.1.1 == 0 {
+                        continue;
+                    }
+                    let px = (px.0, (px.1.0.min(max_side), px.1.1.min(max_side)));
+                    let key: FigureKey = (g.id, px.1, outline);
+                    wanted.insert(key);
+                    if !self.figure_textures.contains_key(&key) && !self.figures_pending.contains(&key) {
+                        self.figures_pending.insert(key);
+                        jobs.push(figures::Job { key, paths: g.paths.clone(), scale, origin: px.0 });
+                    }
+                    let state = g.layer.map(|l| &layers[l as usize]);
+                    if !in_view || state.is_some_and(|l| !l.shown) {
+                        continue;
+                    }
+                    let Some((rect, uv)) = place_group(px, state, (x, y), s, scale, clip) else { continue };
+                    let slot = i << 8 | (gi + 1);
+                    let mut draw = key;
+                    if !self.figure_textures.contains_key(&key)
+                        && let Some(&before) = self.figure_shown.get(&slot).filter(|k| k.1 == px.1 && self.figure_textures.contains_key(k))
+                    {
+                        draw = before;
+                        keep.insert(before);
+                    }
+                    shown.insert(slot, draw);
+                    self.figure_draws.push(((self.scratch.len() / INSTANCE_BYTES) as u32, draw));
+                    push(&mut self.scratch, rect, uv, [255; 4], 3);
+                }
+                continue;
+            }
             let size = (((f.width * scale).ceil() as u32).clamp(1, max_side), ((f.height * scale).ceil() as u32).clamp(1, max_side));
             let key: FigureKey = (f.id, size, outline);
             wanted.insert(key);
             if !self.figure_textures.contains_key(&key) && !self.figures_pending.contains(&key) {
                 self.figures_pending.insert(key);
-                jobs.push(figures::Job { key, paths: f.paths.clone(), scale });
+                jobs.push(figures::Job { key, paths: f.paths.clone(), scale, origin: (0, 0) });
             }
-            if f.top < scroll + h && f.top + f.height > scroll {
-                let x = (rx + f.x * s).round();
-                let y = (ry + (f.top - scroll) * s).round();
+            if in_view {
                 let uv = [0.0, 0.0, size.0 as f32, size.1 as f32];
                 // Not rasterised yet: the figure shown here before, if of
                 // the same size, until it is.
                 let mut draw = key;
+                let slot = i << 8;
                 if !self.figure_textures.contains_key(&key)
-                    && let Some(&before) = self.figure_shown.get(&i).filter(|k| k.1 == size && self.figure_textures.contains_key(k))
+                    && let Some(&before) = self.figure_shown.get(&slot).filter(|k| k.1 == size && self.figure_textures.contains_key(k))
                 {
                     draw = before;
                     keep.insert(before);
                 }
-                shown.insert(i, draw);
+                shown.insert(slot, draw);
                 self.figure_draws.push(((self.scratch.len() / INSTANCE_BYTES) as u32, draw));
                 push(&mut self.scratch, [x, y, x + qw, y + qh], uv, [255; 4], 3);
             }

@@ -126,6 +126,7 @@ fn sensitive_to_each_part() {
     differs(&format!("    li a2, 5\n    li a7, 0x702\n    ecall\n{base}"), &none, "page region");
     differs(&format!("    li a0, -1\n    li a7, 0x703\n    ecall\n{base}"), &none, "page scroll");
     differs(&format!("    li a0, 1\n    li a7, 0x704\n    ecall\n{base}"), &none, "page background");
+    differs(&format!("    li a0, 63\n    li a1, 0\n    li a7, 0x706\n    ecall\n{base}"), &none, "page layer");
     // A content get pending (op 1, length 1, addr in RAM, block at RAM).
     let get = "    li t0, 0x100000\n    li t1, 1\n    sb t1, 0(t0)\n    sw t1, 40(t0)\n    li t1, 0x100100\n    \
                sw t1, 44(t0)\n    mv a0, t0\n    li a7, 0x400\n    ecall\n";

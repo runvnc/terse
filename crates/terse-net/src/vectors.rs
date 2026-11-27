@@ -338,6 +338,17 @@ pub fn corpus() -> Vec<(&'static str, Vec<u8>)> {
             ),
         ),
         (
+            "figures-layers",
+            fill(
+                "```path 100 60\nfill #345 stroke none M0 0 H100 V60 H0 Z\nlayer 1 fill #fa0 M10 30 l10 -10 l10 10 Z\n\
+                 layer 2 M40 30 l10 -10 l10 10 Z\nlayer 1 stroke fg 2 M70 50 L90 50\nlayer 05 layer 63\n```\n\n\
+                 ```path 50 50\nfill #f00 M0 0 C10 0 20 10 20 20 layer 3 S40 40 50 50 layer 4 Z\n```\n\n\
+                 ```path 50 50\nM0 0 L1 1 layer 64\n```\n\n```path 50 50\nM0 0 L1 1 layer 1.5\n```\n\n\
+                 ```path 50 50\nM0 0 L1 1 layer\n```\n\n```path 50 50\nM0 0 L1 1 layer 007\n```\n\n\
+                 ```path 50 50\nM0 0 L1 1layer 1\n```\n\n```path 50 50\nlayer 2M0 0 L1 1\n```\n",
+            ),
+        ),
+        (
             "figures-range-as-written",
             fill(
                 "```path 100 100\nM0 0 L2047.01 0\n```\n\n```path 100 100\nM0 0 L2046.99 -2046.99\n```\n\n\
@@ -1462,6 +1473,8 @@ A `path` line is `path fill <colour> stroke <colour> <width>` or
 path. A colour is `none` (nothing drawn: `none`, or any colour with
 opacity 0), `fg` (the reader's body text colour) or `#rrggbbaa`; the
 width is in sixteenths of a unit (a stroke of width 0 is `stroke none`).
+A path after a `layer` word (ARTICLE.md 6.1) ends with ` layer <n>`, the
+layer of the latest such word; it changes nothing that is drawn.
 Paths that draw nothing (no segment, or neither fill nor stroke) are not
 listed. Each path's commands follow, indented by four spaces, one per
 line, absolute, every coordinate in sixteenths of a unit (numbers

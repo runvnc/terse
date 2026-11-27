@@ -102,7 +102,11 @@ func Dump(d *Doc) string {
 				if p.StrokeVisible() {
 					stroke = fmt.Sprintf("%s %d", p.Stroke, p.Width)
 				}
-				fmt.Fprintf(&b, "  path fill %s stroke %s\n", p.Fill, stroke)
+				layer := ""
+				if p.Layer >= 0 {
+					layer = fmt.Sprintf(" layer %d", p.Layer)
+				}
+				fmt.Fprintf(&b, "  path fill %s stroke %s%s\n", p.Fill, stroke, layer)
 				for _, o := range p.Ops {
 					b.WriteString("    " + string(o.Cmd))
 					for _, v := range o.P {

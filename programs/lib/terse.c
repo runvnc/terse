@@ -944,6 +944,13 @@ void path_close(void)
     path_room(1, PATH_CLOSE);
 }
 
+void path_layer(uint8_t id)
+{
+    uint8_t *p = path_room(2, PATH_LAYER);
+    if (p)
+        p[0] = id;
+}
+
 /* --- Page tables ------------------------------------------------------ */
 
 void doc_table(uint8_t columns, uint8_t flags, const uint8_t *align)

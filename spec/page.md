@@ -6,7 +6,9 @@ for its device, given the core sections it builds on (below).
 
 Shows typeset prose: proportional fonts, shaped, bidirectional and broken
 into lines at the width of a rectangle on the screen, with figures drawn
-from paths between the paragraphs. The program hands the device a
+from paths between the paragraphs; a program may put parts of a figure
+in layers that it shows, hides and moves without a new layout
+(§page.layers). The program hands the device a
 **document**, a short binary list of styled text and figures much like a
 display list, and a rectangle; the host lays the text out with its own fonts
 and draws the part that is scrolled into view. The device parses no markup
@@ -43,6 +45,7 @@ rectangle with a width or height of 0 hides the page.
 | `703h` | `scroll` | `a0` = y | 0 | deferred |
 | `704h` | `background` | `a0` = colour | 0 | deferred |
 | `705h` | `locate` | `a0` = anchor id | 0 done, 1 rejected | answered |
+| `706h` | `layer` | `a0` = layer, `a1` = flags, `a2` = x, `a3` = y, `a4` = scale | 0 done, 1 rejected | deferred |
 
 - **`submit`** copies `a1` bytes from address `a0` into the device,
   replacing the document, sets the scroll value to 0, and returns 0. If the
@@ -67,9 +70,19 @@ rectangle with a width or height of 0 hides the page.
   It returns 0, or 1 (rejected, and nothing is asked) if `a0` is 0 or above
   65,535, if there is no document, or if the program has already made 8
   locates in this frame.
+- **`layer`** sets the state of layer `a0` (§page.layers): flags bit 0
+  **shown**, bit 1 **mirrored** (other bits are ignored); the offset x =
+  `a2` and y = `a3`, signed numbers in sixteenths of a screen unit, each
+  clamped to −32,768 … 32,767; the scale = `a4` in 256ths, clamped to
+  1 … 256 (256 is full size). It returns 0, or 1 (rejected, and nothing
+  changes) if `a0` is above 63. Neither the document nor its layout
+  changes: no new layout, no event.
 
 After reset there is no document, the rectangle is (0, 0, 0, 0) (hidden),
-the scroll value is 0 and the background is `FF00_0000h`, opaque black.
+the scroll value is 0, the background is `FF00_0000h`, opaque black, and
+every layer is shown, at offset (0, 0), scale 256, not mirrored: drawn
+where its paths are, as if there were no layers.
+`submit` and `clear` leave the layers as they are.
 
 ## §page.document Document
 
@@ -181,6 +194,7 @@ colours are r, g, b, a (1 byte each, `a` the opacity).
 | `05h` | Quadratic | x1, y1, x, y | A quadratic Bézier segment to (x, y) with control point (x1, y1) |
 | `06h` | Cubic | x1, y1, x2, y2, x, y | A cubic Bézier segment to (x, y) with control points (x1, y1), (x2, y2) |
 | `07h` | Close | — | A straight segment back to the subpath's start, which ends the subpath; nothing if no subpath is open |
+| `08h` | Layer | id (1 byte) | Ends the path; later paths belong to layer `id` (§page.layers) |
 
 - At the start of the commands: no fill; stroke in the document's text
   colour at the Figure command, opaque, 16 (one unit) wide; current point
@@ -215,7 +229,8 @@ colours are r, g, b, a (1 byte each, `a` the opacity).
   if it is filled, plus 2 × L + 4 × w × s with w its stroke width if it is
   stroked; that sum is divided by 16 and rounded up once, and the total is
   at most 65,536. The caps are counted from the path commands alone, the
-  same in every style and fill mode: a figure drawn as outlines (§page.layout) still counts its fills.
+  same in every style and fill mode: a figure drawn as outlines (§page.layout) still counts its fills,
+  and for every path of every layer, shown or hidden (§page.layers).
 
 ## §page.layout Layout and presentation
 
@@ -280,7 +295,8 @@ tops (for a table row, its cells' lines from the left to the right).
 Figures are drawn as outlines when the vector display is in the phosphor
 style or in fill mode 1 (§vector.list; an image without the vector display
 has the clean style and fill mode 0): nothing is filled, and a path that is
-filled but not stroked is stroked one unit wide in its fill colour.
+filled but not stroked is stroked one unit wide in its fill colour. A
+figure's layers are drawn so too, in their order (§page.layers).
 
 Cost stays bounded: a document is at most 65,536 bytes and holds at most
 4,096 table cells (§page.document); the host lays it out
@@ -299,6 +315,78 @@ figure shown in its place before stays there. (A program re-submits its
 document whenever its text changes, a spreadsheet at every key; a chart
 in it that vanished for the frames its figure took to draw flashed at
 every key.)
+
+## §page.layers Layers
+
+Parts of a figure may be put in **layers**, which the program shows,
+hides, moves, scales and mirrors with `layer` (§page.calls) while the
+document stays as it is: a painted scene with scenery behind, an actor
+(each frame of a walk a layer of its own, one shown at a time) and
+scenery in front of it, in one figure, the front hiding the actor by
+the order of the paths alone. An article's figure may have layers too,
+written with the word `layer` (`ARTICLE.md` section 6.1, which is this
+Layer command); an article's layers are drawn in order, every one shown
+where its paths are, which is how the page draws them until a program
+changes their state.
+
+- **Groups.** A Layer command (`08h`, §page.document) ends the path;
+  the paths after it, up to the next Layer command or the end of the
+  figure's path commands, are a **group** of layer `id`, 0 to 63. An id
+  above 63 ends the path commands, as an unknown opcode does. The paths
+  before a figure's first Layer command are its **base**, a group that
+  belongs to no layer. Several groups, in one figure or in several, may
+  belong to the same layer. A Layer command changes neither the fill,
+  the stroke nor the current point; after it no subpath is open.
+- **The state** of each of the 64 layers is: shown or hidden, the offset
+  (x, y) in sixteenths, the scale s (1 to 256) and whether it is
+  mirrored. It is set by `layer` only, and only reset clears it
+  (§page.calls); a layer no group of the document belongs to has a state
+  all the same.
+- **Drawing.** A figure's groups are drawn in their order, each over the
+  ones before, as their paths would be drawn (§page.document): the base
+  as it is; a group of a hidden layer not at all; a group of a shown
+  layer as its **picture** (what its paths draw, clipped to the figure's
+  box) placed by the layer's state: the point (x, y) of the picture, in
+  sixteenths from the figure's top left corner, is drawn at (x0 + s × x
+  / 256, y0 + s × y / 256), or (x0 − s × x / 256, y0 + s × y / 256)
+  when the layer is mirrored, (x0, y0) being the layer's offset; then
+  clipped to the figure's box again. So a scale below 256 only ever
+  makes a picture smaller, and a group's place never depends on the
+  layout. How a moved or scaled picture is smoothed (resampled from the
+  picture drawn at full size, or drawn again at its new size) is the
+  host's.
+- **Order is order**, also in the phosphor style and fill mode 1
+  (§page.layout): the figure is drawn as outlines with the same groups,
+  shown, hidden and placed the same; nothing being filled, a group in
+  front hides nothing behind it.
+- **Layout and events.** Layers change neither the layout nor the
+  figure's box: the height, `locate` and a press over the figure
+  (§page.events) are as without them, whatever the layers show.
+- **Limits.** (1) A document has at most 64 Layer commands, counted in
+  document order over all its figures; the 65th and every later one end
+  their figure's path commands, as an unknown opcode does. (2) A figure
+  is **layered** if its path commands (up to where they end) hold a
+  Layer command. Each group of a layered figure, its base included, has
+  a **box**: the smallest box that holds the boxes its drawn paths count
+  for the area cap (§page.document: each clipped to the figure's box, a
+  stroked path's grown by half its width); its area is its width times
+  its height in sixteenths, divided by 256 and rounded up, 0 for a group
+  that draws nothing. The areas of all the groups of all the layered
+  figures of a document add up to at most 2 × 640 × 480 = 614,400
+  square units, the **layered area**: the first path that would take the
+  total above it is not drawn, and neither is any path after it in its
+  figure (as with the caps of §page.document, which it is counted
+  with). (3) The caps of §page.document count every path of a layered
+  figure, in every group, shown or hidden.
+
+What it costs a host: each group's picture is drawn once, when the
+document is laid out (outside the machine's frames, bounded by the caps
+of §page.document); in a frame in which a layer of the figures in view
+changed, the host draws those figures' shown pictures again, placed,
+over each other, which is at most the layered area of drawing, scaled
+pictures being smaller. A `layer` call is a deferred call of 4 units
+(§page.charges); however many a frame makes, the host draws the page
+once.
 
 ## §page.events Events
 
@@ -405,7 +493,8 @@ users see.
 ## §page.determinism Determinism
 
 The device's state is the document bytes (or no document), the rectangle,
-the scroll value and the background. Nothing about layout is machine state,
+the scroll value, the background and the state of the 64 layers
+(§page.layers). Nothing about layout is machine state,
 nor are the locates the program made: what the layout means for the
 program arrives only as the events of §page.events.
 
@@ -419,7 +508,8 @@ deferred, with 4 (§charges). In addition:
 | Bytes copied between memory and the device: a page `submit` whose bytes were copied (its length in range and its buffer valid) | 1 per 4 bytes, rounded up, per call |
 
 Laying out the page is not charged: the host does it outside the
-machine's frames (§page.layout).
+machine's frames (§page.layout). Nor is drawing layers: a `layer` call
+costs its base charge of 4 whatever it changes (§page.layers).
 
 Provisional values (§provisional):
 
@@ -431,7 +521,10 @@ Provisional values (§provisional):
   least column cap, 48 units; font sizes 6 to 96;
 - page documents of 1 to 65,536 bytes (§page.calls);
 - 8 locates per frame, and at least the 8 latest waiting kept by a host
-  (§page.calls, §page.events).
+  (§page.calls, §page.events);
+- layers (§page.layers): 64 layers, 64 Layer commands in a document, the
+  layered area of 2 × 640 × 480 = 614,400 square units, and scales of 1
+  to 256 256ths (pictures never drawn larger than they are).
 
 ## §page.unspecified Not yet specified
 

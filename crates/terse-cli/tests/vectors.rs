@@ -41,6 +41,13 @@ const COLUMN: i32 = 512;
 
 const IMAGE: &[u8] = include_bytes!("../../../programs/reader/reader.terse");
 
+/// The reader's image: programs/reader/reader.terse, or with
+/// TERSE_TEST_READER set the image at that path (to check a reader built
+/// from changed sources before reader.terse is regenerated).
+fn reader_image() -> Vec<u8> {
+    std::env::var("TERSE_TEST_READER").map(|p| std::fs::read(p).unwrap()).unwrap_or_else(|_| IMAGE.to_vec())
+}
+
 /// Corpus cases the reader does not show as ARTICLE.md says, each with the
 /// reason. The test fails if one of these starts to agree, so that it is
 /// taken off the list. None at present.
@@ -121,7 +128,7 @@ impl Reader {
         node.set_subscriptions(Subscriptions::in_memory([alice.feed_key()]));
         node.set_identity_path(config.path().join("identity.key")).unwrap();
         let mut r = Reader {
-            machine: Machine::new(&Image::parse(IMAGE).unwrap()),
+            machine: Machine::new(&Image::parse(&reader_image()).unwrap()),
             content: ContentService::start_with_consent(node, Consent::Deny),
             script: Script::parse("12 press enter\n").unwrap(),
             page: PageInput::default(),

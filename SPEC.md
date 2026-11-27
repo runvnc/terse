@@ -1137,7 +1137,8 @@ In the clean style the host combines the displays in a fixed order, from the
 bottom:
 
 1. the terminal's cell backgrounds;
-2. the page (§page): its background, then its text;
+2. the page (§page): its background, then its text and figures (a
+   figure's layers in its own order, §page.layers);
 3. the vector displays: device 3's shapes, then device 9's (§vector3d.presentation);
 4. the terminal's characters and cursor.
 
@@ -1479,6 +1480,7 @@ the same.
 | `703h` | `scroll` | `a0` = y | 0 | deferred |
 | `704h` | `background` | `a0` = colour | 0 | deferred |
 | `705h` | `locate` | `a0` = anchor id | 0 done, 1 rejected | answered |
+| `706h` | `layer` | `a0` = layer, `a1` = flags, `a2` = x, `a3` = y, `a4` = scale | 0 done, 1 rejected | deferred |
 | `800h` | `start` | `a0` = address of an image ID (32 bytes, read) | a handle 1–8, or 0 if none is free | core |
 | `801h` | `stop` | `a0` = handle | 1, or 0 if the handle is not in use | core |
 | `802h` | `place` | `a0` = handle, `a1` = x, `a2` = y, `a3` = width, `a4` = height | 1, or 0 if the handle is not in use | core |

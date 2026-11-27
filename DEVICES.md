@@ -999,7 +999,7 @@ only; the place result is 0); answered.
 Page (slot 7): `submit` (`a0`, `a1` × 1, 1 … 65,536, read, ROM; length
 result 1, place result `FFFF_FFFEh`; deferred: 0, 1 per 4 bytes),
 `clear`, `region`, `scroll`, `background` (deferred, 0), `locate`
-(answered).
+(answered), `layer` (deferred: 0 if `a0` ≤ 63 else 1).
 
 Sound (slot 6, SPEC §sound): `submit` (`a0`, `a1` × 1, 1 … 4,096, read, ROM;
 both failures give 1; deferred: 0, 2 per byte), `wave` (`a1`, fixed 64
@@ -1042,7 +1042,7 @@ result depends on the device's state cannot be batched: it is answered.
 Deferred, so batchable: terminal `write`, `command`, `set_cursor`,
 `set_colours`, `cells_write`, `palette_set`, `size`; every call of the
 vector displays; every call of the sound device; page `submit`, `clear`,
-`region`, `scroll`, `background`.
+`region`, `scroll`, `background`, `layer`.
 Answered: terminal `get_cursor`, `get_colours` and `cells_read` (they read
 the device), content `submit` (the handle is the device's), page `locate`
 (it is refused when there is no document or after 8 in a frame: device

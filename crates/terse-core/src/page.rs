@@ -29,6 +29,49 @@ pub const MAX_LOCATES: usize = 8;
 /// are dropped.
 pub const MAX_PENDING_LOCATES: usize = 8;
 
+/// Layers a page has (SPEC §page.layers): ids 0 to 63.
+pub const LAYERS: usize = 64;
+/// Most Layer commands a document's figures use, in all (SPEC §page.layers).
+pub const MAX_LAYER_COMMANDS: usize = 64;
+/// The layered area: the boxes of all the groups of a document's layered
+/// figures add up to at most this, in square screen units (SPEC §page.layers).
+pub const LAYERED_AREA_CAP: u64 = 2 * 640 * 480;
+/// A layer's full size, in 256ths (SPEC §page.calls).
+pub const SCALE_FULL: u16 = 256;
+/// `layer` flags (SPEC §page.calls).
+pub const LAYER_SHOWN: u32 = 1;
+pub const LAYER_MIRRORED: u32 = 2;
+
+/// One layer's state (SPEC §page.layers).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LayerState {
+    pub shown: bool,
+    pub mirrored: bool,
+    /// The offset in sixteenths of a screen unit.
+    pub x: i16,
+    pub y: i16,
+    /// 1 to 256, in 256ths.
+    pub scale: u16,
+}
+
+impl Default for LayerState {
+    /// As after reset: shown, at (0, 0), full size, not mirrored (drawn
+    /// as if there were no layers).
+    fn default() -> Self {
+        LayerState { shown: true, mirrored: false, x: 0, y: 0, scale: SCALE_FULL }
+    }
+}
+
+impl LayerState {
+    /// Where the point (x, y) of a picture is drawn, in sixteenths from the
+    /// figure's corner (SPEC §page.layers).
+    pub fn place(&self, x: f32, y: f32) -> (f32, f32) {
+        let s = self.scale as f32 / 256.0;
+        let x = if self.mirrored { -s * x } else { s * x };
+        (self.x as f32 + x, self.y as f32 + s * y)
+    }
+}
+
 /// Document opcodes (SPEC §page.document).
 pub mod op {
     pub const END: u8 = 0x00;
@@ -54,6 +97,7 @@ pub mod path_op {
     pub const QUAD: u8 = 0x05;
     pub const CUBIC: u8 = 0x06;
     pub const CLOSE: u8 = 0x07;
+    pub const LAYER: u8 = 0x08;
 }
 
 /// Font faces (SPEC §page.document).
@@ -116,6 +160,8 @@ pub struct Page {
     /// The `locate` calls of this frame: the document generation at the
     /// call and the anchor (not machine state: the answers are inputs).
     locates: Vec<(u64, u16)>,
+    /// The layers' state (SPEC §page.layers).
+    layers: [LayerState; LAYERS],
 }
 
 impl Default for Page {
@@ -127,6 +173,7 @@ impl Default for Page {
             background: DEFAULT_BACKGROUND,
             generation: 0,
             locates: Vec::new(),
+            layers: [LayerState::default(); LAYERS],
         }
     }
 }
@@ -167,6 +214,28 @@ impl Page {
 
     pub fn set_background(&mut self, rgba: u32) {
         self.background = rgba;
+    }
+
+    /// `layer` (SPEC §page.calls): sets layer `id`'s state; flags bit 0
+    /// shown, bit 1 mirrored; the offset clamped to 16 bits, signed; the
+    /// scale to 1 … 256. [`RESULT_REJECTED`] (and nothing changes) for an
+    /// id above 63.
+    pub fn set_layer(&mut self, id: u32, flags: u32, x: u32, y: u32, scale: u32) -> u32 {
+        let Some(l) = self.layers.get_mut(id as usize) else { return RESULT_REJECTED };
+        let c = |v: u32| (v as i32).clamp(i16::MIN as i32, i16::MAX as i32) as i16;
+        *l = LayerState {
+            shown: flags & LAYER_SHOWN != 0,
+            mirrored: flags & LAYER_MIRRORED != 0,
+            x: c(x),
+            y: c(y),
+            scale: scale.clamp(1, SCALE_FULL as u32) as u16,
+        };
+        RESULT_DONE
+    }
+
+    /// The layers' state, by id.
+    pub fn layers(&self) -> &[LayerState; LAYERS] {
+        &self.layers
     }
 
     /// `locate` (SPEC §page.calls): asks for where anchor `id` is laid out in the
@@ -231,17 +300,34 @@ impl Page {
         self.set_region(x as u32, y as u32, w as u32, h as u32);
         self.scroll = r.u32()?;
         self.background = r.u32()?;
-        let d = r.u32()? as usize;
+        let word = r.u32()?;
+        let (d, k) = ((word & 0xFF_FFFF) as usize, (word >> 24) as usize);
         if d > MAX_DOCUMENT {
             return Err(crate::snapshot::bad("document length"));
         }
+        if k > LAYERS {
+            return Err(crate::snapshot::bad("layer records"));
+        }
         self.document = (d > 0).then(|| r.take(d).map(<[u8]>::to_vec)).transpose()?;
         self.generation = self.document.is_some() as u64;
+        self.layers = [LayerState::default(); LAYERS];
+        let mut next = 0;
+        for _ in 0..k {
+            let (id, flags) = (r.u8()? as usize, r.u8()?);
+            let (x, y, scale) = (r.u16()? as i16, r.u16()? as i16, r.u16()?);
+            let l = LayerState { shown: flags & 1 != 0, mirrored: flags & 2 != 0, x, y, scale };
+            if id < next || id >= LAYERS || flags > 3 || !(1..=SCALE_FULL).contains(&scale) || l == LayerState::default() {
+                return Err(crate::snapshot::bad("layer record"));
+            }
+            self.layers[id] = l;
+            next = id + 1;
+        }
         Ok(())
     }
 
-    /// The rectangle, scroll value, background and document (STATE.md,
-    /// page section); not the generation counter.
+    /// The rectangle, scroll value, background, document and the layers
+    /// not as after reset (STATE.md, page section); not the generation
+    /// counter.
     pub fn write_state(&self, out: &mut Vec<u8>) {
         let r = self.region;
         for v in [r.x, r.y, r.w, r.h] {
@@ -251,8 +337,15 @@ impl Page {
         out.extend_from_slice(&self.background.to_le_bytes());
         // No document is length 0 (a document is at least one byte).
         let doc = self.document.as_deref().unwrap_or(&[]);
-        out.extend_from_slice(&(doc.len() as u32).to_le_bytes());
+        let changed: Vec<(usize, &LayerState)> = self.layers.iter().enumerate().filter(|(_, l)| **l != LayerState::default()).collect();
+        out.extend_from_slice(&(doc.len() as u32 | (changed.len() as u32) << 24).to_le_bytes());
         out.extend_from_slice(doc);
+        for (id, l) in changed {
+            out.extend_from_slice(&[id as u8, l.shown as u8 | (l.mirrored as u8) << 1]);
+            for v in [l.x as u16, l.y as u16, l.scale] {
+                out.extend_from_slice(&v.to_le_bytes());
+            }
+        }
     }
 }
 
@@ -424,11 +517,12 @@ pub struct FigurePath {
 }
 
 impl FigurePath {
-    /// The area this path counts against the cap (SPEC §page.document), in square
-    /// screen units: the box of its points, clipped to the figure's box,
-    /// for its fill, and that box grown by half the stroke width, clipped,
-    /// for its stroke; each rounded up.
-    fn area(&self, width: u16, height: u16) -> u64 {
+    /// The boxes this path counts against the area cap (SPEC §page.document), in
+    /// sixteenths from the figure's corner, [x0, y0, x1, y1]: the box of its
+    /// points, clipped to the figure's box, for its fill, and that box grown
+    /// by half the stroke width, clipped, for its stroke; `None` where
+    /// there is no fill or stroke, or the box is empty.
+    fn boxes(&self, width: u16, height: u16) -> [Option<[i64; 4]>; 2] {
         let (mut x0, mut y0, mut x1, mut y1) = (i64::MAX, i64::MAX, i64::MIN, i64::MIN);
         for s in &self.segments {
             let pts: &[(i16, i16)] = &match *s {
@@ -445,23 +539,55 @@ impl FigurePath {
             }
         }
         if x0 > x1 {
-            return 0;
+            return [None, None];
         }
         let (w, h) = (16 * width as i64, 16 * height as i64);
-        let clipped = |grow: i64| -> u64 {
-            let cw = (x1 + grow).min(w) - (x0 - grow).max(0);
-            let ch = (y1 + grow).min(h) - (y0 - grow).max(0);
-            if cw <= 0 || ch <= 0 { 0 } else { (cw as u64 * ch as u64).div_ceil(256) }
+        let clipped = |grow: i64| -> Option<[i64; 4]> {
+            let b = [(x0 - grow).max(0), (y0 - grow).max(0), (x1 + grow).min(w), (y1 + grow).min(h)];
+            (b[2] > b[0] && b[3] > b[1]).then_some(b)
         };
-        let mut area = 0;
-        if self.fill.is_some() {
-            area += clipped(0);
-        }
-        if let Some((_, sw)) = self.stroke {
-            area += clipped((sw as i64 + 1) / 2);
-        }
-        area
+        [self.fill.and_then(|_| clipped(0)), self.stroke.and_then(|(_, sw)| clipped((sw as i64 + 1) / 2))]
     }
+
+    /// The area this path counts against the cap (SPEC §page.document), in square
+    /// screen units: its boxes' ([`FigurePath::boxes`]), each rounded up.
+    fn area(&self, width: u16, height: u16) -> u64 {
+        self.boxes(width, height).iter().flatten().map(box_area).sum()
+    }
+}
+
+/// A box's area in square screen units, rounded up (its sides in sixteenths).
+fn box_area(b: &[i64; 4]) -> u64 {
+    if b[2] <= b[0] || b[3] <= b[1] { 0 } else { ((b[2] - b[0]) as u64 * (b[3] - b[1]) as u64).div_ceil(256) }
+}
+
+/// The smallest box holding both (an empty `a` holds nothing).
+fn union(a: [i64; 4], b: [i64; 4]) -> [i64; 4] {
+    if a[2] <= a[0] {
+        return b;
+    }
+    [a[0].min(b[0]), a[1].min(b[1]), a[2].max(b[2]), a[3].max(b[3])]
+}
+
+/// A figure's group (SPEC §page.layers): its base (`layer` `None`) or the
+/// paths after one Layer command.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FigureGroup {
+    /// The layer it belongs to; `None` for the base.
+    pub layer: Option<u8>,
+    pub paths: Vec<FigurePath>,
+    /// In sixteenths from the figure's corner, [x0, y0, x1, y1]: for a
+    /// layered figure the group's box (empty, all 0, if it draws nothing);
+    /// for a figure without layers, its whole box.
+    pub bounds: [i32; 4],
+}
+
+/// What a document's figures have used of the layer limits so far, in
+/// document order (SPEC §page.layers): Layer commands and layered area.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LayerBudget {
+    pub commands: usize,
+    pub area: u64,
 }
 
 impl FigurePath {
@@ -522,34 +648,88 @@ impl Figure {
     }
 
     /// Decodes the path commands (SPEC §page.document) into the paths to draw, in
-    /// order: up to an unknown opcode or cut-off operands, without paths
-    /// that draw nothing, and only as far as the caps allow (at most
-    /// [`FIGURE_PATH_CAP`] paths, area and length).
+    /// order, the figure's groups flattened (hidden layers included): as
+    /// [`Figure::groups`] for a figure alone in its document.
     pub fn paths(&self) -> Vec<FigurePath> {
+        self.groups(&mut LayerBudget::default()).into_iter().flat_map(|g| g.paths).collect()
+    }
+
+    /// Whether the path commands hold a Layer command that is used, the
+    /// document's figures before this one having used `budget` (SPEC
+    /// §page.layers: the figure is layered).
+    fn layered(&self, budget: &LayerBudget) -> bool {
+        let b = &self.path;
+        let mut at = 0;
+        while at < b.len() {
+            let n = match b[at] {
+                path_op::FILL | path_op::MOVE | path_op::LINE => 4,
+                path_op::STROKE => 6,
+                path_op::QUAD => 8,
+                path_op::CUBIC => 12,
+                path_op::CLOSE => 0,
+                path_op::LAYER => 1,
+                _ => return false,
+            };
+            if at + 1 + n > b.len() {
+                return false;
+            }
+            if b[at] == path_op::LAYER {
+                return (b[at + 1] as usize) < LAYERS && budget.commands < MAX_LAYER_COMMANDS;
+            }
+            at += 1 + n;
+        }
+        false
+    }
+
+    /// Decodes the path commands (SPEC §page.document, §page.layers) into the
+    /// figure's groups, in order: up to an unknown opcode, cut-off operands
+    /// or a Layer command that ends them, without paths that draw nothing,
+    /// and only as far as the caps allow (at most [`FIGURE_PATH_CAP`]
+    /// paths, area and length, and for a layered figure the document's
+    /// layered area). `budget` is what the document's figures before this
+    /// one used of the layer limits; it is updated.
+    pub fn groups(&self, budget: &mut LayerBudget) -> Vec<FigureGroup> {
         let b = &self.path;
         let i16_at = |i: usize| i16::from_le_bytes([b[i], b[i + 1]]);
-        let mut out = Vec::new();
+        let layered = self.layered(budget);
+        let whole = [0, 0, 16 * self.width as i32, 16 * self.height as i32];
+        let mut groups = vec![FigureGroup { layer: None, paths: Vec::new(), bounds: if layered { [0; 4] } else { whole } }];
         let mut fill: Option<[u8; 4]> = None;
         let mut stroke: Option<([u8; 4], u16)> = Some(([self.rgb[0], self.rgb[1], self.rgb[2], 255], DEFAULT_STROKE_WIDTH));
         let mut segments: Vec<Segment> = Vec::new();
         // Current point, start of the open subpath (None: no open subpath).
         let (mut cx, mut cy) = (0i16, 0i16);
         let mut start: Option<(i16, i16)> = None;
-        let (mut total, mut total_len) = (0u64, 0u64);
+        let (mut total, mut total_len, mut count) = (0u64, 0u64, 0usize);
         let cap = self.area_cap();
         let mut capped = false;
-        let mut flush = |segments: &mut Vec<Segment>, fill: Option<[u8; 4]>, stroke: Option<([u8; 4], u16)>| {
+        let mut flush = |groups: &mut Vec<FigureGroup>, segments: &mut Vec<Segment>, fill: Option<[u8; 4]>, stroke: Option<([u8; 4], u16)>, budget: &mut LayerBudget| {
             let draws = segments.iter().any(|s| !matches!(s, Segment::Move(..)));
             if draws && !capped && (fill.is_some() || stroke.is_some()) {
                 let p = FigurePath { fill, stroke, segments: std::mem::take(segments) };
                 let area = p.area(self.width, self.height);
                 let len = p.length();
-                if total + area > cap || total_len + len > FIGURE_LENGTH_CAP || out.len() == FIGURE_PATH_CAP {
+                let g = groups.last_mut().unwrap();
+                // The group's box with this path, and what that adds to
+                // the layered area.
+                let (grown, more) = if layered {
+                    let old = g.bounds.map(|v| v as i64);
+                    let new = p.boxes(self.width, self.height).iter().flatten().fold(old, |a, b| union(a, *b));
+                    (new, box_area(&new) - box_area(&old))
+                } else {
+                    ([0; 4], 0)
+                };
+                if total + area > cap || total_len + len > FIGURE_LENGTH_CAP || count == FIGURE_PATH_CAP || budget.area + more > LAYERED_AREA_CAP {
                     capped = true;
                 } else {
                     total += area;
                     total_len += len;
-                    out.push(p);
+                    count += 1;
+                    if layered {
+                        budget.area += more;
+                        g.bounds = grown.map(|v| v as i32);
+                    }
+                    g.paths.push(p);
                 }
             }
             segments.clear();
@@ -563,6 +743,7 @@ impl Figure {
                 path_op::QUAD => 8,
                 path_op::CUBIC => 12,
                 path_op::CLOSE => 0,
+                path_op::LAYER => 1,
                 _ => break,
             };
             if at + 1 + n > b.len() {
@@ -576,7 +757,7 @@ impl Figure {
             }
             match opcode {
                 path_op::FILL | path_op::STROKE => {
-                    flush(&mut segments, fill, stroke);
+                    flush(&mut groups, &mut segments, fill, stroke, budget);
                     start = None;
                     let rgba = [b[a], b[a + 1], b[a + 2], b[a + 3]];
                     if opcode == path_op::FILL {
@@ -585,6 +766,15 @@ impl Figure {
                         let w = u16::from_le_bytes([b[a + 4], b[a + 5]]);
                         stroke = (rgba[3] != 0 && w != 0).then_some((rgba, w));
                     }
+                }
+                path_op::LAYER => {
+                    flush(&mut groups, &mut segments, fill, stroke, budget);
+                    start = None;
+                    if b[a] as usize >= LAYERS || budget.commands >= MAX_LAYER_COMMANDS {
+                        break;
+                    }
+                    budget.commands += 1;
+                    groups.push(FigureGroup { layer: Some(b[a]), paths: Vec::new(), bounds: [0; 4] });
                 }
                 path_op::MOVE => {
                     (cx, cy) = (i16_at(a), i16_at(a + 2));
@@ -612,8 +802,8 @@ impl Figure {
             }
             at += 1 + n;
         }
-        flush(&mut segments, fill, stroke);
-        out
+        flush(&mut groups, &mut segments, fill, stroke, budget);
+        groups
     }
 }
 
@@ -1879,6 +2069,200 @@ mod tests {
             out
         };
         assert_ne!(state(&pt(path_op::LINE, &[1, 2])), state(&pt(path_op::LINE, &[1, 3])));
+    }
+
+    /// A filled square from (x, y), `side` units, in sixteenths.
+    fn square(x: i16, y: i16, side: i16) -> Vec<u8> {
+        use path_op::*;
+        let mut v = vec![FILL, 200, 100, 50, 255, STROKE, 0, 0, 0, 0, 0, 0];
+        v.extend(pt(MOVE, &[x * 16, y * 16]));
+        v.extend(pt(LINE, &[(x + side) * 16, y * 16]));
+        v.extend(pt(LINE, &[(x + side) * 16, (y + side) * 16]));
+        v.push(CLOSE);
+        v
+    }
+
+    fn groups_of(doc: &[u8]) -> Vec<Vec<FigureGroup>> {
+        let mut budget = LayerBudget::default();
+        parse(doc).iter().filter_map(|p| p.figure.as_ref()).map(|f| f.groups(&mut budget)).collect()
+    }
+
+    #[test]
+    fn layers_split_a_figure_into_groups() {
+        // Base, then layer 3, then layer 0, then layer 3 again.
+        let mut path = square(0, 0, 10);
+        path.extend([path_op::LAYER, 3]);
+        path.extend(square(20, 20, 4));
+        path.extend(square(30, 20, 4));
+        path.extend([path_op::LAYER, 0]);
+        path.extend([path_op::LAYER, 3]);
+        path.extend(square(40, 40, 2));
+        let g = &groups_of(&figure(100, 50, 0, &path))[0];
+        assert_eq!(g.iter().map(|g| (g.layer, g.paths.len())).collect::<Vec<_>>(), [(None, 1), (Some(3), 2), (Some(0), 0), (Some(3), 1)]);
+        // Boxes in sixteenths: the paths' boxes, joined.
+        assert_eq!(g[0].bounds, [0, 0, 160, 160]);
+        assert_eq!(g[1].bounds, [320, 320, 544, 384]);
+        assert_eq!(g[2].bounds, [0; 4]);
+        // A Layer command keeps the fill: the path after it is filled.
+        assert!(g[1].paths.iter().all(|p| p.fill == Some([200, 100, 50, 255])));
+        // A figure without layers: one group, the whole box (as before).
+        let g = &groups_of(&figure(100, 50, 0, &square(0, 0, 10)))[0];
+        assert_eq!((g.len(), g[0].layer, g[0].bounds), (1, None, [0, 0, 1600, 800]));
+        // Flattened, every path of every group (hidden or not).
+        let f = Figure { width: 100, height: 50, rgb: [1, 2, 3], anchor: 0, path: path.clone() };
+        assert_eq!(f.paths().len(), 4);
+    }
+
+    #[test]
+    fn a_layer_above_63_ends_the_path_commands() {
+        let mut path = square(0, 0, 10);
+        path.extend([path_op::LAYER, 64]);
+        path.extend(square(20, 20, 4));
+        let g = &groups_of(&figure(100, 50, 0, &path))[0];
+        // Not layered (the Layer command is not used): the whole box.
+        assert_eq!((g.len(), g[0].paths.len(), g[0].bounds), (1, 1, [0, 0, 1600, 800]));
+        // A cut-off Layer command ends them too.
+        let mut path = square(0, 0, 10);
+        path.push(path_op::LAYER);
+        assert_eq!(groups_of(&figure(100, 50, 0, &path))[0].len(), 1);
+    }
+
+    #[test]
+    fn layer_commands_are_counted_over_the_document() {
+        // 40 Layer commands in the first figure, 40 in the second: the
+        // 65th (the second figure's 25th) ends that figure's commands.
+        let fig = || {
+            let mut path = Vec::new();
+            for i in 0..40u8 {
+                path.extend([path_op::LAYER, i]);
+                path.extend(square(i as i16, 0, 1));
+            }
+            figure(100, 10, 0, &path)
+        };
+        let mut doc = fig();
+        doc.extend(fig());
+        let g = groups_of(&doc);
+        assert_eq!(g[0].len(), 41);
+        assert_eq!(g[1].len(), 25);
+        assert_eq!(g[1].last().unwrap().layer, Some(23));
+        assert!(g[1].iter().all(|g| g.layer.is_none() || g.paths.len() == 1));
+        // A third figure whose first Layer command is past the 64th is
+        // not layered: one group of the whole box.
+        let mut doc = fig();
+        doc.extend(fig());
+        doc.extend(fig());
+        let g = groups_of(&doc);
+        assert_eq!((g[2].len(), g[2][0].paths.len(), g[2][0].bounds), (1, 0, [0, 0, 1600, 160]));
+    }
+
+    /// A filled rectangle, in units.
+    fn rect(x: i16, y: i16, w: i16, h: i16) -> Vec<u8> {
+        use path_op::*;
+        let mut v = vec![FILL, 9, 9, 9, 255, STROKE, 0, 0, 0, 0, 0, 0];
+        v.extend(pt(MOVE, &[x * 16, y * 16]));
+        v.extend(pt(LINE, &[(x + w) * 16, y * 16]));
+        v.extend(pt(LINE, &[(x + w) * 16, (y + h) * 16]));
+        v.extend(pt(LINE, &[x * 16, (y + h) * 16]));
+        v.push(CLOSE);
+        v
+    }
+
+    #[test]
+    fn the_layered_area_is_capped_over_the_document() {
+        // A figure 640 x 480 whose base is the whole figure (307,200) and a
+        // layer as big: the cap (614,400) is reached exactly.
+        let mut path = rect(0, 0, 640, 480);
+        path.extend([path_op::LAYER, 1]);
+        path.extend(rect(0, 0, 640, 480));
+        let doc = figure(640, 480, 0, &path);
+        let g = &groups_of(&doc)[0];
+        assert_eq!(g[1].paths.len(), 1);
+        // A second such figure: its base alone is over the rest of the cap,
+        // so it and every path after it are not drawn.
+        let mut two = doc.clone();
+        two.extend(doc.clone());
+        let g = groups_of(&two);
+        assert_eq!((g[0][1].paths.len(), g[1][0].paths.len(), g[1][1].paths.len()), (1, 0, 0));
+        // A figure without layers is not counted: the layered one after it
+        // draws all its paths.
+        let mut plain = figure(640, 480, 0, &rect(0, 0, 640, 480));
+        plain.extend(doc);
+        let g = groups_of(&plain);
+        assert_eq!((g[0][0].paths.len(), g[1][0].paths.len(), g[1][1].paths.len()), (1, 1, 1));
+        // One row more in the layer: over the cap, not drawn.
+        let mut path = rect(0, 0, 640, 480);
+        path.extend([path_op::LAYER, 1]);
+        path.extend(rect(0, 0, 640, 240));
+        path.extend(rect(0, 240, 640, 241));
+        let g = &groups_of(&figure(640, 481, 0, &path))[0];
+        assert_eq!(g[1].paths.len(), 1);
+        // A group's box is a box: two small paths far apart count the box
+        // that holds both.
+        let mut path = rect(0, 0, 1, 1);
+        path.extend([path_op::LAYER, 1]);
+        path.extend(rect(0, 0, 1, 1));
+        path.extend(rect(99, 99, 1, 1));
+        let mut budget = LayerBudget::default();
+        let f = &parse(&figure(100, 100, 0, &path))[0];
+        f.figure.as_ref().unwrap().groups(&mut budget);
+        assert_eq!(budget, LayerBudget { commands: 1, area: 1 + 100 * 100 });
+    }
+
+    #[test]
+    fn layer_call_and_state() {
+        let mut p = Page::default();
+        assert_eq!(p.set_layer(64, 1, 0, 0, 256), RESULT_REJECTED);
+        assert_eq!(p.layers()[0], LayerState::default());
+        assert_eq!(p.set_layer(5, 0xFF, (-40000i32) as u32, 40000, 0), RESULT_DONE);
+        assert_eq!(p.layers()[5], LayerState { shown: true, mirrored: true, x: -32768, y: 32767, scale: 1 });
+        p.set_layer(6, 1, 16, (-16i32) as u32, 9999);
+        assert_eq!(p.layers()[6].scale, 256);
+        // Submit and clear keep the layers.
+        p.submit(&[op::END]);
+        p.clear();
+        assert!(p.layers()[5].shown);
+        // State: only the layers not as after reset are written; restored
+        // exactly.
+        let mut out = Vec::new();
+        p.write_state(&mut out);
+        let mut back = Page::default();
+        back.restore(&mut crate::snapshot::Reader::new(&out)).unwrap();
+        assert_eq!(back.layers(), p.layers());
+        let mut again = Vec::new();
+        back.write_state(&mut again);
+        assert_eq!(again, out);
+        // A page that never used layers is written as before layers.
+        let (mut a, mut b) = (Page::default(), Page::default());
+        a.submit(b"\x01\x02\x00hi");
+        b.submit(b"\x01\x02\x00hi");
+        b.set_layer(9, 1, 0, 0, 256); // as after reset
+        let (mut sa, mut sb) = (Vec::new(), Vec::new());
+        a.write_state(&mut sa);
+        b.write_state(&mut sb);
+        assert_eq!(sa, sb);
+        assert_eq!(&sa[16..20], &5u32.to_le_bytes(), "d, and no layer records");
+        b.set_layer(9, 1, 1, 0, 256);
+        sb.clear();
+        b.write_state(&mut sb);
+        assert_eq!(sb.len(), sa.len() + 8);
+        assert_eq!(sb[19], 1, "k = 1");
+        // A record as after reset is refused.
+        let mut good = sa.clone();
+        good[19] = 1;
+        good.extend([3, 1, 1, 0, 0, 0, 0, 1]);
+        assert!(Page::default().restore(&mut crate::snapshot::Reader::new(&good)).is_ok());
+        let mut bad = sa.clone();
+        bad[19] = 1;
+        bad.extend([3, 1, 0, 0, 0, 0, 0, 1]);
+        assert!(Page::default().restore(&mut crate::snapshot::Reader::new(&bad)).is_err());
+    }
+
+    #[test]
+    fn layer_placement() {
+        let l = LayerState { shown: true, mirrored: false, x: 160, y: -32, scale: 128 };
+        assert_eq!(l.place(100.0, 200.0), (210.0, 68.0));
+        let m = LayerState { mirrored: true, ..l };
+        assert_eq!(m.place(100.0, 200.0), (110.0, 68.0));
     }
 
     /// A table of `columns` with `flags` and alignments, then `cells` (each

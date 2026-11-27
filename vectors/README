@@ -220,6 +220,8 @@ A `path` line is `path fill <colour> stroke <colour> <width>` or
 path. A colour is `none` (nothing drawn: `none`, or any colour with
 opacity 0), `fg` (the reader's body text colour) or `#rrggbbaa`; the
 width is in sixteenths of a unit (a stroke of width 0 is `stroke none`).
+A path after a `layer` word (ARTICLE.md 6.1) ends with ` layer <n>`, the
+layer of the latest such word; it changes nothing that is drawn.
 Paths that draw nothing (no segment, or neither fill nor stroke) are not
 listed. Each path's commands follow, indented by four spaces, one per
 line, absolute, every coordinate in sixteenths of a unit (numbers

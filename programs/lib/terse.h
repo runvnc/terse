@@ -50,6 +50,7 @@
 #define CALL_PAGE_SCROLL 0x703
 #define CALL_PAGE_BACKGROUND 0x704
 #define CALL_PAGE_LOCATE 0x705
+#define CALL_PAGE_LAYER 0x706
 #define CALL_MACH_START 0x800
 #define CALL_MACH_STOP 0x801
 #define CALL_MACH_PLACE 0x802
@@ -791,6 +792,24 @@ typedef struct {
  * when *p holds a whole answer (at the second of the pair), else 0. */
 uint8_t page_place_event(const terse_event *e, page_place *p);
 
+/* Layers (SPEC §page.layers): sets the state of layer `id` (0-63) of the
+ * figures' Layer commands (path_layer): PAGE_LAYER_SHOWN and
+ * PAGE_LAYER_MIRRORED in `flags`; the offset (x, y) in sixteenths of a
+ * screen unit; the scale in 256ths, 1-256 (PAGE_SCALE_FULL), never larger.
+ * A point (px, py) of the layer's picture is drawn at (x + scale * px / 256,
+ * y + scale * py / 256), x - ... when mirrored, clipped to the figure's
+ * box. No new layout, no event: costs 4 units. PAGE_DONE, or PAGE_REJECTED
+ * for an id above 63. After reset every layer is shown at (0, 0), full
+ * size; submit and clear keep the layers' state. */
+#define PAGE_LAYERS 64
+#define PAGE_LAYER_SHOWN 0x01
+#define PAGE_LAYER_MIRRORED 0x02
+#define PAGE_SCALE_FULL 256
+static inline uint32_t page_layer(uint32_t id, uint32_t flags, int32_t x, int32_t y, uint32_t scale)
+{
+    return terse_call5(CALL_PAGE_LAYER, id, flags, (uint32_t)x, (uint32_t)y, scale);
+}
+
 /* The colour behind the text; a = 0 lets the cell backgrounds show. */
 static inline void page_background(uint8_t r, uint8_t g, uint8_t b, uint8_t a)
 {
@@ -863,6 +882,7 @@ void doc_figure(uint16_t width, uint16_t height, uint8_t align, const void *path
 #define PATH_QUAD 0x05
 #define PATH_CUBIC 0x06
 #define PATH_CLOSE 0x07
+#define PATH_LAYER 0x08
 
 /* Path builder, like the document builder: appends at path_ptr, never past
  * path_limit; a command that does not fit sets path_overflow and is not
@@ -879,6 +899,9 @@ void path_line(int16_t x, int16_t y);
 void path_quad(int16_t x1, int16_t y1, int16_t x, int16_t y);
 void path_cubic(int16_t x1, int16_t y1, int16_t x2, int16_t y2, int16_t x, int16_t y);
 void path_close(void);
+/* Ends the path; the paths after it are in layer `id` (0-63), until the
+ * next path_layer (SPEC §page.layers). The fill and stroke carry on. */
+void path_layer(uint8_t id);
 /* Opcode `op` (PATH_MOVE ... PATH_CUBIC) and its `n` points, x and y
  * alternating in `xy`. */
 void path_points(uint8_t op, uint32_t n, const int16_t *xy);
