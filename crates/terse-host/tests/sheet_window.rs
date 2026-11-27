@@ -546,11 +546,9 @@ fn chords_and_pasting() {
 
 /// Ctrl+Plus inserts a row above the selection, the subtotal's range
 /// grows; Ctrl+Minus deletes it again; a click on a column letter and
-/// Ctrl+Plus inserts a column; Ctrl+Shift+A sorts the items by amount
-/// with the header kept; Ctrl+Shift+5 shows a percentage; each undone with
-/// Ctrl+Z.
+/// Ctrl+Plus inserts a column, undone with Ctrl+Z.
 #[test]
-fn rows_columns_sorting_and_formats() {
+fn rows_and_columns() {
     editing_script(
         "rows",
         &[
@@ -573,6 +571,20 @@ fn rows_columns_sorting_and_formats() {
             "expect page contains Inserted 1 column",
             "press z ctrl",
             "wait 40",
+        ],
+    );
+}
+
+/// Ctrl+Shift+A sorts the items by amount with the header kept;
+/// Ctrl+Shift+5 shows a percentage; each undone with Ctrl+Z. (Apart from
+/// the rows and columns so that each script ends before a slow-frame
+/// notice of a loaded machine, shown from its start, times out.)
+#[test]
+fn sorting_and_formats() {
+    editing_script(
+        "sort",
+        &[
+            "settle max 300",
             "drag 360 96 120 206",
             "wait 5",
             "press a ctrl shift",

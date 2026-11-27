@@ -83,8 +83,9 @@ fn a_click_hits_the_cell_drawn_under_the_pointer() {
         return;
     }
     let dir = tempfile::tempdir().unwrap();
-    // D10 (the total) is drawn at about (360, 257) in screen units.
-    let script = "settle max 300\npointer 600 60\nwait 30\nclick 360 257\nsettle max 300\nexpect page contains D10\nquit\n";
+    // D10 (the total) is drawn at about (360, 272) in screen units (below
+    // the menu bar).
+    let script = "settle max 300\npointer 600 60\nwait 30\nclick 360 272\nsettle max 300\nexpect page contains D10\nquit\n";
     for renderer in ["software", "gpu"] {
         let o = drive(dir.path(), &program("sheet"), script, renderer);
         assert!(o.status.success(), "{renderer}: {}", text(&o));
