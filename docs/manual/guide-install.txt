@@ -17,7 +17,7 @@ tersenet: checked its SHA-256
 tersenet: installed /home/me/.local/bin/terse-host
 tersenet: installed /home/me/.local/bin/terse
 tersenet: installed /home/me/.local/bin/terse-relay
-tersenet: terse 0.1.0 b3:0a38148f171f2b64
+tersenet: terse 0.9.0 b3:0a38148f171f2b64
 tersenet: start it with: terse-host
 tersenet: to remove it: the same command, ending sh -s uninstall
 ```

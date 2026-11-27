@@ -73,11 +73,11 @@ sources: `native/core-c` (`make && ./test.sh`), `native/driver-example/test.sh`,
    `third_party/tls/webpki-roots-LICENSE` if it changed). The workflow refuses a tag that differs from this version.
 2. Tag and push:
 
-       git tag v0.1.0
-       git push origin v0.1.0
+       git tag v0.9.0
+       git push origin v0.9.0
 
 3. Wait for the workflow (Actions tab, "release"; about 20 to 30 minutes). It
-   ends by making a **draft** release named "Tersenet 0.1.0" with every file
+   ends by making a **draft** release named "Tersenet 0.9.0" with every file
    attached and the notes from `packaging/release-notes.md`.
 4. Check the draft: download the file for your system, run it, open the
    manual. Edit the notes if you like (say what changed).
@@ -95,7 +95,7 @@ its downloads are attached to the run as the artifact `terse-downloads`,
 named `dev-<commit>`.
 
 If a tag run fails, fix it on `main`, then move the tag
-(`git tag -f v0.1.0 && git push -f origin v0.1.0`) or, simpler, release the
+(`git tag -f v0.9.0 && git push -f origin v0.9.0`) or, simpler, release the
 next patch version. Rerunning the workflow on the same tag replaces the
 files of the draft.
 
