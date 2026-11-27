@@ -75,6 +75,5 @@
 > z
 > z
 > z
-> z
 < finds no Lamp, and will not sail blind
 < *** The end ***

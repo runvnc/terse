@@ -86,7 +86,7 @@ fn played_in_the_window() {
         script += "dump vectors > v1.txt\ndump terminal > t1.txt\n";
         script += "press backspace\npress backspace\npress backspace\npress backspace\nwait 4\n";
         script += &typed(&["up", "shine lantern at frame"]);
-        script += "settle\nexpect terminal contains Someone scratched a drawing\nexpect vectors contains c ebebdcff\nshot chalk.png\n";
+        script += "settle\nexpect terminal contains an old drawing stands out\nexpect vectors contains c ebebdcff\nshot chalk.png\n";
         script += "expect idle 60\n";
         script += "hold left 30\nsettle\nexpect vectors contains c 4e4e49ff\nshot faint.png\nexpect budget 50\n";
         // Late frames (expect no-slow) depend on the computer's load and the

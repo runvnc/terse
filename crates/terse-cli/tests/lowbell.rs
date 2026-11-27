@@ -310,6 +310,11 @@ fn walkthrough_through_terse_run() {
         script += &format!("{f} text {line}\n{} press enter\n", f + 1);
         f += 4;
     }
+    // The ending is longer than the text area: Esc answers its "more" prompts.
+    for _ in 0..4 {
+        script += &format!("{f} press esc\n");
+        f += 1;
+    }
     let tmp = tempfile::tempdir().unwrap();
     let events = tmp.path().join("walk.events");
     std::fs::write(&events, &script).unwrap();

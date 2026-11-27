@@ -482,37 +482,54 @@ static const uint16_t cp1252[32] = {
 static uint16_t code_point(uint8_t b) { return b < 0x80 ? b : b < 0xA0 ? cp1252[b - 0x80] : b; }
 
 /* Writes text `id`: pairs expanded, escapes read raw. */
+/* Text is most of what a frame costs: the common character (not the
+ * first of a wrapped line, not one that fills or ends the line, not
+ * capitalised or captured) goes straight onto the current line, with the
+ * line's length kept in a register; out_ch handles the rest. */
 static void text(uint16_t id)
 {
     if (!id)
         return;
     const uint8_t *p = text_data + text_off[id];
     uint8_t stack[48];
+    uint32_t len = curlen;
+    uint8_t *line = cur;
+    uint32_t slow = to_buf | cap_next;
+#define TEXT_SLOW(x) do { curlen = len; x; len = curlen; slow = to_buf | cap_next; } while (0)
     for (;;) {
         uint8_t c = *p++;
         if (c == 0)
             break;
         if (c == 1) {
-            out_ch(*p++);
+            uint8_t d = *p++;
+            TEXT_SLOW(out_ch(d));
             continue;
         }
         if (c == 2) {
-            placeholder(*p++);
+            uint8_t ph = *p++;
+            TEXT_SLOW(placeholder(ph));
             continue;
         }
-        uint8_t sp = 0;
+        uint32_t sp = 0;
         stack[sp++] = c;
         while (sp) {
             uint8_t b = stack[--sp];
             uint8_t k = token_of[b];
-            if (k == 255)
-                out_ch(b);
-            else if (sp < sizeof stack - 2) {
+            if (k == 255) {
+                if (!slow && b > ' ' && len < COLS)
+                    line[len++] = b;
+                else if (!slow && b == ' ' && len && len < COLS)
+                    line[len++] = b;
+                else
+                    TEXT_SLOW(out_ch(b));
+            } else if (sp < sizeof stack - 2) {
                 stack[sp++] = text_tokens[k][1];
                 stack[sp++] = text_tokens[k][0];
             }
         }
     }
+#undef TEXT_SLOW
+    curlen = len;
 }
 
 /* A message or text on its own line(s). */
@@ -878,8 +895,9 @@ static void go_room(uint8_t r)
     /* The beam starts in the middle of each new place. */
     G.beam_x = 640;
     G.beam_y = 300;
-    look();
-    enter_events();
+    /* The place is described, and its arrival events run, in the next
+     * frame: the command's own reply and the clock fill this one. */
+    pending_look = 2;
 }
 
 static void try_action(uint8_t a, uint8_t o1, uint8_t o2);

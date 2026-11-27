@@ -9,11 +9,11 @@
 novectors c ebebdcff
 > shine lantern at frame
 < You turn the beam on the bell frame.
-< Someone scratched a drawing here long ago
+< an old drawing stands out of the grain
 vectors c ebebdcff
-@ press left
+@ down left
 wait 40
-@ release left
+@ up left
 vectors c 4e4e49ff
 > undo
 < Undone

@@ -56,40 +56,19 @@ room bell_chamber "The Bell Chamber"
       dots 440 116
     layer boards colour dim
       line 0 250 640 250
-    layer tally colour chalk reveal tally_seen "The beam rakes across the sill and the scratches come up out of the wood: tally marks, hundreds of them, in groups of five, and beside the notch a straight line cut toward the far shore. Notch and line together make two marks; lay your eye along both and they find the Lamp." at 440 220
-      line 330 218 330 224
-      line 336 218 336 224
-      line 342 218 342 224
-      line 348 218 348 224
-      line 328 224 350 218
-      line 360 218 360 224
-      line 366 218 366 224
-      line 372 218 372 224
-      line 378 218 378 224
-      line 358 224 380 218
-      line 392 218 392 224
-      line 398 218 398 224
-      line 404 218 404 224
+    layer tally colour chalk reveal tally_seen "Scratches come up out of the sill: tally marks in fives, hundreds of them, and a line cut from the notch to the far shore. Sight along both and they find the Lamp." at 440 220
+      line 330 218 330 224 336 224 336 218 342 218 342 224 348 224 348 218
+      line 326 224 352 218
+      line 362 218 362 224 368 224 368 218
       line 440 222 470 222
-    layer diagram colour chalk reveal frame_seen "Low on the frame post, in the slant of the beam, scratches stand out of the grain. Someone scratched a drawing here long ago: a toothed wheel, a weight on a line, a lever over the wheel, and under the lever a little upright candle. Beside it, eleven short strokes." at 110 196
+    layer diagram colour chalk reveal frame_seen "Low on the frame post, in the slant of the beam, an old drawing stands out of the grain: a toothed wheel, a weight on a line, a lever over the wheel, and under the lever a little upright candle. Beside it, eleven short strokes." at 110 196
       circle 70 196 16
-      dots 70 176 86 188 86 206 70 216 54 206 54 188
       line 100 168 100 220
       rect 94 220 12 14
       line 60 172 130 160
       line 120 162 120 176
       rect 116 176 8 18
-      line 140 180 140 186
-      line 146 180 146 186
-      line 152 180 152 186
-      line 158 180 158 186
-      line 164 180 164 186
-      line 140 196 140 202
-      line 146 196 146 202
-      line 152 196 152 202
-      line 158 196 158 202
-      line 164 196 164 202
-      line 170 196 170 202
+      dots 140 182 146 182 152 182 158 182 164 182 170 182 140 198 146 198 152 198 158 198 164 198
 
 object lantern "storm lantern"
   nouns lantern

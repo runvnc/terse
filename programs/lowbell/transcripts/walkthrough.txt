@@ -25,9 +25,9 @@ vectors c aa8250ff
 > light lantern
 < You strike a match and light the lantern.
 > shine lantern at notch
-< tally marks, hundreds of them
+< tally marks in fives, hundreds of them
 < [The ringers' marks]
-status 9:03 pm
+status 9:04 pm
 # The town: Ines has a wick waiting, and a parcel for Tolly.
 > d
 < The Clock Room
@@ -89,12 +89,12 @@ status 9:03 pm
 > z
 > z
 < Time passes.
-status 10:02 pm
+status 10:04 pm
 > ring bell
 < Ten.
 < [Ten, on the hour]
 > shine lantern at frame
-< Someone scratched a drawing here long ago
+< an old drawing stands out of the grain
 # Across the lake.
 > d
 > d
