@@ -1801,7 +1801,7 @@ not depend on the display's refresh rate and screenshots are the same on every r
 
 `--tube` chooses the tube: `xy` (the default, a colour XY monitor: each line in its
 colour), `p31` (a green oscilloscope tube with a very short fast afterglow, 3 ms),
-`amber` (50 ms) or `vectrex` (white, 15 ms); the monochrome tubes show colours as
+`amber` (33 ms) or `vectrex` (white, 15 ms); the monochrome tubes show colours as
 brightness. `--vignette` darkens the glass towards the corners (by up to 30%). Both
 renderers draw all of this the same way, within rounding. (`--bloom`, which chose the
 resolution of the earlier bloom, is gone: the halo is always computed on its pyramid.)

@@ -307,7 +307,7 @@ impl Preset {
         match self {
             Preset::Xy => 0.02,
             Preset::P31 => 0.003,
-            Preset::Amber => 0.05,
+            Preset::Amber => 0.033,
             Preset::Vectrex => 0.015,
         }
     }
@@ -439,7 +439,7 @@ impl Look {
     }
 
     /// MAME's sliders for this look: its defaults (and `TERSE_MAME_*`),
-    /// the persistence a monochrome preset's (P31 3 ms, amber 50, the
+    /// the persistence a monochrome preset's (P31 3 ms, amber 33, the
     /// Vectrex 15; the colour tube MAME's 2), none with `no_trails` (the
     /// phosphor starts afresh each frame).
     pub fn mame_params(&self, no_trails: bool) -> crate::mame::Params {
