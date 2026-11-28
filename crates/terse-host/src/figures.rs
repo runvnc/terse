@@ -80,6 +80,14 @@ fn build(segments: &[Segment]) -> Option<tiny_skia::Path> {
     b.finish()
 }
 
+/// How many threads rasterise figures.
+fn threads() -> usize {
+    if let Some(n) = std::env::var("TERSE_FIGURE_THREADS").ok().and_then(|v| v.parse::<usize>().ok()) {
+        return n.clamp(1, 16);
+    }
+    std::thread::available_parallelism().map_or(1, |n| n.get().saturating_sub(1)).clamp(1, 4)
+}
+
 /// A request for the worker.
 pub struct Job {
     pub key: FigureKey,
@@ -96,9 +104,22 @@ pub struct Done {
     pub ms: f64,
 }
 
+/// Milliseconds every figure takes longer (`TERSE_HOST_SLOW=figures:<ms>`,
+/// for the tests of PERFORMANCE.md R20).
+static SLOW_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Makes every figure take `ms` longer to rasterise (a test hook).
+pub fn slow_by(ms: u64) {
+    SLOW_MS.store(ms, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// Runs `job` (on any thread).
 pub fn run(job: &Job) -> Done {
     let start = std::time::Instant::now();
+    let slow = SLOW_MS.load(std::sync::atomic::Ordering::Relaxed);
+    if slow > 0 {
+        std::thread::sleep(std::time::Duration::from_millis(slow));
+    }
     let (w, h) = job.key.1;
     let data = rasterize_at(&job.paths, (w, h), job.scale, job.origin, job.key.2)
         .map(Pixmap::take)
@@ -106,8 +127,13 @@ pub fn run(job: &Job) -> Done {
     Done { key: job.key, data, ms: start.elapsed().as_secs_f64() * 1000.0 }
 }
 
-/// The rasterising thread. Requests that are no longer wanted when their
-/// turn comes (the page scrolled on, the window was resized) are skipped.
+/// The rasterising threads: as many as the computer has cores less one
+/// (the frame loop's), at most 4, or `TERSE_FIGURE_THREADS`. A new scene
+/// is a dozen figures and more (a layered figure is one per group): one
+/// thread draws them one after another, several at once. Requests that
+/// are no longer wanted when their turn comes (the page scrolled on, the
+/// window was resized) are skipped; they are taken in the order sent, so
+/// a page sends those in view first.
 pub struct Rasterizer {
     jobs: Sender<Job>,
     pub done: Receiver<Done>,
@@ -119,20 +145,25 @@ impl Rasterizer {
         let (jobs, rx) = std::sync::mpsc::channel::<Job>();
         let (tx, done) = std::sync::mpsc::channel();
         let wanted: Arc<Mutex<HashSet<FigureKey>>> = Arc::default();
-        let still = wanted.clone();
-        std::thread::Builder::new()
-            .name("page figures".into())
-            .spawn(move || {
-                while let Ok(job) = rx.recv() {
-                    if !still.lock().unwrap().contains(&job.key) {
-                        continue;
+        let rx = Arc::new(Mutex::new(rx));
+        for n in 0..threads() {
+            let (rx, tx, still) = (rx.clone(), tx.clone(), wanted.clone());
+            std::thread::Builder::new()
+                .name(format!("page figures {n}"))
+                .spawn(move || {
+                    loop {
+                        // The lock is held only to take the next job.
+                        let Ok(job) = rx.lock().unwrap().recv() else { return };
+                        if !still.lock().unwrap().contains(&job.key) {
+                            continue;
+                        }
+                        if tx.send(run(&job)).is_err() {
+                            return;
+                        }
                     }
-                    if tx.send(run(&job)).is_err() {
-                        return;
-                    }
-                }
-            })
-            .expect("start the figure thread");
+                })
+                .expect("start a figure thread");
+        }
         Rasterizer { jobs, done, wanted }
     }
 

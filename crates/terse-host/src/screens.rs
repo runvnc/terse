@@ -735,6 +735,10 @@ impl Display for GpuDisplay {
         self.screens.shell.take_page_figure_log()
     }
 
+    fn page_shown_generation(&self) -> Option<u64> {
+        self.screens.shell.page_shown_generation()
+    }
+
     fn snapshot(&mut self, viewport: (u32, u32)) -> Result<Vec<u8>, String> {
         let (width, height) = viewport;
         let target = self.render_target(viewport);

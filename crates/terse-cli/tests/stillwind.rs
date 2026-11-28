@@ -604,5 +604,14 @@ fn image_is_up_to_date() {
             assert_eq!(fresh.map(|p| std::fs::read(p).unwrap()), Some(bytes), "programs/stillwind/blobs/{room}-*.scene is out of date: run build.sh");
         }
     }
-    common::check_up_to_date(&IMAGE_BYTES, &[&format!("{NAME}/{NAME}.c")], true, NAME, RAM_PAGES, &[(2, 0), (3, 0), (7, 0), (4, 0x80)]);
+    // The image lists the scenes' blobs (SPEC §image.blobs), in file name
+    // order, after the program's own ROM.
+    let img = image();
+    let listed: Vec<([u8; 32], u32)> = img.blob_list().iter().map(|b| (b.id, b.size)).collect();
+    let want: Vec<([u8; 32], u32)> = blobs().iter().map(|(_, b)| (terse_net::blob_id(b), b.len() as u32)).collect();
+    assert_eq!(listed, want, "the image's blob list is not the scenes': run programs/stillwind/build.sh");
+    let code = &img.rom[..img.rom.len() - 4 - 36 * listed.len()];
+    let devices: Vec<terse_core::DeviceReq> = img.devices.clone();
+    let without = Image::build(NAME, img.ram_pages, &devices, code);
+    common::check_up_to_date(&without, &[&format!("{NAME}/{NAME}.c")], true, NAME, RAM_PAGES, &[(2, 0), (3, 0), (7, 0), (4, 0x80)]);
 }

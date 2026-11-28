@@ -65,6 +65,6 @@ pub use feeds::{FeedStore, Subscriptions};
 pub use identity::{FeedKey, Identity};
 pub use node::{Article, Delivery, Done, Draft, FeedEvent, Node};
 pub use records::{Owner, Records};
-pub use service::{Asked, Consent, ContentService, FeedCommand, HeadlessSystem, Prompt};
+pub use service::{Asked, Consent, ContentService, FeedCommand, HeadlessSystem, Prompt, Timing};
 pub use snapshots::Snapshots;
 pub use store::{BlobStore, default_config_dir, default_data_dir, default_store_dir};

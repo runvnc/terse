@@ -57,15 +57,16 @@ const PAGE: u32 = 8192;
 
 const BUILD_USAGE: &str = "usage:
   terse build <source>... [-o <out.terse>] [--title <t>] [--ram-pages <n>] [--device <slot:version>]...
-              [--optional <slot:version>]... [--cflag <flag>]... [--clang <path>] [--lld <path>] [--rustc <path>]
-              [--show] [--run [the options of terse run]...]
+              [--optional <slot:version>]... [--blob <file>]... [--cflag <flag>]... [--clang <path>] [--lld <path>]
+              [--rustc <path>] [--show] [--run [the options of terse run]...]
   terse build --write-lib <dir>
   terse new <file.c|file.rs|file.S>
 Sources: C (.c) and assembly (.S, .s), several of them, or one Rust crate root (.rs).
 -o: default <first source's stem>.terse in the current directory. --title: default that stem
 (at most 16 bytes). --device and --optional as in `terse pack`; without --device the image requires
 the program profile's devices, 2:0 (terminal) and 3:0 (2D vector display). --ram-pages: default the
-program's data and .bss plus 8 KiB for the stack, in 8 KiB pages. --show prints each command as it
+program's data and .bss plus 8 KiB for the stack, in 8 KiB pages. --blob lists a file's bytes as a blob
+the program needs (SPEC §image.blobs: a host gets it with the image), as in `terse pack`. --show prints each command as it
 runs it. --run then runs the image as `terse run` does, with the options after it.
 --write-lib writes the files built into terse (programs/lib and its Rust runtime) to <dir>, for
 building by hand (docs/toolchain.md). Tools: clang, ld.lld (C and assembly) and rustc with the
@@ -285,12 +286,17 @@ pub fn build(all: &[String]) -> Result<ExitCode, String> {
             let name = crate::experimental_names(&args).into_iter().find(|(s, _)| *s == d.slot).map_or(String::new(), |(_, n)| format!("={n}"));
             pack.extend([if d.optional { "--optional" } else { "--device" }.into(), format!("{}:{}{name}", d.slot, d.version)]);
         }
+        for b in args.all("--blob") {
+            pack.extend(["--blob".into(), b.to_string()]);
+        }
         pack.extend(["-o".into(), out.clone()]);
         let mut cmd = Command::new(&pack[0]);
         cmd.args(&pack[1..]);
         println!("{}", shown(&cmd));
     }
-    // spec/experimental.md: the names of experimental devices end the ROM.
+    // SPEC §image.blobs: the blobs the program needs, then (spec/experimental.md)
+    // the names of experimental devices, end the ROM.
+    let rom = crate::with_blob_list(&args, rom)?;
     let rom = crate::with_experimental_table(&args, &devices, rom)?;
     let file = Image::build(&title, ram_pages, &devices, &rom);
     let image = Image::parse(&file).map_err(|e| e.to_string())?;
@@ -314,8 +320,9 @@ pub fn build(all: &[String]) -> Result<ExitCode, String> {
 }
 
 /// The options before --run (everything after it is terse run's).
-const BUILD_OPTIONS: [&str; 11] = [
+const BUILD_OPTIONS: [&str; 12] = [
     "-o",
+    "--blob",
     "--title",
     "--ram-pages",
     "--device",

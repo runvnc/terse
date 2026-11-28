@@ -765,6 +765,10 @@ impl Renderer {
         self.page.take_figure_log()
     }
 
+    pub fn page_shown_generation(&self) -> Option<u64> {
+        self.page.shown_generation()
+    }
+
     /// Whether the page's scroll is animated (not for screenshots).
     pub fn set_page_animation(&mut self, on: bool) {
         self.page.set_animate(on);

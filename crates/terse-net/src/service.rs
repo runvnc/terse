@@ -59,6 +59,10 @@ enum Work {
     DeleteSnapshot(Owner, u8),
     /// Forget the searches of machine `tag` (it ceased to exist).
     EndSearches(u32),
+    /// The blobs an image lists (SPEC §image.blobs), fetched if not held.
+    Listed(Vec<terse_core::image::ListedBlob>),
+    /// [`ContentService::set_local_delay`].
+    LocalDelay(Duration),
 }
 
 /// The key of a machine's search of a scope in the node: a find replaces
@@ -119,6 +123,10 @@ pub struct Prompt {
 
 enum Finished {
     Done(u32, Completion),
+    /// The request (tag, handle) completed next was carried out at `at`
+    /// (on this thread, not when the frame loop takes it), through the
+    /// relays or not (PERFORMANCE.md R20).
+    Timed { tag: u32, handle: u8, at: Instant, relay: bool },
     Ask(Prompt, Request),
     /// A snapshot was stored in a slot (or not).
     Saved(u8, bool),
@@ -148,7 +156,29 @@ pub struct ContentService {
     /// The machine's reading profile (SPEC §profiles): requests
     /// outside it complete with status Refused without asking.
     reading: bool,
+    /// When each content request in progress was submitted, by (tag,
+    /// handle), and when those the worker timed were done, through the
+    /// relays or not (PERFORMANCE.md R20).
+    started: HashMap<(u32, u8), Instant>,
+    timed: HashMap<(u32, u8), (Instant, bool)>,
+    /// Requests completed since the last [`ContentService::take_timings`].
+    timings: Vec<Timing>,
 }
+
+/// How long a content request took, from its submit to its completion
+/// arriving back (PERFORMANCE.md R20): one the host answered itself (its
+/// store, its own state) or one that went to the relays.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Timing {
+    pub tag: u32,
+    pub handle: u8,
+    pub ms: f64,
+    /// It went to the relays: its time is the network's.
+    pub relay: bool,
+}
+
+/// The most timings kept between two takes (the oldest go first).
+const TIMINGS_KEPT: usize = 256;
 
 /// Whether a request is one the reading profile carries out (SPEC §profiles):
 /// get, subscriptions, timeline, names, identity,
@@ -216,6 +246,9 @@ impl ContentService {
             saved: Vec::new(),
             restored: Vec::new(),
             reading: false,
+            started: HashMap::new(),
+            timed: HashMap::new(),
+            timings: Vec::new(),
         }
     }
 
@@ -268,13 +301,32 @@ impl ContentService {
     }
 
     fn receive(&mut self, f: Finished, done: &mut Vec<(u32, Completion)>) {
+        if let Finished::Timed { tag, handle, at, relay } = f {
+            self.timed.insert((tag, handle), (at, relay));
+            return;
+        }
         self.outstanding -= 1;
         match f {
-            Finished::Done(tag, c) => done.push((tag, c)),
+            Finished::Timed { .. } => unreachable!(),
+            Finished::Done(tag, c) => {
+                // Timed from its submit to the worker's carrying it out: how
+                // late the frame loop takes it is the frame loop's.
+                let started = self.started.remove(&(tag, c.handle));
+                if let (Some(from), Some((at, relay))) = (started, self.timed.remove(&(tag, c.handle))) {
+                    if self.timings.len() == TIMINGS_KEPT {
+                        self.timings.remove(0);
+                    }
+                    let ms = at.saturating_duration_since(from).as_secs_f64() * 1000.0;
+                    self.timings.push(Timing { tag, handle: c.handle, ms, relay });
+                }
+                done.push((tag, c))
+            }
             Finished::Saved(slot, ok) => self.saved.push((slot, ok)),
             Finished::Deleted => {}
             Finished::Restored(tag, r) => self.restored.push((tag, r)),
             Finished::Ask(prompt, request) => {
+                // The user's time to answer is nobody's.
+                self.started.remove(&(prompt.tag, prompt.handle));
                 // Queued in (tag, handle) order among those not yet shown.
                 let key = (prompt.tag, prompt.handle);
                 let at = (1..self.prompts.len().max(1))
@@ -325,6 +377,7 @@ impl ContentService {
                 continue;
             }
             self.outstanding += 1;
+            self.started.insert((tag, r.handle), Instant::now());
             // The worker only stops when this service is dropped.
             let _ = self.jobs.send(Work::Content(tag, r, None));
         }
@@ -346,6 +399,7 @@ impl ContentService {
                 continue;
             }
             self.outstanding += 1;
+            self.started.insert((tag, r.handle), Instant::now());
             let _ = self.jobs.send(Work::Content(tag, r, Some(owner.clone())));
         }
     }
@@ -361,6 +415,18 @@ impl ContentService {
     /// Fetches the whole blob `id` (from the store, else the relays);
     /// completed, with `tag`, as handle 0 with `Outcome::Got`, `NotFound`
     /// or `Failed`.
+    /// Gets the blobs `image` lists that the store does not hold (SPEC
+    /// §image.blobs), without waiting and without reporting: a host calls it
+    /// when it starts a machine of the image. A shell's start, `start_program`
+    /// and restore ([`Self::fetch`], [`Self::fetch_program`]) do it for the
+    /// image they get.
+    pub fn fetch_listed(&mut self, image: &terse_core::Image) {
+        let listed = image.blob_list();
+        if !listed.is_empty() {
+            let _ = self.jobs.send(Work::Listed(listed));
+        }
+    }
+
     pub fn fetch(&mut self, tag: u32, id: [u8; 32]) {
         self.outstanding += 1;
         let _ = self.jobs.send(Work::Fetch(tag, id));
@@ -410,6 +476,19 @@ impl ContentService {
 
     pub fn outstanding(&self) -> usize {
         self.outstanding
+    }
+
+    /// How long the content requests completed since the last call took
+    /// (PERFORMANCE.md R20), in the order their completions came back;
+    /// at most the last 256.
+    pub fn take_timings(&mut self) -> Vec<Timing> {
+        std::mem::take(&mut self.timings)
+    }
+
+    /// Makes every content request the host answers itself wait `delay`
+    /// first, as a slow store would (for the tests of PERFORMANCE.md R20).
+    pub fn set_local_delay(&mut self, delay: Duration) {
+        let _ = self.jobs.send(Work::LocalDelay(delay));
     }
 
     /// Completions finished so far; never blocks.
@@ -975,6 +1054,7 @@ fn feed_request(
 fn worker(mut node: Node, consent: Consent, jobs: Receiver<Work>, finished: Sender<Finished>, events: Sender<FeedEvent>) {
     let mut pending: HashMap<Token, (u32, Job)> = HashMap::new();
     let mut next: Token = 0;
+    let mut local_delay = Duration::ZERO;
     loop {
         // Block for work only when nothing is waiting on the relay and no
         // feed is followed.
@@ -1013,6 +1093,8 @@ fn worker(mut node: Node, consent: Consent, jobs: Receiver<Work>, finished: Send
                     return;
                 }
             }
+            Some(Work::Listed(listed)) => node.fetch_blobs(listed),
+            Some(Work::LocalDelay(d)) => local_delay = d,
             Some(Work::Fetch(tag, id)) => {
                 pending.insert(next, (tag, Job::Fetch));
                 node.start_get(next, id);
@@ -1183,8 +1265,19 @@ fn worker(mut node: Node, consent: Consent, jobs: Receiver<Work>, finished: Send
         // before the relays are polled: polling them waits for each
         // connection's socket a few milliseconds.
         let ready = node.take_ready();
-        let finished_now = if ready.is_empty() { node.poll() } else { ready };
+        let relay = ready.is_empty();
+        let finished_now = if relay { node.poll() } else { ready };
+        if !relay && !local_delay.is_zero() {
+            thread::sleep(local_delay);
+        }
         for (token, done) in finished_now {
+            // PERFORMANCE.md R20: timed here, as the network's if it came through the relays.
+            if let Some((tag, Job::Get { handle, .. } | Job::Put { handle } | Job::Publish { handle } | Job::Find { handle, .. })) =
+                pending.get(&token)
+                && finished.send(Finished::Timed { tag: *tag, handle: *handle, at: Instant::now(), relay }).is_err()
+            {
+                return;
+            }
             let sent = match pending.remove(&token) {
                 Some((_, Job::FeedPublish)) => events
                     .send(match done {
@@ -1210,6 +1303,9 @@ fn worker(mut node: Node, consent: Consent, jobs: Receiver<Work>, finished: Send
                 },
                 // SPEC §machines.snapshots: the snapshot's image, by its ID.
                 Some((tag, Job::Restore(snapshot))) => {
+                    if let Done::Got(blob) = &done {
+                        node.fetch_listed(blob);
+                    }
                     let result = match done {
                         Done::Got(blob) => terse_core::load_image(&blob).map(|image| (image, *snapshot)),
                         Done::NotFound => Err(StartFailure::not_found("the snapshot's image was not found")),
@@ -1217,7 +1313,13 @@ fn worker(mut node: Node, consent: Consent, jobs: Receiver<Work>, finished: Send
                     };
                     finished.send(Finished::Restored(tag, result)).is_ok()
                 }
-                Some((tag, job)) => finished.send(Finished::Done(tag, completion(job, done))).is_ok(),
+                Some((tag, job)) => {
+                    // SPEC §image.blobs: an image fetched to start it brings its blobs.
+                    if let (Job::Fetch, Done::Got(blob)) = (&job, &done) {
+                        node.fetch_listed(blob);
+                    }
+                    finished.send(Finished::Done(tag, completion(job, done))).is_ok()
+                }
                 None => true,
             };
             if !sent {

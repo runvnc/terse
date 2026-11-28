@@ -79,6 +79,8 @@ of a line). The first line of every file is `terse-perf 1`.
 | `warn` | frame, component, count | The host warned the user (R15): `count` late frames within the warning window |
 | `stop` | frame, component, machine, image, saved | The host stopped a machine (R15): its handle (0: the shell or a machine alone), its program, where its snapshot went: `slot<n>` (an automatic slot, `spec/machines.md` §machines.snapshots), `file`, `none` |
 | `fail` | frame, component, count | One of the host's own components (`core`, `compose`, `present`) made `count` certain late frames within the stop window with nothing left to shed and no machine to blame: the host does not keep up on this computer as it runs (R15 step 4). A report counts it as a halt of that component |
+| `slow` | frame, ms, what, image | A response of the host's own that a program waited on took longer than its bound (`PERFORMANCE.md` R20): `store`, a content request the host answered itself, over 100 ms from its submit to its completion; `page`, a page document over 200 ms from its submit to its picture shown whole (laid out, the figures in view drawn). The host's fault, never the program's; the frame is the one in which it was seen, the image the program that waited |
+| `relay` | frame, ms, image | A content request that went to the relays took a second or more: the network's time, recorded so that a slow relay is told from a slow host; never a fault (`PERFORMANCE.md` R20) |
 | `excused` | frame, ms, why, component, own-ms, image | A late frame that would have been `blamed` and that the rule did not count for another reason than a resize: `open` (in a host with built-in devices, the blamed machine was in its first two frames, `PERFORMANCE.md` R15); the part with the most own time and its program, as in `late`. At most 60 within any 300 frames |
 | `mem` | seconds, component, rss-kib | A component's resident memory, every 600 frames (10 s) from the run's start: the host's process is `core` |
 | `check` | component, ms, result | The start-up hardware check (R16): a device's worst legal frame took this long; `ok`, `shed` (the look is not offered), `slow` (the device's worst frame takes more than a frame), `absent` (not provided) |
@@ -100,7 +102,8 @@ A record must never grow without limit nor become a cost itself:
   lines again, so that every file can be read alone. A directory keeps at
   most 16 files: the oldest go first.
 - **Rate.** A run writes at most 2,000 `late` lines; later late frames are
-  only counted (`end`). Memory is sampled every 600 frames.
+  only counted (`end`). It writes at most 2,000 `slow` and `relay` lines
+  in all. Memory is sampled every 600 frames.
 - **The frame loop never waits on it.** Lines go to a queue of 1,024
   that a thread of the host's own writes to the file; a line that finds
   the queue full is dropped and counted (`drop`). The writer works out

@@ -605,7 +605,10 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
             node.set_subscriptions(Subscriptions::load(config.join("subscriptions"))?);
             node.set_identity_path(config.join("identity.key"))?;
             node.set_nicknames(terse_net::profile::Nicknames::load_from_config(&config)?);
-            Some(ContentService::start_with_consent(node, consent))
+            let mut content = ContentService::start_with_consent(node, consent);
+            // SPEC §image.blobs: the blobs it lists, if not held, while it starts.
+            content.fetch_listed(&image);
+            Some(content)
         }
     };
     // The built-in shell has the identity of a built-in (SPEC §machines.calls).

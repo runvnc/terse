@@ -67,6 +67,9 @@ bytes of the ROM:
 | `rom_len` − 4 | 1 | k: the number of entries, 1 to 16 |
 | `rom_len` − 3 | 3 | `54h 58h 44h` (`TXD`) |
 
+An image's blob list (`SPEC.md` §image.blobs) is just before the table;
+the table stays the last bytes of the ROM.
+
 The table is ROM: it is covered by the image ID, it is loaded at
 `0001_0000h` with the rest of the ROM, and a program may read it. A host
 that knows nothing of experimental devices parses the header exactly as

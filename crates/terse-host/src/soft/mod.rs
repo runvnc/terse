@@ -497,6 +497,10 @@ impl Display for SoftScreens {
         self.shell.take_page_figure_log()
     }
 
+    fn page_shown_generation(&self) -> Option<u64> {
+        self.shell.page_shown_generation()
+    }
+
     fn snapshot(&mut self, viewport: (u32, u32)) -> Result<Vec<u8>, String> {
         Ok(self.render(viewport).to_rgba())
     }

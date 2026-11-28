@@ -210,6 +210,8 @@ enum GetFor {
     Prefetch,
     /// The image of a program's current version (NETWORK 4.4).
     Program(Entry),
+    /// A blob an image lists (SPEC §image.blobs), of this size.
+    Listed(u32),
 }
 
 /// An operation that may involve several relays.
@@ -521,7 +523,7 @@ impl Node {
     fn settle_pending(&self) -> bool {
         self.links.values().any(|l| !l.catching_up.is_empty())
             || self.waiting.values().any(|w| matches!(w, Waiting::Subscribe(..)))
-            || self.ops.values().any(|o| matches!(o, Op::Get { purpose: GetFor::Auto(_) | GetFor::Prefetch | GetFor::Program(_), .. }))
+            || self.ops.values().any(|o| matches!(o, Op::Get { purpose: GetFor::Auto(_) | GetFor::Prefetch | GetFor::Program(_) | GetFor::Listed(_), .. }))
     }
 
     /// Some relay is connected, and every connected one has had the
@@ -749,6 +751,42 @@ impl Node {
         self.fetch_from_relays(GetFor::Token(token), id);
     }
 
+    /// Gets the blobs the image `image` lists (SPEC §image.blobs) that the
+    /// store does not hold and that are not being fetched, through the
+    /// relays, without waiting: each is stored only if it has its listed
+    /// size, and nothing is reported (a program's get finds them in the
+    /// store, or fetches one itself). Nothing for bytes that are not an
+    /// image this implementation can run, or one without a list.
+    pub fn fetch_listed(&mut self, image: &[u8]) {
+        if let Ok(image) = terse_core::Image::parse(image) {
+            self.fetch_blobs(image.blob_list());
+        }
+    }
+
+    /// [`Self::fetch_listed`] for a list already read.
+    pub fn fetch_blobs(&mut self, listed: Vec<terse_core::image::ListedBlob>) {
+        if listed.is_empty() || self.links.is_empty() {
+            return;
+        }
+        self.maintain();
+        let again = listed.clone();
+        if self.defer(move |n| n.fetch_blobs(again)) {
+            return;
+        }
+        let fetching: BTreeSet<BlobId> =
+            self.ops.values().filter_map(|o| if let Op::Get { id, .. } = o { Some(*id) } else { None }).collect();
+        for b in self.listed_wanted(&listed, &fetching) {
+            if self.connected_links().is_empty() {
+                return;
+            }
+            self.fetch_from_relays(GetFor::Listed(b.size), b.id);
+        }
+    }
+
+    fn listed_wanted(&self, listed: &[terse_core::image::ListedBlob], fetching: &BTreeSet<BlobId>) -> Vec<terse_core::image::ListedBlob> {
+        listed.iter().filter(|b| !fetching.contains(&b.id) && !self.store.path(&b.id).exists()).copied().collect()
+    }
+
     /// Asks the connected relays for `id`: first the relays named in the
     /// profile of a feed with an entry pointing at it, then the rest, two
     /// at a time (NETWORK 5).
@@ -783,7 +821,7 @@ impl Node {
                 GetFor::Token(token) => self.ready.push((token, if not_found { Done::NotFound } else { Done::Failed })),
                 GetFor::Auto(entry) => self.downloaded(entry, None),
                 GetFor::Program(entry) => self.events.push(FeedEvent::ProgramDownloaded { entry, article: Article::Failed }),
-                GetFor::Prefetch => {}
+                GetFor::Prefetch | GetFor::Listed(_) => {}
             }
         }
     }
@@ -1908,11 +1946,19 @@ impl Node {
                                 let article = if bytes.len() != entry.size as usize {
                                     Article::SizeMismatch
                                 } else if self.store.put(&bytes).is_ok() {
+                                    // SPEC §image.blobs: the blobs it lists come with it.
+                                    self.fetch_listed(&bytes);
                                     Article::Local
                                 } else {
                                     Article::Failed
                                 };
                                 self.events.push(FeedEvent::ProgramDownloaded { entry, article });
+                            }
+                            // Kept only at the size the image lists.
+                            GetFor::Listed(size) => {
+                                if bytes.len() == size as usize {
+                                    let _ = self.store.put(&bytes);
+                                }
                             }
                             // Not scanned; discarded if over the limit.
                             GetFor::Prefetch => {
@@ -2740,6 +2786,65 @@ mod tests {
         // Unsubscribed: no programs.
         node.set_subscriptions(Subscriptions::in_memory([]));
         assert_eq!(node.program_records(0, 10_000), (0, Vec::new()));
+    }
+
+    /// SPEC §image.blobs: a program's image downloaded from its feed brings
+    /// the blobs it lists (each kept only at its listed size); an image
+    /// started by ID does too; an image's list is the only way.
+    #[test]
+    fn listed_blobs_come_with_the_image() {
+        use terse_core::image::{ListedBlob, blob_list_table};
+        let dir = tempfile::tempdir().unwrap();
+        let (mut node, script) = node_with_fake(dir.path());
+        let author = Identity::from_seed([2; 32]);
+        let feed = author.feed_key();
+        let (scene, other, wrong) = (vec![5u8; 30_000], vec![6u8; 100], vec![7u8; 10]);
+        let image_with = |listed: &[ListedBlob]| {
+            let mut rom = vec![0x13, 0, 0, 0];
+            rom.extend(blob_list_table(listed));
+            terse_core::Image::build("game", 1, &[], &rom)
+        };
+        let listed = [
+            ListedBlob { id: blob_id(&scene), size: 30_000 },
+            ListedBlob { id: blob_id(&other), size: 100 },
+            // Listed at another size than its bytes': not kept.
+            ListedBlob { id: blob_id(&wrong), size: 11 },
+        ];
+        let image = image_with(&listed);
+        {
+            let mut s = script.lock().unwrap();
+            for data in [&image, &scene, &other, &wrong] {
+                s.blobs.insert(blob_id(data), data.clone());
+            }
+            s.held = vec![Entry::program(feed, 1, 100, &image, "game").sign(&author).unwrap().bytes];
+        }
+        node.set_subscriptions(Subscriptions::in_memory([feed]));
+        settle(&mut node);
+        for _ in 0..20 {
+            node.poll();
+        }
+        assert!(node.store().read(&blob_id(&image)).unwrap().is_some());
+        assert!(node.store().read(&blob_id(&scene)).unwrap().is_some(), "a listed blob comes with the image");
+        assert!(node.store().read(&blob_id(&other)).unwrap().is_some());
+        assert!(node.store().read(&blob_id(&wrong)).unwrap().is_none(), "not at its listed size");
+
+        // An image got by ID (a shell's start): its list, beside it.
+        let more = vec![8u8; 500];
+        let second = image_with(&[ListedBlob { id: blob_id(&more), size: 500 }]);
+        script.lock().unwrap().blobs.insert(blob_id(&more), more.clone());
+        node.fetch_listed(&second);
+        for _ in 0..20 {
+            node.poll();
+        }
+        assert!(node.store().read(&blob_id(&more)).unwrap().is_some());
+        // Held blobs are not asked for again; bytes that are not an image list nothing.
+        let asked = script.lock().unwrap().asked.len();
+        node.fetch_listed(&second);
+        node.fetch_listed(b"not an image");
+        for _ in 0..5 {
+            node.poll();
+        }
+        assert_eq!(script.lock().unwrap().asked.len(), asked);
     }
 
     /// NETWORK 4.7: programs found are kept only in their current versions.

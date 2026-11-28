@@ -367,6 +367,10 @@ impl SoftScreen {
         self.page.take_figure_log()
     }
 
+    pub fn page_shown_generation(&self) -> Option<u64> {
+        self.page.shown_generation()
+    }
+
     /// The grid at the glyphs' native cell size, 4:3.
     pub fn grid_size(&self) -> (u32, u32) {
         if let Some(s) = self.grid_size {

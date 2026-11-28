@@ -47,3 +47,13 @@ opt-level = 3
 # the look.
 [profile.dev.package.terse-host]
 opt-level = 2
+
+# The page's figures are rasterised by tiny-skia: unoptimised it takes 10 to
+# 20 times as long (a scene's figures in a debug build: a quarter to half a
+# second before its picture is shown, 2560 x 1440), which the window tests
+# and anyone running a debug terse-host would see as the host being slow.
+[profile.dev.package.tiny-skia]
+opt-level = 3
+
+[profile.dev.package.tiny-skia-path]
+opt-level = 3

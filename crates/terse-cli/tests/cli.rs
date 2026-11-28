@@ -129,6 +129,43 @@ fn pack_refuses_bad_headers() {
     assert!(String::from_utf8_lossy(&out.stderr).contains("ROM length 262145 outside 1..=262144"), "{}", String::from_utf8_lossy(&out.stderr));
 }
 
+/// SPEC §image.blobs: `pack --blob` lists blobs at the end of the ROM,
+/// `info` shows them, and `put` sends an image's listed blobs with it (from
+/// the files given or the store), refusing when one is in neither.
+#[test]
+fn pack_lists_blobs_and_put_sends_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = dir.path().join("store");
+    let store = store.to_str().unwrap();
+    let (a, b) = (dir.path().join("a.scene"), dir.path().join("b.scene"));
+    std::fs::write(&a, vec![1u8; 3000]).unwrap();
+    std::fs::write(&b, b"second").unwrap();
+    let (a, b) = (a.to_str().unwrap(), b.to_str().unwrap());
+    let bin = dir.path().join("x.bin");
+    std::fs::write(&bin, [0x01, 0x00]).unwrap();
+    let image = dir.path().join("x.terse");
+    let (bin, image) = (bin.to_str().unwrap(), image.to_str().unwrap());
+    terse_ok(&["pack", "--rom", bin, "--title", "x", "--ram-pages", "1", "--blob", a, "--blob", b, "-o", image]);
+    let parsed = terse_core::Image::parse(&std::fs::read(image).unwrap()).unwrap();
+    let ids: Vec<String> = [a, b].iter().map(|p| terse_net::to_hex(&terse_net::blob_id(&std::fs::read(p).unwrap()))).collect();
+    assert_eq!(parsed.blob_list().iter().map(|l| (terse_net::to_hex(&l.id), l.size)).collect::<Vec<_>>(), vec![(ids[0].clone(), 3000), (ids[1].clone(), 6)]);
+    let info = String::from_utf8(terse_ok(&["info", image]).stdout).unwrap();
+    assert!(info.contains("blobs:     2 listed, 3006 bytes") && info.contains(&format!("{} 3000 bytes", ids[0])), "{info}");
+    // Alone, with the blobs nowhere: refused, naming them.
+    let out = terse(&["put", image, "--store", store, "--relay", "none"]);
+    assert!(!out.status.success() && String::from_utf8_lossy(&out.stderr).contains(&ids[1]), "{}", String::from_utf8_lossy(&out.stderr));
+    // With one of them given and the other in the store: both go with it.
+    terse_ok(&["put", b, "--store", store, "--relay", "none"]);
+    let out = String::from_utf8(terse_ok(&["put", image, a, "--store", store, "--relay", "none"]).stdout).unwrap();
+    assert!(out.contains(&ids[0]) && out.contains(&format!("{} (listed by {})", ids[1], parsed.id_hex())), "{out}");
+    for id in &ids {
+        assert!(Path::new(store).join(id).exists());
+    }
+    // A blob twice is refused.
+    let out = terse(&["pack", "--rom", bin, "--title", "x", "--ram-pages", "1", "--blob", a, "--blob", a, "-o", image]);
+    assert!(!out.status.success() && String::from_utf8_lossy(&out.stderr).contains("listed twice"), "{}", String::from_utf8_lossy(&out.stderr));
+}
+
 /// `--events`: scripted input for `terse run`.
 #[test]
 fn run_with_scripted_events() {

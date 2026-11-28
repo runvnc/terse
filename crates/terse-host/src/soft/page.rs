@@ -119,6 +119,9 @@ pub struct SoftPage {
     /// changed figure is rasterised, the one shown before stays in its
     /// place (SPEC §page.layout: re-submitting never makes a figure blink).
     figure_shown: HashMap<usize, FigureKey>,
+    /// Figures in view (shown groups of layered ones) not drawn as they
+    /// are yet when the quads were last prepared (PERFORMANCE.md R20).
+    awaited: usize,
 }
 
 impl Default for SoftPage {
@@ -142,6 +145,7 @@ impl Default for SoftPage {
             arrived: 0,
             pending_quads: Vec::new(),
             figure_shown: HashMap::new(),
+            awaited: 0,
         }
     }
 }
@@ -183,6 +187,14 @@ impl SoftPage {
 
     pub fn take_figure_log(&mut self) -> Vec<String> {
         std::mem::take(&mut self.figure_log)
+    }
+
+    /// The generation of the document shown whole by the quads prepared
+    /// last: laid out, and every figure in view drawn as it is (not the one
+    /// shown before in its place, nor nothing); `None` while it is not
+    /// (PERFORMANCE.md R20).
+    pub fn shown_generation(&self) -> Option<u64> {
+        self.layout.as_ref().filter(|_| self.awaited == 0).map(|l| l.key.0)
     }
 
     /// What the page would show drawn into `screen` (the 640 × 480 screen
@@ -342,7 +354,8 @@ impl SoftPage {
         let top = scroll - FIGURE_MARGIN * h;
         let bottom = scroll + (1.0 + FIGURE_MARGIN) * h;
         let mut wanted = HashSet::new();
-        let mut jobs = Vec::new();
+        // Those to be drawn now first, then the rest (hidden groups, the margin).
+        let (mut jobs, mut later) = (Vec::new(), Vec::new());
         let (mut keep, mut shown) = (HashSet::new(), HashMap::new());
         let layers = self.view.map(|v| v.layers).unwrap_or([Default::default(); terse_core::page::LAYERS]);
         let first = layout.figures.partition_point(|f| f.top + f.height <= top);
@@ -363,11 +376,12 @@ impl SoftPage {
                     let px = (px.0, (px.1.0.min(FIGURE_SIDE), px.1.1.min(FIGURE_SIDE)));
                     let key: FigureKey = (g.id, px.1, outline);
                     wanted.insert(key);
+                    let state = g.layer.map(|l| &layers[l as usize]);
                     if !self.figure_images.contains_key(&key) && !self.figures_pending.contains(&key) {
                         self.figures_pending.insert(key);
-                        jobs.push(figures::Job { key, paths: g.paths.clone(), scale, origin: px.0 });
+                        let job = figures::Job { key, paths: g.paths.clone(), scale, origin: px.0 };
+                        if in_view && !state.is_some_and(|l| !l.shown) { jobs.push(job) } else { later.push(job) }
                     }
-                    let state = g.layer.map(|l| &layers[l as usize]);
                     if !in_view || state.is_some_and(|l| !l.shown) {
                         continue;
                     }
@@ -400,7 +414,8 @@ impl SoftPage {
             wanted.insert(key);
             if !self.figure_images.contains_key(&key) && !self.figures_pending.contains(&key) {
                 self.figures_pending.insert(key);
-                jobs.push(figures::Job { key, paths: f.paths.clone(), scale, origin: (0, 0) });
+                let job = figures::Job { key, paths: f.paths.clone(), scale, origin: (0, 0) };
+                if in_view { jobs.push(job) } else { later.push(job) }
             }
             if in_view {
                 // Drawn once it has arrived (the key is looked up at draw time).
@@ -424,6 +439,7 @@ impl SoftPage {
                 }
             }
         }
+        jobs.append(&mut later);
         self.figure_shown = shown;
         self.figure_images.retain(|k, _| wanted.contains(k) || keep.contains(k));
         self.figures_pending.retain(|k| wanted.contains(k));
@@ -441,10 +457,13 @@ impl SoftPage {
             }
         }
         // Quads of figures that arrived just now.
+        self.awaited = 0;
         for (at, key, t) in std::mem::take(&mut self.pending_quads) {
             if let Some(img) = self.figure_images.get(&key) {
                 let t = t.unwrap_or_else(|| img.whole());
                 self.quads.quads[at].paint = Paint::Figure(img.clone(), t);
+            } else {
+                self.awaited += 1;
             }
         }
     }
