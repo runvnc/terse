@@ -71,6 +71,10 @@ sources: `native/core-c` (`make && ./test.sh`), `native/driver-example/test.sh`,
    `scripts/cargo update -p webpki-roots` (a newer 1.x; check its licence
    is still CDLA-Permissive-2.0, and copy its `LICENSE` over
    `third_party/tls/webpki-roots-LICENSE` if it changed). The workflow refuses a tag that differs from this version.
+   If terse-core changed since the website's try page was built, rebuild
+   its WebAssembly in the same commit: `scripts/build-web` (README "Try it
+   in the browser"; `cargo test -p terse-web` says when it is stale), then
+   `terse manual site --out site` before deploying the site.
 2. Tag and push:
 
        git tag v0.9.0

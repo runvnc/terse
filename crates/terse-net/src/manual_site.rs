@@ -8,8 +8,9 @@
 //! and footer (licence, source, the public relay). Links within the site
 //! are relative; the only addresses elsewhere are the project's on GitHub
 //! (source, licence, downloads). Nothing is loaded from elsewhere: system
-//! fonts, no tracking. The only script is the front page's copy button, a
-//! few lines inline; the page is the same without it, less the button.
+//! fonts, no tracking. The only scripts are the copy buttons (a few lines
+//! inline; a page is the same without them, less the button) and the try
+//! page's `try.js`, which loads the machine (`terse-web.wasm`) on Start.
 //!
 //! Pages:
 //! - `index.html`, the front page ([`front_page`]): the project's paragraph
@@ -33,7 +34,11 @@
 //! page's pictures) to the site as they are, with one exception: an `.html`
 //! file there that does not start with `<!doctype` is the inside of a page
 //! (what goes in its `<main>`), written inside the template and titled by
-//! its `<h1>`. No subdirectories.
+//! its `<h1>` (a `<style>` at its start goes in the page's head, the
+//! `<script>`s at its end after the footer). No subdirectories. When the
+//! files include [`TRY_PAGE`] (the "try it in your browser" page, with its
+//! script and `terse-web.wasm`), the site also has that page's content,
+//! `try-content.bin` ([`crate::try_page`]).
 
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
@@ -108,8 +113,25 @@ pub fn extra_files(dir: &Path) -> Result<Vec<(String, Vec<u8>)>, String> {
     Ok(files)
 }
 
-/// A page made of a fragment from `site-files/`, titled by its `<h1>`.
-fn fragment_page(name: &str, main: &str) -> String {
+/// A page made of a fragment from `site-files/`, titled by its `<h1>`: a
+/// `<style>` at the fragment's start goes in the head, the `<script>`s at
+/// its end after the footer.
+fn fragment_page(name: &str, fragment: &str) -> String {
+    let mut main = fragment.trim();
+    let mut style = "";
+    if main.starts_with("<style>") {
+        if let Some(e) = main.find("</style>") {
+            style = &main[..e + "</style>".len()];
+            main = main[style.len()..].trim_start();
+        }
+    }
+    let mut scripts = "";
+    if let Some(i) = main.find("<script") {
+        if main[i..].trim_end().ends_with("</script>") {
+            scripts = &main[i..];
+            main = main[..i].trim_end();
+        }
+    }
     let h1 = main
         .find("<h1")
         .and_then(|i| main[i..].find('>').map(|j| i + j + 1))
@@ -128,16 +150,29 @@ fn fragment_page(name: &str, main: &str) -> String {
     }
     let title = if title.is_empty() || title == "Tersenet" { "Tersenet".to_string() } else { format!("{title} - Tersenet") };
     let section = if name == TRY_PAGE { Section::Try } else { Section::Other };
-    page_shell(&title, "", section, "", main.trim_end(), "")
+    let class = if name == TRY_PAGE { "try" } else { "" };
+    let after = if scripts.is_empty() { String::new() } else { format!("{scripts}\n") };
+    let page = page_shell(&title, "", section, class, main, &after);
+    if style.is_empty() { page } else { page.replacen("</head>", &format!("{style}\n</head>"), 1) }
 }
 
-/// Builds the manual in `dir` and writes its site to `out`, with the extra
-/// files of [`extra_files`]; `.html` files of articles no longer listed are
+/// The files besides the pages: the extra files of [`extra_files`], and
+/// the try page's content if they have the page.
+pub fn other_files(dir: &Path, built: &[Built]) -> Result<Vec<(String, Vec<u8>)>, String> {
+    let mut files = extra_files(dir)?;
+    if files.iter().any(|(n, _)| n == TRY_PAGE) {
+        files.push((crate::try_page::CONTENT.to_string(), crate::try_page::content(built)));
+    }
+    Ok(files)
+}
+
+/// Builds the manual in `dir` and writes its site to `out`, with the files
+/// of [`other_files`]; `.html` files of articles no longer listed are
 /// removed. Returns the files written.
 pub fn site_dir(dir: &Path, out: &Path) -> Result<Vec<(String, Vec<u8>)>, String> {
     let built = crate::manual::build(&crate::manual::read_sources(dir)?)?;
     let mut files: Vec<(String, Vec<u8>)> = site(&built).into_iter().map(|(n, d)| (n, d.into_bytes())).collect();
-    files.extend(extra_files(dir)?);
+    files.extend(other_files(dir, &built)?);
     std::fs::create_dir_all(out).map_err(|e| format!("{}: {e}", out.display()))?;
     for entry in std::fs::read_dir(out).map_err(|e| format!("{}: {e}", out.display()))?.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();

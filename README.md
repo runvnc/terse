@@ -1270,6 +1270,27 @@ every link resolves to a page of it or to the project on GitHub, that every page
 has the header and footer, that no page but the front page holds a script, and
 that the downloads are of the current version.
 
+#### Try it in the browser
+
+One page is the exception: `try.html` (with `try.js`, in `docs/manual/site-files/`)
+runs Tersenet in the browser, nothing to install. `crates/terse-web` is terse-core
+compiled to WebAssembly (`terse-web.wasm`, plain `wasm32-unknown-unknown`, no
+wasm-bindgen, no npm) with a small host: the built-in shell and its programs (or one
+alone, `try.html#sparks`), each machine with its frame budget at 60 frames a second,
+the keys, pointer and wheel mapped as terse-host maps them. The content device
+answers from `try-content.bin`, which `terse manual site` writes (the shell, the
+built-in programs, Low Bell and the manual's articles, zlib-compressed); there is no
+network, no feed key, no sound, and pages are laid out with the reference layout and
+drawn in the browser's fonts. Nothing is loaded until Start is pressed. After
+changing terse-core or terse-web, rebuild the module and commit it with
+`crates/terse-web/wasm.sources` (a test fails while they are stale):
+
+    scripts/build-web
+
+`cargo test -p terse-web` builds the module, checks the site's try page and its size,
+and, where Chrome and Node 22 are found, runs the page in a headless Chrome
+(`scripts/try-browser.mjs`; screenshots in `target/try-browser/`).
+
 #### Any feed as a website
 
 The same renderer makes a website of any feed, so that an author's readers need

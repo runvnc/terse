@@ -203,8 +203,10 @@ fn site_is_up_to_date() {
     let mut files: Vec<(String, Vec<u8>)> =
         terse_net::manual_site::site(&built).into_iter().map(|(n, d)| (n, d.into_bytes())).collect();
     // The extra files (docs/manual/site-files: the install script, the
-    // front page's picture) are copied as they are.
-    files.extend(terse_net::manual_site::extra_files(&dir()).unwrap());
+    // front page's picture, the try page with its script and WebAssembly)
+    // are copied as they are, a fragment page inside the template; the try
+    // page's content is made from the programs and the manual.
+    files.extend(terse_net::manual_site::other_files(&dir(), &built).unwrap());
     let stale = "site/ is stale: run `terse manual site --out site`";
     let mut on_disk: Vec<String> =
         std::fs::read_dir(site_dir()).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
@@ -325,11 +327,13 @@ fn site_pages() -> Vec<(String, String)> {
 
 /// The site is self-contained: every link leads to a page of it (and a
 /// fragment to an id there) or to the project on GitHub, nothing is
-/// loaded from elsewhere, the only script is the front page's copy
-/// button, and every figure is well-formed SVG.
+/// loaded from elsewhere, the only scripts are the copy buttons and the
+/// try page's, and every figure is well-formed SVG.
 #[test]
 fn site_is_self_contained() {
     use terse_net::manual_site::{HOME_PAGE, MANUAL_PAGE, REPO, TRY_PAGE};
+    // The text files; the pictures, the try page's script, WebAssembly and
+    // content are left out.
     let files = site_pages();
     let page = |name: &str| files.iter().find(|(n, _)| n == name).map(|(_, d)| d.as_str());
     let exists = |name: &str| site_dir().join(name).is_file();
@@ -344,11 +348,16 @@ fn site_is_self_contained() {
         if !name.ends_with(".html") {
             continue;
         }
-        // Scripts: only the front page's, inline.
+        // Scripts: only the front page's, inline, and the try page's: its
+        // copy button's, inline, and the one that runs the machine.
         let scripts = lower.matches("<script").count();
         if name == HOME_PAGE {
             assert_eq!(scripts, 1, "{name}: the copy button's script");
             assert!(lower.contains("<script>"), "{name}: inline");
+        } else if name == TRY_PAGE {
+            assert_eq!(scripts, 2, "{name}: the copy button's script and try.js");
+            assert!(lower.contains("<script>") && lower.contains("<script src=\"try.js\" defer></script>"), "{name}");
+            assert!(exists("try.js") && exists("terse-web.wasm") && exists("try-content.bin"), "{name}: its files");
         } else {
             assert_eq!(scripts, 0, "{name} has a script");
         }
@@ -369,9 +378,6 @@ fn site_is_self_contained() {
             assert!(!href.contains(':') && !href.starts_with('/') && !href.contains("//"), "{name}: {href} is not relative");
             let (file, fragment) = href.split_once('#').unwrap_or((href, ""));
             let file = if file.is_empty() { name.as_str() } else { file };
-            if file == TRY_PAGE && page(file).is_none() {
-                continue; // made in another branch; linked from every header already
-            }
             let target = page(file).unwrap_or_else(|| panic!("{name}: {href} leads nowhere"));
             if !fragment.is_empty() {
                 assert!(target.contains(&format!(" id=\"{fragment}\"")), "{name}: {href}: no such id");

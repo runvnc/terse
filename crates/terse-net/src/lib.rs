@@ -52,6 +52,7 @@ pub mod store;
 pub mod timeline;
 pub mod tls;
 pub mod trust;
+pub mod try_page;
 pub mod vectors;
 
 pub use blob::{BlobId, blob_id, parse_hex, to_hex};

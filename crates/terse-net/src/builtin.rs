@@ -22,7 +22,7 @@ pub const PROGRAMS: [&[u8]; 9] = [
 ];
 
 /// Other blobs a built-in program needs: the message `fetch` shows.
-const DATA: [&[u8]; 1] = [include_bytes!("../../../programs/fetch/message.txt")];
+pub const DATA: [&[u8]; 1] = [include_bytes!("../../../programs/fetch/message.txt")];
 
 // The manual (docs/manual/build): `MANUAL`, (name, title, text) in
 // reading order, the index first.
