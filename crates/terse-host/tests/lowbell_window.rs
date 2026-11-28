@@ -75,7 +75,7 @@ fn played_in_the_window() {
     }
     let dir = tempfile::tempdir().unwrap();
     for (renderer, size) in [("software", "640x480"), ("software", "1900x1000"), ("gpu", "1900x1000")] {
-        let mut script = String::from("settle max 300\nexpect vectors contains c aa8250ff\nshot start.png\npress enter\nwait 4\n");
+        let mut script = String::from("settle max 300\nexpect vectors contains c aa8250ff\nshot start.png\npress enter\nwait 4\npress esc\nwait 4\n");
         script += &typed(&["fill lantern", "light lantern", "down"]);
         // The dark clock room: nothing animated.
         script += "settle\nexpect terminal contains The Clock Room\n";
