@@ -1,0 +1,60 @@
+<style>
+main.try { max-width: 60em; }
+.terse-demo button { font: inherit; padding: .4em .9em; border: 1px solid var(--rule); border-radius: 4px; background: var(--box); color: var(--fg); cursor: pointer; }
+.terse-demo button:hover { border-color: var(--link); }
+.terse-demo { margin: 0 0 1.5em; }
+.terse-demo .screen { position: relative; background: #000; aspect-ratio: 4 / 3; width: 100%; border-radius: 4px; overflow: hidden; }
+.terse-demo canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; outline: none; touch-action: none; }
+.terse-demo .cover { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .9em; color: #ddd; text-align: center; padding: 1em; }
+.terse-demo .cover button.start { font-size: 1.25em; padding: .5em 1.6em; background: #1d5aa6; color: #fff; border-color: #1d5aa6; }
+.terse-demo .cover .alone { font-size: .9em; color: #aaa; }
+.terse-demo .cover .alone button { padding: .15em .6em; background: transparent; color: #ccc; border-color: #555; }
+.terse-demo.loading .cover button { opacity: .5; }
+.terse-demo.running .cover { display: none; }
+.terse-demo .bar { display: flex; gap: 1em; align-items: center; flex-wrap: wrap; font-size: .875em; color: var(--mute); margin-top: .4em; }
+.terse-demo .bar .status { flex: 1 1 auto; }
+.terse-demo:not(.running) .bar .controls { display: none; }
+</style>
+<article>
+<h1>Try Tersenet in your browser</h1>
+<p>Tersenet is a way to share formatted text, and small programs that run on tiny isolated machines, without web pages or central sites.</p>
+
+<div class="terse-demo">
+<div class="screen">
+<canvas tabindex="0" aria-label="Tersenet machine"></canvas>
+<div class="cover">
+<button type="button" class="start" data-start="">Start</button>
+<div>The shell with the built-in programs and the manual. About 1 MB to load.</div>
+<div class="alone">Or one program alone:
+<button type="button" data-start="reader">Manual</button>
+<button type="button" data-start="sparks">Sparks</button>
+<button type="button" data-start="sheet">Sheet</button>
+<button type="button" data-start="sketch">Sketch</button>
+<button type="button" data-start="lowbell">Low Bell</button></div>
+</div>
+</div>
+<div class="bar"><span class="status">Click Start. Then the keyboard goes to the machine: arrows and Enter in the launcher; F12 or the Home button goes back to it.</span>
+<span class="controls"><button type="button" class="home">Home (F12)</button>
+<label><input type="checkbox" class="trails" checked> Afterglow</label></span></div>
+</div>
+
+<p>This is the real machine: terse-core, compiled to WebAssembly, running each program at 60 frames a second within its fixed budget. In the browser it has no network and no sound, and the page is set in your browser's fonts.</p>
+
+<h2>Why run it locally</h2>
+<ul>
+<li>Your own feed and key: publish articles and programs under your name.</li>
+<li>Follow other people's feeds; new entries arrive as they publish, and stay readable offline.</li>
+<li>The full shell: every program, and programs from the feeds you follow.</li>
+<li>Real performance, the vector display's full look, and sound.</li>
+<li>Your named records and saved sessions stay on your computer.</li>
+</ul>
+<p>Install on Linux or macOS:</p>
+<div class="cmd"><pre class="sh"><code id="install-cmd">curl -fsSL https&#58;//tersenet.org/install.sh | sh</code></pre><button type="button" data-copy="install-cmd" hidden>Copy</button></div>
+<p><a href="https://github.com/runvnc/terse/releases/latest">Downloads</a> (Linux, macOS, Windows) &#183; <a href="guide-install.html">Install guide</a> &#183; <a href="manual.html">Manual</a></p>
+</article>
+<script>
+for(const b of document.querySelectorAll("button[data-copy]")){b.hidden=false;
+b.onclick=()=>navigator.clipboard.writeText(document.getElementById(b.dataset.copy).textContent)
+.then(()=>{b.textContent="Copied";setTimeout(()=>b.textContent="Copy",1500)})}
+</script>
+<script src="try.js" defer></script>
