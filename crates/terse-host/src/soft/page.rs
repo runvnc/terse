@@ -342,7 +342,8 @@ impl SoftPage {
         let top = scroll - FIGURE_MARGIN * h;
         let bottom = scroll + (1.0 + FIGURE_MARGIN) * h;
         let mut wanted = HashSet::new();
-        let mut jobs = Vec::new();
+        // Those to be drawn now first, then the rest (hidden groups, the margin).
+        let (mut jobs, mut later) = (Vec::new(), Vec::new());
         let (mut keep, mut shown) = (HashSet::new(), HashMap::new());
         let layers = self.view.map(|v| v.layers).unwrap_or([Default::default(); terse_core::page::LAYERS]);
         let first = layout.figures.partition_point(|f| f.top + f.height <= top);
@@ -363,11 +364,12 @@ impl SoftPage {
                     let px = (px.0, (px.1.0.min(FIGURE_SIDE), px.1.1.min(FIGURE_SIDE)));
                     let key: FigureKey = (g.id, px.1, outline);
                     wanted.insert(key);
+                    let state = g.layer.map(|l| &layers[l as usize]);
                     if !self.figure_images.contains_key(&key) && !self.figures_pending.contains(&key) {
                         self.figures_pending.insert(key);
-                        jobs.push(figures::Job { key, paths: g.paths.clone(), scale, origin: px.0 });
+                        let job = figures::Job { key, paths: g.paths.clone(), scale, origin: px.0 };
+                        if in_view && !state.is_some_and(|l| !l.shown) { jobs.push(job) } else { later.push(job) }
                     }
-                    let state = g.layer.map(|l| &layers[l as usize]);
                     if !in_view || state.is_some_and(|l| !l.shown) {
                         continue;
                     }
@@ -400,7 +402,8 @@ impl SoftPage {
             wanted.insert(key);
             if !self.figure_images.contains_key(&key) && !self.figures_pending.contains(&key) {
                 self.figures_pending.insert(key);
-                jobs.push(figures::Job { key, paths: f.paths.clone(), scale, origin: (0, 0) });
+                let job = figures::Job { key, paths: f.paths.clone(), scale, origin: (0, 0) };
+                if in_view { jobs.push(job) } else { later.push(job) }
             }
             if in_view {
                 // Drawn once it has arrived (the key is looked up at draw time).
@@ -424,6 +427,7 @@ impl SoftPage {
                 }
             }
         }
+        jobs.append(&mut later);
         self.figure_shown = shown;
         self.figure_images.retain(|k, _| wanted.contains(k) || keep.contains(k));
         self.figures_pending.retain(|k| wanted.contains(k));

@@ -1491,7 +1491,8 @@ impl PageLayer {
         let max_side = device.limits().max_texture_dimension_2d;
         let mut wanted = HashSet::new();
         let (mut keep, mut shown) = (HashSet::new(), HashMap::new());
-        let mut jobs = Vec::new();
+        // Those to be drawn now first, then the rest (hidden groups, the margin).
+        let (mut jobs, mut later) = (Vec::new(), Vec::new());
         let layers = self.view.map(|v| v.layers).unwrap_or([LayerState::default(); LAYERS]);
         let first = layout.figures.partition_point(|f| f.top + f.height <= top);
         for (i, f) in layout.figures.iter().enumerate().skip(first).take_while(|(_, f)| f.top < bottom) {
@@ -1517,11 +1518,12 @@ impl PageLayer {
                     let px = (px.0, (px.1.0.min(max_side), px.1.1.min(max_side)));
                     let key: FigureKey = (g.id, px.1, outline);
                     wanted.insert(key);
+                    let state = g.layer.map(|l| &layers[l as usize]);
                     if !self.figure_textures.contains_key(&key) && !self.figures_pending.contains(&key) {
                         self.figures_pending.insert(key);
-                        jobs.push(figures::Job { key, paths: g.paths.clone(), scale, origin: px.0 });
+                        let job = figures::Job { key, paths: g.paths.clone(), scale, origin: px.0 };
+                        if in_view && !state.is_some_and(|l| !l.shown) { jobs.push(job) } else { later.push(job) }
                     }
-                    let state = g.layer.map(|l| &layers[l as usize]);
                     if !in_view || state.is_some_and(|l| !l.shown) {
                         continue;
                     }
@@ -1545,7 +1547,8 @@ impl PageLayer {
             wanted.insert(key);
             if !self.figure_textures.contains_key(&key) && !self.figures_pending.contains(&key) {
                 self.figures_pending.insert(key);
-                jobs.push(figures::Job { key, paths: f.paths.clone(), scale, origin: (0, 0) });
+                let job = figures::Job { key, paths: f.paths.clone(), scale, origin: (0, 0) };
+                if in_view { jobs.push(job) } else { later.push(job) }
             }
             if in_view {
                 let uv = [0.0, 0.0, size.0 as f32, size.1 as f32];
@@ -1564,6 +1567,7 @@ impl PageLayer {
                 push(&mut self.scratch, [x, y, x + qw, y + qh], uv, [255; 4], 3);
             }
         }
+        jobs.append(&mut later);
         self.figure_shown = shown;
         self.figure_textures.retain(|k, _| wanted.contains(k) || keep.contains(k));
         self.figures_pending.retain(|k| wanted.contains(k));
