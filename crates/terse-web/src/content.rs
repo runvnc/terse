@@ -78,7 +78,7 @@ impl Content {
             | RequestKind::Names { .. }
             | RequestKind::Programs { .. } => Outcome::Records { total: 0, data: Vec::new() },
             // No feed key in the page, and no relay to search.
-            RequestKind::Identity | RequestKind::Find { .. } => Outcome::Failed,
+            RequestKind::Identity | RequestKind::Find { .. } | RequestKind::FindMore { .. } => Outcome::Failed,
             RequestKind::Subscribe { .. }
             | RequestKind::Unsubscribe { .. }
             | RequestKind::Publish { .. }
