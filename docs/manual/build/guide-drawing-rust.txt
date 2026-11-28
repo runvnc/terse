@@ -64,6 +64,6 @@ line 5120 6400 4800 1280 w 16 c ffffffff
 
 ## What you have now
 
-A Rust program that draws and reacts to keys. It is `examples/program/rust/line.rs` in the Tersenet sources. Next, a small game: [Make a small game](terse:0d37051b7c03fa16d14448207313340b75b7ae4334e2f4db1b5246d70f7002c2), in C, then in Rust.
+A Rust program that draws and reacts to keys. It is `examples/program/rust/line.rs` in the Tersenet sources. Next, a small game: [Make a small game](terse:6c7420cc1a5735051e6f0bf5c63e76506747f410e56bceb806103f7a6165c755), in C, then in Rust.
 
-`VecList` and the other drawing calls of the runtime are in [Rust programs](terse:bdb9c7bc62d360ed4ea572b769b0cb6a67e28593edd845b98f72602efa5aa736); every command of the display in [The 2D vector display](terse:205489ab30513e94c4d2d2d464a79878469dfc0c50290b9ce0ab8c4711e5d58f).
+`VecList` and the other drawing calls of the runtime are in [Rust programs](terse:9aeca9486e1b14d707d024375bca894af46aede5e32fafa27ad3d755ef85bb62); every command of the display in [The 2D vector display](terse:9470c8fbd83886eef24421ecebddb9ef6d383ca39e4b0dd418fdd5a1919e39ae).

@@ -11,7 +11,7 @@ The machine is the optional third layer of Tersenet: the network and the
 article format are the core, and a reader can implement them without
 it. Which devices a host provides (the reading and the program profile)
 and how a program does without some is in
-[the system device](terse:03dabf7773618aa5942ba03edef6fb8f823a786c8384fc101a4468b46278c2f2).
+[the system device](terse:257635553a7ec3a579827e3abd00005ff4778e8f673dfd1d4d4ad3aa26f4a4de).
 
 ## CPU
 
@@ -193,7 +193,7 @@ write; `pc` continues after the `ecall`.
 - A call checks its buffer before its other arguments: a bad buffer gives
   `FFFF_FFFEh` whatever they are (page `submit` aside).
 - Buffers need no alignment. Every call is charged, also when it fails:
-  see [charges](terse:ac10aae482c4ea948fe2bb12c874b4c2d9e5de9af3858088d51f763d82c86502).
+  see [charges](terse:09634702ff9ba8ea7156b40fce12e8c7c6f0f698b1a99ce270ca765adb740ccc).
 
 In C, `terse.h` has a constant for every call (`CALL_WAIT_FRAME`, ...)
 and the inline functions `terse_call`, `terse_call4`, `terse_call5` and
@@ -201,7 +201,7 @@ and the inline functions `terse_call`, `terse_call4`, `terse_call5` and
 
 ## Call table
 
-Every call of every device, with its number, arguments, result and class, is in [the call table](terse:95d911d1fa155b426407d962c8a23c371bb1bd60c762d79acda4b07ae02e7ea6).
+Every call of every device, with its number, arguments, result and class, is in [the call table](terse:5f4f9583ad93caf12e2829fedf676dc7311bb714f25ab2a6450c1574ef6a30b2).
 
 ## Screen units
 

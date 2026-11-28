@@ -1,6 +1,6 @@
 # Content: blobs, requests and statuses (device 4)
 
-The content device, slot 4, version 0, is how a program reaches data outside its machine: blobs fetched from or published to the network, the user's feeds, and small named records kept on the host. Everything goes through one call, `submit` (`400h`), and one 52-byte request block. The program never hashes, verifies or transports anything; the host does all of that and only ever hands the program bytes that match the hash it asked for. How the host finds blobs is in [the network](terse:9777caa3f5b86a3198a8fc5c69a8f3c0968315f5bed3a70dc291cee1187ff278). The exact rules are in spec/content.md.
+The content device, slot 4, version 0, is how a program reaches data outside its machine: blobs fetched from or published to the network, the user's feeds, and small named records kept on the host. Everything goes through one call, `submit` (`400h`), and one 52-byte request block. The program never hashes, verifies or transports anything; the host does all of that and only ever hands the program bytes that match the hash it asked for. How the host finds blobs is in [the network](terse:e1d055394942c8bcdcfd41d6e8a0b6221c09238e9babffff5db9706f5a428e44). The exact rules are in spec/content.md.
 
 An image gets the device by listing slot 4, version 0 in its header's device requirements (`terse pack ... --device 4:0`). If the image does not list it, `submit` returns `FFFF_FFFFh` and does nothing else. At reset no request is pending.
 
@@ -61,21 +61,22 @@ Fields an op does not use are ignored.
 |---|---|---|
 | `01h` | Get | below |
 | `02h` | Put | below |
-| `03h` | Subscriptions | [feeds](terse:7aeb159faac8671410f1c6d2ae3fa171af84804b7d50f633cad4323e5b4c078f) |
-| `04h` | Timeline | [feeds](terse:7aeb159faac8671410f1c6d2ae3fa171af84804b7d50f633cad4323e5b4c078f) |
-| `05h` | Subscribe | [feeds](terse:7aeb159faac8671410f1c6d2ae3fa171af84804b7d50f633cad4323e5b4c078f) |
-| `06h` | Unsubscribe | [feeds](terse:7aeb159faac8671410f1c6d2ae3fa171af84804b7d50f633cad4323e5b4c078f) |
-| `07h` | Publish | [feeds](terse:7aeb159faac8671410f1c6d2ae3fa171af84804b7d50f633cad4323e5b4c078f) |
-| `08h` | Identity | [feeds](terse:7aeb159faac8671410f1c6d2ae3fa171af84804b7d50f633cad4323e5b4c078f) |
-| `09h` | Names | [feeds](terse:7aeb159faac8671410f1c6d2ae3fa171af84804b7d50f633cad4323e5b4c078f) |
-| `0Ah` | Find | [feeds](terse:7aeb159faac8671410f1c6d2ae3fa171af84804b7d50f633cad4323e5b4c078f) |
-| `0Bh` | Set profile | [feeds](terse:7aeb159faac8671410f1c6d2ae3fa171af84804b7d50f633cad4323e5b4c078f) |
-| `0Ch` | Set nickname | [feeds](terse:7aeb159faac8671410f1c6d2ae3fa171af84804b7d50f633cad4323e5b4c078f) |
-| `0Dh` | Programs | [feeds](terse:7aeb159faac8671410f1c6d2ae3fa171af84804b7d50f633cad4323e5b4c078f) |
-| `0Eh` | Save | [named records](terse:218115b26388975cecd73f92491ec0b937a1e0679e84366e981ef1a4b2969b4f) |
-| `0Fh` | Load | [named records](terse:218115b26388975cecd73f92491ec0b937a1e0679e84366e981ef1a4b2969b4f) |
-| `10h` | Delete | [named records](terse:218115b26388975cecd73f92491ec0b937a1e0679e84366e981ef1a4b2969b4f) |
-| `11h` | Records | [named records](terse:218115b26388975cecd73f92491ec0b937a1e0679e84366e981ef1a4b2969b4f) |
+| `03h` | Subscriptions | [feeds](terse:132112ed3b1ab9dadf98e0f4fdeca521b7048b28bd68f86c7351768305aa49f8) |
+| `04h` | Timeline | [feeds](terse:132112ed3b1ab9dadf98e0f4fdeca521b7048b28bd68f86c7351768305aa49f8) |
+| `05h` | Subscribe | [feeds](terse:132112ed3b1ab9dadf98e0f4fdeca521b7048b28bd68f86c7351768305aa49f8) |
+| `06h` | Unsubscribe | [feeds](terse:132112ed3b1ab9dadf98e0f4fdeca521b7048b28bd68f86c7351768305aa49f8) |
+| `07h` | Publish | [feeds](terse:132112ed3b1ab9dadf98e0f4fdeca521b7048b28bd68f86c7351768305aa49f8) |
+| `08h` | Identity | [feeds](terse:132112ed3b1ab9dadf98e0f4fdeca521b7048b28bd68f86c7351768305aa49f8) |
+| `09h` | Names | [feeds](terse:132112ed3b1ab9dadf98e0f4fdeca521b7048b28bd68f86c7351768305aa49f8) |
+| `0Ah` | Find | [feeds](terse:132112ed3b1ab9dadf98e0f4fdeca521b7048b28bd68f86c7351768305aa49f8) |
+| `0Bh` | Set profile | [feeds](terse:132112ed3b1ab9dadf98e0f4fdeca521b7048b28bd68f86c7351768305aa49f8) |
+| `0Ch` | Set nickname | [feeds](terse:132112ed3b1ab9dadf98e0f4fdeca521b7048b28bd68f86c7351768305aa49f8) |
+| `0Dh` | Programs | [feeds](terse:132112ed3b1ab9dadf98e0f4fdeca521b7048b28bd68f86c7351768305aa49f8) |
+| `0Eh` | Save | [named records](terse:acef90e2edc6e8f042c783b77a2d77062436d19648cbeac572b0bd48378d6f4e) |
+| `0Fh` | Load | [named records](terse:acef90e2edc6e8f042c783b77a2d77062436d19648cbeac572b0bd48378d6f4e) |
+| `10h` | Delete | [named records](terse:acef90e2edc6e8f042c783b77a2d77062436d19648cbeac572b0bd48378d6f4e) |
+| `11h` | Records | [named records](terse:acef90e2edc6e8f042c783b77a2d77062436d19648cbeac572b0bd48378d6f4e) |
+| `12h` | Find more | [feeds](terse:132112ed3b1ab9dadf98e0f4fdeca521b7048b28bd68f86c7351768305aa49f8) |
 
 Get (`01h`) asks for up to `length` bytes of blob `id` starting at `offset`, delivered to `addr`. On success `length` is the number of bytes delivered (fewer if the blob ends first) and `size` is the blob's size. A get whose `offset` is at or beyond the end of the blob completes with `01h`, `length` 0 and `size` the blob's size.
 
@@ -111,7 +112,7 @@ A request never completes in the frame it was submitted in. At the start of a la
 | identity | `id` |
 | subscribe, unsubscribe, set nickname, save, delete | nothing more |
 
-In every case, success or not, the device writes `status`, frees the handle and queues a content-done event (type `05h`: `a` = handle, `b` = status; see [events](terse:dbc6abbfedb0790f69322a2b376174349ae1911ae326c23de1a7ee4fc1dba38b)). If the event queue is full the event is dropped but the block is still updated, so a program that polls `status` never misses a completion. A failed request writes only `status`.
+In every case, success or not, the device writes `status`, frees the handle and queues a content-done event (type `05h`: `a` = handle, `b` = status; see [events](terse:827f6ff5dd4763ee4950db8bf62d74175f75781b8027bcbbf48bc8a60af5fe05)). If the event queue is full the event is dropped but the block is still updated, so a program that polls `status` never misses a completion. A failed request writes only `status`.
 
 The device writes to the block at the address given at submit, whatever the program has done with that memory since; keep the block (and any result buffer) alive and unused until the request completes. Completions in one frame are applied in increasing handle order.
 
@@ -156,7 +157,7 @@ The header is valid if all of it is present and every field is as above (`TDOC_H
 | an accepted put or save (its `size` bytes), publish (its title), find (its query), set profile or set nickname (its name) | 1 per 4 bytes, rounded up, at submit |
 | bytes a get, load, record list or find writes to `addr` | 1 per 4 bytes: all of a frame's completions added up, rounded up once |
 
-The delivery charge is taken from the budget of the frame the completions arrive in, before the program runs; the reference machine adds up the bytes of all that frame's completions and rounds once. A rejected submit copies nothing, and the fields a completion writes to the block are free. See [charges](terse:ac10aae482c4ea948fe2bb12c874b4c2d9e5de9af3858088d51f763d82c86502).
+The delivery charge is taken from the budget of the frame the completions arrive in, before the program runs; the reference machine adds up the bytes of all that frame's completions and rounds once. A rejected submit copies nothing, and the fields a completion writes to the block are free. See [charges](terse:09634702ff9ba8ea7156b40fce12e8c7c6f0f698b1a99ce270ca765adb740ccc).
 
 ## State
 

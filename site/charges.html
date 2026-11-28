@@ -159,10 +159,10 @@
 <tr><td>Blob</td><td>1 to 1,048,576 bytes</td></tr>
 <tr><td>Request block</td><td>52 bytes, in RAM</td></tr>
 <tr><td>Pending requests</td><td>8 (handles 1 to 8)</td></tr>
-<tr><td><code>length</code> of get, load, records, find</td><td>1 to 16,384</td></tr>
+<tr><td><code>length</code> of get, load, records, find, find more</td><td>1 to 16,384</td></tr>
 <tr><td>Publish title</td><td>0 to 120 bytes</td></tr>
 <tr><td>Display name, nickname, find query</td><td>1 to 48 bytes (a nickname may be 0: removes it)</td></tr>
-<tr><td>Find results</td><td>at most 16</td></tr>
+<tr><td>Find results</td><td>at most 16 a page (find more for the next)</td></tr>
 <tr><td>Named records per owner</td><td>256 records, 1,048,576 bytes in all</td></tr>
 <tr><td>One named record</td><td>0 to 65,536 bytes</td></tr>
 <tr><td>Record name</td><td>1 to 32 bytes</td></tr>
@@ -213,7 +213,7 @@
 <tr><td>Relays from a feed&#39;s profile</td><td>at most 2 a feed</td></tr>
 <tr><td>Relay connections</td><td>at most 16</td></tr>
 <tr><td>Entries a relay keeps</td><td>at least the 256 newest of a feed, and its latest profile</td></tr>
-<tr><td>Search results</td><td>at most 16</td></tr>
+<tr><td>Search results</td><td>at most 16 a page</td></tr>
 <tr><td>Profile document</td><td>at most 4,096 bytes; 0 to 4 relay lines</td></tr>
 <tr><td>Reconnecting</td><td>after 1 s, doubling up to 30 s</td></tr>
 <tr><td>Peer get</td><td>not found after 3 s without an answer</td></tr>

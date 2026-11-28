@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Your feed without the command line - the Tersenet manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="site"><nav><a href="index.html" class="home">Tersenet</a> <a href="index.html#download">Download</a> <a href="manual.html" aria-current="page">Manual</a> <a href="try.html">Try in browser</a> <a href="https://github.com/runvnc/terse">Source on GitHub</a></nav></header>
+<main>
+<article>
+<h1 id="your-feed-without-the-command-line">Your feed without the command line</h1>
+<p>Everything you do with your own side of Tersenet, the window does on screens of its own: make the key that signs what you publish, give yourself a name, publish an article, follow other people&#39;s feeds and choose relays. No terminal is needed. The next pages show the same steps as commands too, and say more about each.</p>
+<h2 id="open-your-screens">Open your screens</h2>
+<p>With the window open on the launcher, press F10. The window draws its own screens over everything under the bar at the top:</p>
+<pre> You ·  Signature   Profile   Publish   Follow   Relays
+
+  You have no signature yet.
+
+  Your signature is a key this computer makes. Everything you publish is
+  signed with it, so anyone can check that it came from you. Nobody issues it
+  and nobody can take it away: there is no account and no password.
+
+   Create my signature
+   Use a key file I already have…
+
+  It will be kept in /home/me/.config/terse/identity.key.
+
+ ←→ or 1-5 choose a page   ↓ Enter go in   Esc or F10 closes</pre>
+<p>These screens belong to the window, not to a program: no program can see them or what you type into them, and none ever gets your secret key. F10 again, Esc or F12 closes them; the programs go on as they were.</p>
+<p>Along the top are five pages. On that top row Left and Right change the page; elsewhere 1 to 5 do, or a click on the page&#39;s name. Up, Down and Tab move from one thing to the next, Enter (or Space, or a click) does it, and in a text field you type, and Ctrl+V pastes. Whatever goes out to the network or cannot be undone asks first, and Y goes ahead, N or Esc does nothing. The last lines of the screen say what happened, in plain words.</p>
+<h2 id="your-signature">Your signature</h2>
+<p>On a first run the screens open on Signature. Down to &quot;Create my signature&quot;, Enter, and it is made:</p>
+<pre>  Your signature (public key):
+    874e906aaacf328f7e9a618fa9d946d2404300fdc4919e26e08219dec45fb7dd
+
+  Your feed address, to give to people:
+    874e906aaacf328f7e9a618fa9d946d2404300fdc4919e26e08219dec45fb7dd
+   Copy the address
+  Only people who use the same relay as you will find it: no public encrypted
+  (wss&#58;//) relay is in your profile or relay list.
+
+  Its secret half is kept in:
+    /home/me/.config/terse/identity.key
+
+  Keep a copy of this file somewhere safe, such as a USB stick. Whoever has it
+  can publish as you, and if you lose it you can never add to this feed again.
+  Tersenet never shows the secret key itself.
+
+  Your signature is made: 874e90…5fb7dd. Keep a copy of its file (below).</pre>
+<p>The 64 hexadecimal digits are the public half of your key. Your feed&#39;s address is what you give to people; &quot;Copy the address&quot; puts it on the clipboard. The secret half is the file named on the screen, and it is never shown. Keep a copy of that file somewhere safe: whoever has it can publish as you, and if you lose it you can never add to your feed again. If you already have a key file (a copy you kept, or another computer&#39;s), &quot;Use a key file I already have…&quot; opens a list of your folders to choose it; the window never replaces a key it already has.</p>
+<h2 id="your-profile">Your profile</h2>
+<p>Page 2, Profile. Type your name (1 to 48 bytes), a few words about yourself if you like, and choose whether search may find your name (Space switches it). &quot;Save and publish&quot; asks, then publishes:</p>
+<pre>  Name  Sam
+  About I write about birds.
+  [x] Let search find my name   Space switches it
+
+  Relays your profile names (encrypted ones only):
+    none
+
+   Save and publish
+
+  Published now: “Sam”, entry #1 of your feed, listed.
+
+  Your profile is published as entry #1, and search can find your name.
+  Taken by 1 of 1 relays: ws&#58;//127.0.0.1:7878</pre>
+<p>Your profile is the first entry of your feed. Names are not unique, so readers always show your key beside it. The relays listed under the fields are the ones your profile names, so that people can find your feed; only encrypted ones (<code>wss&#58;//</code>) are ever written there.</p>
+<h2 id="publish-an-article">Publish an article</h2>
+<p>Write an article as a plain text file, in any text editor (the page after next, &quot;Write and publish an article&quot;, shows how), and save it in your documents folder. Page 3, Publish: &quot;Choose a file…&quot; lists that folder (Enter opens a folder, Backspace goes up), or type the file&#39;s path. Enter on the file shows the article as it will read, and what publishing does with each of its links:</p>
+<pre>  Preview: “Hello, Tersenet”, 108 bytes
+
+  HELLO, TERSENET
+
+  My first article, published from the window.
+
+  What I like
+
+  • short pages
+  • no adverts
+
+ P or Enter publish…   ↑↓ PgUp PgDn scroll   Esc back</pre>
+<p>P asks, Y publishes it, signed with your key:</p>
+<pre>  “Hello, Tersenet” is published as entry #2 of your feed.
+  Taken by 1 of 1 relays: ws&#58;//127.0.0.1:7878</pre>
+<h2 id="follow-a-feed">Follow a feed</h2>
+<p>Page 4, Follow. Paste a feed&#39;s address (Ctrl+V) and press Enter to follow it, or type a name and press Enter to search for feeds that let search find them; Enter on one that was found follows it:</p>
+<pre>  Address or name Sam
+   Follow or search
+
+  Found (1): Enter follows
+   Sam  874e90…5fb7dd
+
+  Feeds you follow (0): Enter or Delete unfollows
+    none yet
+
+   Follow my own feed
+
+  1 feed found: Enter on it follows it.</pre>
+<p>Below are the feeds you follow; Enter or Delete on one stops following it, after asking. To see your own articles in your timeline, follow your own feed: when you do not, the page offers &quot;Follow my own feed&quot;.</p>
+<h2 id="relays">Relays</h2>
+<p>Page 5, Relays. A relay carries your feed to others and theirs to you. The page shows the relays this window uses, then your relay list. With an empty list the window uses the relay on this computer, which only this computer can reach. To share one, type it under &quot;Add a relay&quot;: a name such as <code>relay.example.org</code> is reached with encryption (<code>wss&#58;//</code>), and a plain relay on your own network is written <code>ws&#58;//192.168.1.20:7878</code>. &quot;Options&quot; takes the advanced settings of a relay line, such as a <code>pin=</code> for a relay with its own certificate.</p>
+<pre>  This window uses:
+    ws&#58;//127.0.0.1:7878
+
+  Your relay list: Enter or Delete takes one out
+   wss&#58;//relay.example.org
+
+  Added wss&#58;//relay.example.org: Tersenet uses it from its next start.
+  Your list now replaces the relay on this computer (ws&#58;//127.0.0.1:7878): add
+  it too to keep using it.</pre>
+<p>As the last lines say, your list replaces the relay on this computer: add <code>ws&#58;//127.0.0.1:7878</code> too if you still want it.</p>
+<p>Enter or Delete on a relay of the list takes it out, after asking. The list is used from the window&#39;s next start.</p>
+<h2 id="what-you-have-now">What you have now</h2>
+<p>Your key, your name, an article in your feed and someone to follow, without a terminal. Next, the same steps as commands, and more about keys, names and addresses: <a href="guide-profile.html">Create your profile</a>.</p>
+<p>Every key of these screens and of the shell is in <a href="using.html">Using the shell</a>.</p>
+</article>
+<nav class="pn"><a rel="prev" href="guide-run.html">← Run Tersenet</a><a rel="next" href="guide-profile.html">Create your profile →</a></nav>
+</main>
+<footer class="site"><p>Tersenet is free software under the <a href="https://github.com/runvnc/terse/blob/main/LICENSE">Apache License 2.0</a>. <a href="https://github.com/runvnc/terse">Source on GitHub</a>. Public relay: <code>relay.tersenet.org</code>. No cookies, no tracking.</p></footer>
+</body>
+</html>

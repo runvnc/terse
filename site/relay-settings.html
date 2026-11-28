@@ -30,6 +30,7 @@ wss&#58;<span class=c>//relay.corp.example only-authority=corp-ca.pem</span>
 wss&#58;<span class=c>//203.0.113.7:7443 pin=sha256:3b0c…</span>
 ws&#58;<span class=c>//192.168.1.20:7878</span></pre>
 <p>Nothing received from the network (a hint, a profile, a link, an entry) can add an authority, a pin or a plain connection: those come only from the user.</p>
+<p>The Relays page of <code>terse-host</code>&#39;s own screens (F10) edits the same list as <code>terse relay add</code> and <code>terse relay remove</code>: a relay typed as on a command line, and its options (<code>pin=</code>, <code>authority=</code>, <code>only-authority=</code>) in the field below it.</p>
 <h2 id="a-relay-on-a-home-or-office-network">A relay on a home or office network</h2>
 <p>The simple way is plain: <code>terse-relay --listen 0.0.0.0:7878</code>, and <code>ws&#58;//192.168.1.20:7878</code> in each client&#39;s relay list. The recommended way is encrypted, with a self-signed certificate that each client pins:</p>
 <pre class="sh"><span class=k>openssl</span> req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 3650 -subj /CN=relay.home -keyout relay.key -out relay.pem

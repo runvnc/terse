@@ -15,11 +15,12 @@
 <h2 id="a-relay-you-share">A relay you share</h2>
 <p>The relay your window starts can be reached from your computer only. To read each other, one of you runs a relay that listens on the network, before starting <code>terse-host</code>:</p>
 <pre class="sh"><span class=k>terse-relay</span> --listen 0.0.0.0:7878 --store terse-relay-store</pre>
-<p>The other adds it once, with the first one&#39;s computer name or address on your network, and starts <code>terse-host</code> again:</p>
+<p>The other adds it once, with the first one&#39;s computer name or address on your network, and starts <code>terse-host</code> again. In the window: F10, page 5 (Relays), type <code>ws&#58;//their-computer:7878</code> under &quot;Add a relay&quot; and press Enter. In a terminal:</p>
 <pre class="sh"><span class=k>terse</span> relay add ws&#58;//their-computer:7878</pre>
 <p>A relay has no accounts: anyone who can reach it can read what is on it, but nobody can publish in your name. A relay reached with <code>wss&#58;//</code> (over TLS) also hides from the network what you read; a name alone, as in <code>terse relay add relay.example.org</code>, means <code>wss&#58;//relay.example.org</code>. The project runs a public relay that anyone may read from and publish to: <code>terse relay add relay.tersenet.org</code>.</p>
 <h2 id="from-an-address">From an address</h2>
-<p>Ask for their address: what <code>terse feed address</code> prints, or what the reader&#39;s help page (?) shows. It is a key of 64 hexadecimal digits, sometimes followed by <code>@</code> and a relay. In the reader press F for your feeds, then S, and type or paste it (Ctrl+V pastes). Enter subscribes, and the window asks you first:</p>
+<p>Ask for their address: what their Signature page (F10) copies, what <code>terse feed address</code> prints, or what the reader&#39;s help page (?) shows. It is a key of 64 hexadecimal digits, sometimes followed by <code>@</code> and a relay. The simplest way: F10, page 4 (Follow), paste it (Ctrl+V) and press Enter. Their articles appear in your timeline, and the feed in the list below.</p>
+<p>In the reader, press F for your feeds, then S, and type or paste it. Enter subscribes, and the window asks you first, since a program asks for it:</p>
 <pre>Tersenet · permission
 “reader” asks to subscribe to the feed 73670a…a9ee5f.
 Its articles will be downloaded and shown in your timeline.
@@ -27,14 +28,14 @@ Allow?   Y yes     N or Esc no</pre>
 <p>Y, and their articles appear in your timeline: everything they have published, and from now on whatever they publish next. An address with a relay after the <code>@</code> also finds the feed on that relay if yours do not have it, as long as it is on the internet rather than a home network.</p>
 <p>In a terminal, <code>terse feed subscribe</code> and the address does the same; an open window takes it in within a second, and its articles arrive as if you had pressed S. <code>terse feed unsubscribe</code> takes them out again the same way.</p>
 <h2 id="from-a-name">From a name</h2>
-<p>If they let search find their name (<code>--listed</code>, in the profile page), search for it: / in the reader, the name, Enter.</p>
+<p>If they let search find their name (&quot;Let search find my name&quot; on their Profile page, or <code>--listed</code>), type it on the Follow page (F10) and press Enter: the feeds found are listed, and Enter on one follows it. In the reader: /, the name, Enter.</p>
 <pre>Feeds
 1 found
 Ana
 73670a…a9ee5f</pre>
-<p>Enter on the feed shows its page; S subscribes. In a terminal, <code>terse find Ana</code> lists the feeds of that name with their keys. Names are not unique, so check the key with the person.</p>
+<p>Enter on the feed shows its page; S subscribes. In a terminal, <code>terse find Ana</code> lists the feeds of that name with their keys, 16 at a time (<code>--all</code> lists every page). Names are not unique, so check the key with the person.</p>
 <h2 id="nicknames-unsubscribing-syncing">Nicknames, unsubscribing, syncing</h2>
-<p>In the feeds view (F), N gives the selected feed a nickname that only you see, such as &quot;Ana from choir&quot;; an empty one removes it. U unsubscribes. In a terminal: <code>terse feed nickname &lt;key&gt; &quot;Ana from choir&quot;</code> and <code>terse feed unsubscribe &lt;key&gt;</code>.</p>
+<p>On the Follow page (F10), Enter or Delete on a feed you follow stops following it, after asking. In the reader&#39;s feeds view (F), N gives the selected feed a nickname that only you see, such as &quot;Ana from choir&quot;; an empty one removes it. U unsubscribes. In a terminal: <code>terse feed nickname &lt;key&gt; &quot;Ana from choir&quot;</code> and <code>terse feed unsubscribe &lt;key&gt;</code>.</p>
 <p>While the window is open it keeps up by itself. From a terminal, <code>terse feed sync</code> fetches what is new in every feed you follow, and <code>terse feed list</code> lists the entries, one a line: date, feed, entry number, size, whether it is downloaded, and title.</p>
 <h2 id="what-you-have-now">What you have now</h2>
 <p>Someone else&#39;s articles in your timeline, and yours in theirs once they subscribe to you. Next, the optional side of Tersenet: <a href="guide-games.html">Find and play a game</a>.</p>

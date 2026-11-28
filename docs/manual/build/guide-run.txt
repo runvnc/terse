@@ -37,6 +37,8 @@ Up and Down move the cursor, which starts on "reader". Enter starts the program 
 
 F12 is the home key. Wherever you are, F12 brings you back to the launcher; no program ever sees it. From there, Enter on another program starts it beside the first, and Esc goes back to the one you were using.
 
+F10 opens the window's own screens, where you make your key, publish and follow feeds; the next page is about them.
+
 ## The reader and this manual
 
 Choose "reader" and press Enter. The reader opens on your timeline, the newest articles of the feeds you follow. It is empty for now:
@@ -59,10 +61,10 @@ Press ? in the reader for every key of every view. Esc on the timeline stops the
 
 ## Quit
 
-Close the window. Nothing needs saving: what you publish and follow is kept as you go. (To keep the programs you have open for next time, press S in the launcher first: [Find and play a game](terse:18cbaa89ea5737825f068edf3dc37fa7f26d57c20681f511f86ad8766b3c04eb) shows how.)
+Close the window. Nothing needs saving: what you publish and follow is kept as you go. (To keep the programs you have open for next time, press S in the launcher first: [Find and play a game](terse:7049f4e29d4f0eca6bc6343eb696a147f3ffa81514f37fe43f318c1c4c0bc0ef) shows how.)
 
 ## What you have now
 
-Tersenet running, the launcher, and the reader with this manual in it. Next, make the key that is your identity: [Create your profile](terse:08640ab92be6194a39f6aede8274ef93c58691232e062718d332e388985b9399).
+Tersenet running, the launcher, and the reader with this manual in it. Next, make the key that is your identity, with F10 in this window: [Your feed without the command line](terse:7b33d698d4a8cf7d518800f011b4e1f673bb5646565133a5aeabc19a73a25b20).
 
-Every key of the launcher, the layouts and the tiles is in [Using the shell](terse:062074da6cd2b3884aba1a8cb12ff83c4db18bf10b50cb5823f5253912c1158e).
+Every key of the launcher, the layouts and the tiles is in [Using the shell](terse:277cb63a0895446cb8413b1a8a58826526871a38cee8eb4c620a982b6617ddaf).

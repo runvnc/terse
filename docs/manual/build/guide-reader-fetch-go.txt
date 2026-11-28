@@ -192,12 +192,12 @@ exit status 1
 
 ## What it leaves out
 
-The program asks one relay and keeps nothing. A complete reader keeps every blob it fetched, so that an article opens at once the next time with no network at all, asks several relays, and matches replies to requests by their numbers. In tersereader that is `internal/client/client.go`, with the store in `internal/store/store.go`. A reader may also leave all of the network to a node, a separate program it asks over a local socket; [Writing a reader without the machine](terse:61c511be1cc7b4ee730aa56774407bdb1cd464c393b84716dff2b266ac5a011d) says how.
+The program asks one relay and keeps nothing. A complete reader keeps every blob it fetched, so that an article opens at once the next time with no network at all, asks several relays, and matches replies to requests by their numbers. In tersereader that is `internal/client/client.go`, with the store in `internal/store/store.go`. A reader may also leave all of the network to a node, a separate program it asks over a local socket; [Writing a reader without the machine](terse:cc4337d021a85b57f3915f5fb0e4173355faa0139a638dfed5d50bbfa31f3924) says how.
 
 ## What you have now
 
 A reader that fetches an article by its ID and knows it is genuine.
 
-- Next: [Make a reader in Go, step 3: follow a feed](terse:a04b923ee1aa6f83c643936ab2d4d9d68155d94c63cd67cc02d29d13b98753e5).
-- The same step in Rust: [Make a reader in Rust, step 2: fetch an article](terse:26fd09308437089364588af7ec6cdc9a3c10f9ca76b86fb0ba2410ce2e65899c).
-- Every relay message, and why a relay refuses: [The network](terse:9777caa3f5b86a3198a8fc5c69a8f3c0968315f5bed3a70dc291cee1187ff278).
+- Next: [Make a reader in Go, step 3: follow a feed](terse:2252eaa03fa40611503b97f9e7cda71edcce9725cf829d170b784838d0120604).
+- The same step in Rust: [Make a reader in Rust, step 2: fetch an article](terse:6b7117be7b41c31753c5493de866e09d5c18a84b76235fe881c2295f507e3b75).
+- Every relay message, and why a relay refuses: [The network](terse:e1d055394942c8bcdcfd41d6e8a0b6221c09238e9babffff5db9706f5a428e44).

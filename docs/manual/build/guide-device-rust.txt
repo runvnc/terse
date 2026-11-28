@@ -377,6 +377,6 @@ All of that is in `native/driver-example/terminal.c`, 583 lines of C. The refere
 
 ## What you have now
 
-A device of your own, running under the reference core with the reference's hashes. Next, mix your parts with the reference's: [Swap in your own part](terse:a24c2de98ab6e788578dec4081f4fd9102242165f899c412d0a6ea9b6d8bb140).
+A device of your own, running under the reference core with the reference's hashes. Next, mix your parts with the reference's: [Swap in your own part](terse:a6116b92a45f95caf064f78841eefc700d3e9b9b48abe648757983fd1a3c1dd4).
 
-The same driver in Go: "Make a device in Go", the page before this one. The rules: [The terminal (device 2)](terse:80a949dab16ddf5f2251c453d13b7f0822e66b2f59a569211fabd1c3d350922e); DEVICES.md sections 1, 5, 6 (batching) and 13 (a minimal driver).
+The same driver in Go: "Make a device in Go", the page before this one. The rules: [The terminal (device 2)](terse:deb5873dac2c42c046f26ea54e8fba9d7ce48c132672c71b5ef2b5864289324a); DEVICES.md sections 1, 5, 6 (batching) and 13 (a minimal driver).

@@ -1,6 +1,6 @@
 # Content: feeds, names, search and publishing
 
-Eleven operations of the content device (device 4) work with feeds: numbered series of signed entries, one series per author, each entry pointing at a blob. Four read what the host holds about the feeds it follows, one searches the relays, five change the user's subscriptions, feed, profile or nicknames (only with the user's consent), and one tells the program the host's own feed key. They use the same request block, `submit` call, handles, completion rules and statuses as get and put; that article, "Content: blobs, requests and statuses", comes before this one. How feeds travel is in [the network](terse:9777caa3f5b86a3198a8fc5c69a8f3c0968315f5bed3a70dc291cee1187ff278).
+Eleven operations of the content device (device 4) work with feeds: numbered series of signed entries, one series per author, each entry pointing at a blob. Four read what the host holds about the feeds it follows, one searches the relays, five change the user's subscriptions, feed, profile or nicknames (only with the user's consent), and one tells the program the host's own feed key. They use the same request block, `submit` call, handles, completion rules and statuses as get and put; that article, "Content: blobs, requests and statuses", comes before this one. How feeds travel is in [the network](terse:e1d055394942c8bcdcfd41d6e8a0b6221c09238e9babffff5db9706f5a428e44).
 
 | `op` | Operation | C helper | Consent |
 |---|---|---|---|
@@ -15,6 +15,7 @@ Eleven operations of the content device (device 4) work with feeds: numbered ser
 | `0Bh` | Set profile | `content_set_profile` | yes |
 | `0Ch` | Set nickname | `content_set_nickname` | yes |
 | `0Dh` | Programs | `content_programs` | no |
+| `12h` | Find more | `content_find_more` | no |
 
 ## Reading lists
 
@@ -53,7 +54,7 @@ The entry, as it appears from record byte 2 on (offsets here are within the entr
 | 108 | 1 | `n`: title length, 0 to 120 |
 | 109 | `n` | title, UTF-8 |
 
-So `L` is 110 + `n`, and a record is at most 231 bytes. A program tells articles from documents by the kind byte. The host has verified every entry it delivers. When new entries arrive the program gets a feeds-updated event (type `07h`, see [events](terse:dbc6abbfedb0790f69322a2b376174349ae1911ae326c23de1a7ee4fc1dba38b)), sent after the automatic download of their blobs has finished or failed, so the local flags are already right; read the timeline again then.
+So `L` is 110 + `n`, and a record is at most 231 bytes. A program tells articles from documents by the kind byte. The host has verified every entry it delivers. When new entries arrive the program gets a feeds-updated event (type `07h`, see [events](terse:827f6ff5dd4763ee4950db8bf62d74175f75781b8027bcbbf48bc8a60af5fe05)), sent after the automatic download of their blobs has finished or failed, so the local flags are already right; read the timeline again then.
 
 ## Programs (0Dh)
 
@@ -63,7 +64,7 @@ The current version of each program (kind 3 entry) of the subscribed feeds, in i
 
 `id` is a feed key; `offset` and `size` are not used. Subscribe adds the feed to the host's subscriptions; unsubscribe removes it.
 
-A subscribe may carry the hints of the feed's address ([the network](terse:9777caa3f5b86a3198a8fc5c69a8f3c0968315f5bed3a70dc291cee1187ff278), "Feed addresses"): `length` bytes at `addr`, in ROM or RAM, copied at submit, the text after the `@` exactly, such as `relay.example:9000` or `a.example,[2001:db8::7]`: one or two hints, at most 161 bytes. `length` 0 gives none (`content_follow` sets it so; `content_subscribe` gives hints). Malformed hints are a bad request (`04h` at submit). The host keeps them with the subscription and, if its own relays do not hold the feed, follows it on the relays they name. Unsubscribe does not use `length` and `addr`.
+A subscribe may carry the hints of the feed's address ([the network](terse:e1d055394942c8bcdcfd41d6e8a0b6221c09238e9babffff5db9706f5a428e44), "Feed addresses"): `length` bytes at `addr`, in ROM or RAM, copied at submit, the text after the `@` exactly, such as `relay.example:9000` or `a.example,[2001:db8::7]`: one or two hints, at most 161 bytes. `length` 0 gives none (`content_follow` sets it so; `content_subscribe` gives hints). Malformed hints are a bad request (`04h` at submit). The host keeps them with the subscription and, if its own relays do not hold the feed, follows it on the relays they name. Unsubscribe does not use `length` and `addr`.
 
  With the user's consent the request completes with `01h` once the list has changed; the feed's entries arrive later, each batch announced by a feeds-updated event. Without asking, it completes with `01h` at once if the list already is as asked (subscribing to a feed already subscribed, whose hints are then left as they were, unsubscribing from one that is not), and with `05h` if `id` is not a valid feed key (an Ed25519 public key). An unsubscribe from an invalid key meets both rules; the reference host completes it with `01h`, since such a feed cannot be subscribed.
 
@@ -126,7 +127,7 @@ Searches the relays. `id` is not used. `offset` is the scope; the query is the `
 | 2 | `FIND_ENTRIES` | articles and documents by title | kinds 1 and 4 |
 | 3 | `FIND_PROGRAMS` | programs by name, current versions only | kind 3 |
 
-Any other scope is a bad request. A match is the query occurring as a run of bytes in the name or title, with A to Z folded to a to z on both sides. Results are timeline records (only flag bit 0 may be set), as many whole ones as fit, in order; `length` is the bytes delivered and `size` the number of results the host has, at most 16. The host asks all its relays, verifies every entry they return, drops invalid ones and duplicates, and merges and caps the results as described in [the network](terse:9777caa3f5b86a3198a8fc5c69a8f3c0968315f5bed3a70dc291cee1187ff278).
+Any other scope is a bad request. A match is the query occurring as a run of bytes in the name or title, with A to Z folded to a to z on both sides. Results are timeline records (only flag bit 0 may be set), as many whole ones as fit, in order; `length` is the bytes delivered and `size` the number of results, at most 16: a page. The first byte of `id` is 1 if the host has more (`content_find_has_more(r)`), else 0. The host asks all its relays, verifies every entry they return, drops invalid ones and duplicates, and merges and caps the results as described in [the network](terse:e1d055394942c8bcdcfd41d6e8a0b6221c09238e9babffff5db9706f5a428e44).
 
 | Case | Status |
 |---|---|
@@ -135,6 +136,16 @@ Any other scope is a bad request. A match is the query occurring as a run of byt
 | otherwise, no relay could be asked or none answered | `03h` |
 
 `content_find` copies the query into the buffer itself; if the buffer is shorter than the query it sets `STATUS_BAD_REQUEST` and returns 0 without submitting.
+
+## Find more (12h)
+
+The next page of the machine's last find of a scope: `content_find_more(r, scope, buf, len)`. `offset` is the scope; `id` and `size` are not read; `length` is the size of the buffer at `addr` (1 to 16,384, in RAM). It completes like a find, with up to 16 results that the find and the find mores after it did not deliver, in the same order, and `id` again says whether there are more. A find replaces the machine's last find of its scope, so a program can page through feeds and articles at once.
+
+| Case | Status |
+|---|---|
+| the next results (possibly none) | `01h` |
+| no find of that scope with more results (none made, the last had no more, or the host no longer holds it) | `02h` |
+| as for a find | `05h`, `03h` |
 
 ## Set profile (0Bh)
 

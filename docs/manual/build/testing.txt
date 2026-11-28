@@ -21,7 +21,7 @@ terse run prog.terse --frames 60 --events keys.txt --dump
 | `--without <slot>` | runs without an optional device, as a host that lacks it |
 | `--shell` | runs the image as a shell, with the machines it starts; `--hash-all` hashes each |
 
-A headless run has no clock (the Unix time is 0), no random bytes (`random` gives zeros) and no controllers but the script's, and content requests complete at the start of the next frame: so it is reproducible. The hash covers the whole machine (CPU, RAM, devices); [State, replay and conformance](terse:eb5608c8940a7a5d81c778050e919eb373b6f1d8dd9267f1603f9ed408fd4ccc) says what it holds.
+A headless run has no clock (the Unix time is 0), no random bytes (`random` gives zeros) and no controllers but the script's, and content requests complete at the start of the next frame: so it is reproducible. The hash covers the whole machine (CPU, RAM, devices); [State, replay and conformance](terse:2b57495d0e10bcf102f3312ca414417b0cdb17153ba3071aadf84b3c9a105676) says what it holds.
 
 | Exit status | When |
 |---|---|
@@ -52,7 +52,7 @@ One line a step: a frame number, a command and its arguments (`5 press left`). T
 | `feeds-updated` | a feeds-updated event |
 | `wait <n>` | the next line comes n frames later |
 
-A key is a name (`a` to `z`, `0` to `9`, `f1` to `f12`, `enter`, `esc`, `backspace`, `tab`, `space`, `up`, `down`, `left`, `right`, `home`, `end`, `pageup`, `pagedown`, `insert`, `delete`) or a USB HID usage (`40`, `0x28`). [Events and input](terse:dbc6abbfedb0790f69322a2b376174349ae1911ae326c23de1a7ee4fc1dba38b) has every event.
+A key is a name (`a` to `z`, `0` to `9`, `f1` to `f12`, `enter`, `esc`, `backspace`, `tab`, `space`, `up`, `down`, `left`, `right`, `home`, `end`, `pageup`, `pagedown`, `insert`, `delete`) or a USB HID usage (`40`, `0x28`). [Events and input](terse:827f6ff5dd4763ee4950db8bf62d74175f75781b8027bcbbf48bc8a60af5fe05) has every event.
 
 A headless run reads the window's commands below and does nothing with them, saying how many it passed over: one script serves both.
 

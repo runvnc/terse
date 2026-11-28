@@ -12,12 +12,12 @@
 <article>
 <h1 id="create-your-profile">Create your profile</h1>
 <p>On Tersenet nobody gives out accounts: there is no sign-up, no e-mail address and no password. You are a key that your computer makes, and your articles are a feed signed with it. Anyone can check that an article in your feed came from you, and nobody without your key can add to it.</p>
-<p>These commands go in a terminal, with the window from the last page still open. (On Windows, open PowerShell in the folder where you unzipped Tersenet and write <code>.\terse</code> for <code>terse</code>.)</p>
+<p>The window does all of this on its own screens: F10, then the Signature and Profile pages (the last page, &quot;Your feed without the command line&quot;). This page does the same in a terminal and says more about each part. The commands go in a terminal, with the window still open. (On Windows, open PowerShell in the folder where you unzipped Tersenet and write <code>.\terse</code> for <code>terse</code>.)</p>
 <h2 id="your-key">Your key</h2>
 <pre class="sh"><span class=k>terse</span> key new</pre>
 <pre>terse: new identity saved in /home/me/.config/terse/identity.key
 7105227f05be8a2efd2ef3e7d503342cebf594666854b14db7680ef9987e084c</pre>
-<p>The 64 hexadecimal digits are the public half of your key: your feed&#39;s address, which you give to people. The file holds the secret half. Keep it safe and keep a copy: whoever has the file can publish as you, and if you lose it you cannot add to your feed again. <code>terse key show</code> prints your key whenever you need it.</p>
+<p>The 64 hexadecimal digits are the public half of your key: your feed&#39;s address, which you give to people. The file holds the secret half. Keep it safe and keep a copy: whoever has the file can publish as you, and if you lose it you cannot add to your feed again. <code>terse key show</code> prints your key whenever you need it, and <code>terse key import</code> and a file takes a key you kept as yours (it never replaces one you have).</p>
 <p>You can skip this step: the window makes a key by itself the first time something publishes, for example when you press T in the reader.</p>
 <h2 id="your-name">Your name</h2>
 <pre class="sh"><span class=k>terse</span> profile set --name Sam --listed</pre>
@@ -28,10 +28,10 @@
 name:        Sam
 profile:     #1 of 2026-11-22 00:17, blob c87e03f4…0369e33e
 listed:      yes</pre>
-<p>In the reader you can do the same without a terminal: F opens your feeds, P asks for your name and then whether search may find it, and the window asks you to confirm.</p>
+<p>Without a terminal: the Profile page (F10) has your name, a description and whether search finds you; in the reader, F opens your feeds and P asks for your name and then whether search may find it. Either way the window asks you to confirm.</p>
 <h2 id="your-address">Your address</h2>
 <pre class="sh"><span class=k>terse</span> feed address</pre>
-<p>prints the address to give to people: your key, and after an <code>@</code> the relays where others can find you. For now it is the key alone, with a note that only people on the same relay will find your feed: your relay is on your own computer. <a href="guide-subscribe.html">Subscribe to someone&#39;s feed</a> says how to share a relay. The reader&#39;s help page (?) shows the address too.</p>
+<p>prints the address to give to people (the Signature page shows it too, with a button that copies it): your key, and after an <code>@</code> the relays where others can find you. For now it is the key alone, with a note that only people on the same relay will find your feed: your relay is on your own computer. <a href="guide-subscribe.html">Subscribe to someone&#39;s feed</a> says how to share a relay. The reader&#39;s help page (?) shows the address too.</p>
 <h2 id="what-is-kept-where">What is kept where</h2>
 <div class="table"><table>
 <thead><tr><th>Folder</th><th>Holds</th></tr></thead>
@@ -45,7 +45,7 @@ listed:      yes</pre>
 <p>A key, a name and an address: an identity no one issued and no one can take away. Next, put something in your feed: <a href="guide-write.html">Write and publish an article</a>.</p>
 <p>Profiles, names and addresses in full are in <a href="network.html">The network</a>.</p>
 </article>
-<nav class="pn"><a rel="prev" href="guide-run.html">← Run Tersenet</a><a rel="next" href="guide-write.html">Write and publish an article →</a></nav>
+<nav class="pn"><a rel="prev" href="guide-you.html">← Your feed without the command line</a><a rel="next" href="guide-write.html">Write and publish an article →</a></nav>
 </main>
 <footer class="site"><p>Tersenet is free software under the <a href="https://github.com/runvnc/terse/blob/main/LICENSE">Apache License 2.0</a>. <a href="https://github.com/runvnc/terse">Source on GitHub</a>. Public relay: <code>relay.tersenet.org</code>. No cookies, no tracking.</p></footer>
 </body>

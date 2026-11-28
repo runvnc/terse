@@ -81,6 +81,7 @@
 <tr><td><code>0Fh</code></td><td>Load</td><td><a href="content-records.html">named records</a></td></tr>
 <tr><td><code>10h</code></td><td>Delete</td><td><a href="content-records.html">named records</a></td></tr>
 <tr><td><code>11h</code></td><td>Records</td><td><a href="content-records.html">named records</a></td></tr>
+<tr><td><code>12h</code></td><td>Find more</td><td><a href="content-feeds.html">feeds</a></td></tr>
 </tbody></table></div>
 <p>Get (<code>01h</code>) asks for up to <code>length</code> bytes of blob <code>id</code> starting at <code>offset</code>, delivered to <code>addr</code>. On success <code>length</code> is the number of bytes delivered (fewer if the blob ends first) and <code>size</code> is the blob&#39;s size. A get whose <code>offset</code> is at or beyond the end of the blob completes with <code>01h</code>, <code>length</code> 0 and <code>size</code> the blob&#39;s size.</p>
 <p>Put (<code>02h</code>) stores the <code>size</code> bytes at <code>addr</code> as a blob, on this host and on its relays. The bytes are copied at submit, so the program may reuse the memory at once. On success <code>id</code> is the blob&#39;s ID.</p>

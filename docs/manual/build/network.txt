@@ -14,7 +14,7 @@ A blob reached without an entry (by a link) tells what it is by its first four b
 
 ## Relay protocol
 
-Relay URLs are `wss://` (TLS) or `ws://` (plain): [Relays: encryption and trust](terse:438db02932e5f85e6070ac015400ff3c0e31c08317a8a15bc4db578a660e1dcd) says when each is used. All messages are binary WebSocket messages; multi-byte integers are little-endian. `req` is a 32-bit number chosen by the client and echoed in the reply; replies may come in any order.
+Relay URLs are `wss://` (TLS) or `ws://` (plain): [Relays: encryption and trust](terse:4cd75a37f70fb27330f3a1cf16b0a5aaffe652b10d2ed17fec594ab0d025aeea) says when each is used. All messages are binary WebSocket messages; multi-byte integers are little-endian. `req` is a 32-bit number chosen by the client and echoed in the reply; replies may come in any order.
 
 | Message | Direction | Layout |
 |---|---|---|
@@ -107,7 +107,7 @@ A client keeps the hints with the subscription. If none of its own relays holds 
 
 ## Profiles, names and search
 
-A feed's profile (a kind 2 entry) gives it a display name and the relays it publishes on; a user may give a feed a nickname; search finds feeds by name, articles and documents by title and programs by name, and lookup finds a feed's program by its name. All of it is in [profiles, names and search](terse:d28034e5cc0deddda0145d71828834380fe59dc4809fd4cd70481f71aebb0f3c).
+A feed's profile (a kind 2 entry) gives it a display name and the relays it publishes on; a user may give a feed a nickname; search finds feeds by name, articles and documents by title and programs by name, and lookup finds a feed's program by its name. All of it is in [profiles, names and search](terse:f27f1ad7a4a71111b7c7bbc85b81d98a8a3ca663550920cb27a5609ba9e0ebf6).
 
 ## Several relays
 
@@ -129,4 +129,4 @@ Entries of kinds it does not handle (programs and documents, for a client withou
 
 ## For machine hosts
 
-Programs never see this protocol, nor any secret key: they use the content device, and the host speaks the protocol for them. A program may ask to subscribe, unsubscribe, publish, set the profile or a nickname, and the host asks the user first; the timeline above is what the timeline operation reads. A host may start a program by image ID, checking that the blob is a valid image. Completions arrive as events ([events](terse:dbc6abbfedb0790f69322a2b376174349ae1911ae326c23de1a7ee4fc1dba38b)) and cost budget ([charges](terse:ac10aae482c4ea948fe2bb12c874b4c2d9e5de9af3858088d51f763d82c86502)).
+Programs never see this protocol, nor any secret key: they use the content device, and the host speaks the protocol for them. A program may ask to subscribe, unsubscribe, publish, set the profile or a nickname, and the host asks the user first; the timeline above is what the timeline operation reads. A host may start a program by image ID, checking that the blob is a valid image. Completions arrive as events ([events](terse:827f6ff5dd4763ee4950db8bf62d74175f75781b8027bcbbf48bc8a60af5fe05)) and cost budget ([charges](terse:09634702ff9ba8ea7156b40fce12e8c7c6f0f698b1a99ce270ca765adb740ccc)).

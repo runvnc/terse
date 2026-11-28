@@ -37,6 +37,8 @@ are joined into one paragraph.
 </ul>
 <p>So an article that keeps to what the two share shows much the same on GitHub, and a Markdown file mostly reads well in Tersenet, with its emphasis marks showing. <a href="writing-articles.html">Writing an article</a> shows every rule.</p>
 <h2 id="publish-it">Publish it</h2>
+<p>In the window: F10, page 3 (Publish), &quot;Choose a file…&quot;, and Enter on <code>hello.txt</code> (save it in your documents folder, or type its path). The window shows the article as it will read and what happens to each of its links; P, then Y, publishes it. The title is the file&#39;s first heading unless you type another.</p>
+<p>In a terminal:</p>
 <pre class="sh"><span class=k>terse</span> feed publish hello.txt --title <span class=s>&quot;Hello, Tersenet&quot;</span></pre>
 <pre>seq 2 blob 5d86159d495906bb…ad537da380d</pre>
 <p>The article is now entry #2 of your feed (your profile was #1), signed with your key, on your relay; the line before it, <code>terse: taken by 1 of 1 relays: ws&#58;//127.0.0.1:7878</code>, says so. Anyone who can reach that relay can read it. The title is what timelines show; the heading at the top of the text is for people who open the article by a link.</p>
@@ -45,10 +47,10 @@ are joined into one paragraph.
 <pre>link terse:5d86159d…ad537da380d: held here, uploaded now (taken by 1 of 1 relays); kept: your feed&#39;s entry #2 names it, and relays keep it while they keep that entry</pre>
 <p>An entry names one article, and a public relay drops an article no entry names after a while, so a part that no entry names (a picture, a page you wrote only to link to) is uploaded with the article and then named by an *attachment* entry of your feed, which readers do not list: <code>seq 3 attachment terse:…</code>. A part you want listed too, publish as an article of its own first. A link to another feed&#39;s article is *link-only*: that feed&#39;s relays keep it. <code>--dry-run</code> shows the list and publishes nothing.</p>
 <h2 id="see-it">See it</h2>
-<p>The timeline shows the feeds you follow, so follow your own:</p>
+<p>The timeline shows the feeds you follow, so follow your own: in the window, F10, page 4 (Follow), &quot;Follow my own feed&quot;; or in a terminal</p>
 <pre class="sh"><span class=k>terse</span> feed subscribe <span class=m>$(</span><span class=k>terse</span> key show)</pre>
 <pre>subscribed to 7105227f05be8a2efd…6854b14db7680ef9987e084c</pre>
-<p>(That works in bash, zsh, fish and PowerShell; or paste your key after <code>subscribe</code>.) The window reads the list of feeds you follow when it starts, so close it, run <code>terse-host</code> again and start the reader:</p>
+<p>(That works in bash, zsh, fish and PowerShell; or paste your key after <code>subscribe</code>.) An open window takes the change in within a second. Start the reader:</p>
 <pre>Timeline
 1 article  ·  1 feed
 Hello, Tersenet

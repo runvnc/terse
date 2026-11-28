@@ -31,6 +31,8 @@ ws://192.168.1.20:7878
 
 Nothing received from the network (a hint, a profile, a link, an entry) can add an authority, a pin or a plain connection: those come only from the user.
 
+The Relays page of `terse-host`'s own screens (F10) edits the same list as `terse relay add` and `terse relay remove`: a relay typed as on a command line, and its options (`pin=`, `authority=`, `only-authority=`) in the field below it.
+
 ## A relay on a home or office network
 
 The simple way is plain: `terse-relay --listen 0.0.0.0:7878`, and `ws://192.168.1.20:7878` in each client's relay list. The recommended way is encrypted, with a self-signed certificate that each client pins:

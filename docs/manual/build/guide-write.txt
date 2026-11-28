@@ -34,6 +34,10 @@ So an article that keeps to what the two share shows much the same on GitHub, an
 
 ## Publish it
 
+In the window: F10, page 3 (Publish), "Choose a file…", and Enter on `hello.txt` (save it in your documents folder, or type its path). The window shows the article as it will read and what happens to each of its links; P, then Y, publishes it. The title is the file's first heading unless you type another.
+
+In a terminal:
+
 ```sh
 terse feed publish hello.txt --title "Hello, Tersenet"
 ```
@@ -56,7 +60,7 @@ An entry names one article, and a public relay drops an article no entry names a
 
 ## See it
 
-The timeline shows the feeds you follow, so follow your own:
+The timeline shows the feeds you follow, so follow your own: in the window, F10, page 4 (Follow), "Follow my own feed"; or in a terminal
 
 ```sh
 terse feed subscribe $(terse key show)
@@ -66,7 +70,7 @@ terse feed subscribe $(terse key show)
 subscribed to 7105227f05be8a2efd…6854b14db7680ef9987e084c
 ```
 
-(That works in bash, zsh, fish and PowerShell; or paste your key after `subscribe`.) The window reads the list of feeds you follow when it starts, so close it, run `terse-host` again and start the reader:
+(That works in bash, zsh, fish and PowerShell; or paste your key after `subscribe`.) An open window takes the change in within a second. Start the reader:
 
 ```text
 Timeline
@@ -81,4 +85,4 @@ The heading is the title, so the reader shows it once. A shortcut for trying thi
 
 ## What you have now
 
-A feed with an article in it, and a reader that shows it. Next, the reader itself: [Read articles and follow links](terse:f4f00c3a6585d88d3f9610bd845fef69db778ace8a51672d3c2101b8eaaf1448).
+A feed with an article in it, and a reader that shows it. Next, the reader itself: [Read articles and follow links](terse:e6c5ac5cc10d895abc93478adfbe859684fd67c6ce3b3d3f32bc084d60730321).
