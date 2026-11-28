@@ -200,9 +200,12 @@ fn site_dir() -> PathBuf {
 #[test]
 fn site_is_up_to_date() {
     let built = manual::build(&manual::read_sources(&dir()).unwrap()).unwrap();
-    let mut files = terse_net::manual_site::site(&built);
-    // The extra files (docs/manual/site-files: the install script) are copied as they are.
-    files.extend(terse_net::manual_site::extra_files(&dir()).unwrap());
+    let mut files: Vec<(String, Vec<u8>)> =
+        terse_net::manual_site::site(&built).into_iter().map(|(n, d)| (n, d.into_bytes())).collect();
+    // The extra files (docs/manual/site-files: the install script, the try
+    // page and its WebAssembly) are copied as they are; the try page's
+    // content is made from the programs and the manual.
+    files.extend(terse_net::manual_site::other_files(&dir(), &built).unwrap());
     let stale = "site/ is stale: run `terse manual site --out site`";
     let mut on_disk: Vec<String> =
         std::fs::read_dir(site_dir()).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
@@ -211,7 +214,7 @@ fn site_is_up_to_date() {
     names.sort();
     assert_eq!(on_disk, names, "{stale}");
     for (name, data) in &files {
-        assert!(std::fs::read_to_string(site_dir().join(name)).unwrap() == *data, "{name}: {stale}");
+        assert!(std::fs::read(site_dir().join(name)).unwrap() == *data, "{name}: {stale}");
     }
     // Every manifest article has a page.
     for b in &built {
@@ -221,7 +224,7 @@ fn site_is_up_to_date() {
     let out = terse(&["manual", "site", "--dir", dir().to_str().unwrap(), "--out", tmp.path().to_str().unwrap()]);
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     for (name, data) in &files {
-        assert_eq!(std::fs::read_to_string(tmp.path().join(name)).unwrap(), *data, "{name}");
+        assert!(std::fs::read(tmp.path().join(name)).unwrap() == *data, "{name}");
     }
 }
 
@@ -310,11 +313,12 @@ fn well_formed_catches_mistakes() {
 /// no script and no web address, and every figure is well-formed SVG.
 #[test]
 fn site_is_self_contained() {
+    // The try page's content and WebAssembly are not text.
     let files: Vec<(String, String)> = std::fs::read_dir(site_dir())
         .unwrap()
-        .map(|e| {
+        .filter_map(|e| {
             let e = e.unwrap();
-            (e.file_name().to_string_lossy().into_owned(), std::fs::read_to_string(e.path()).unwrap())
+            Some((e.file_name().to_string_lossy().into_owned(), String::from_utf8(std::fs::read(e.path()).unwrap()).ok()?))
         })
         .collect();
     let page = |name: &str| files.iter().find(|(n, _)| n == name).map(|(_, d)| d.as_str());

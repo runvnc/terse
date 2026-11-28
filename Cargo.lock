@@ -3014,12 +3014,14 @@ dependencies = [
  "curve25519-dalek",
  "ed25519-dalek",
  "getrandom 0.4.3",
+ "miniz_oxide 0.8.9",
  "rustls",
  "rustls-webpki",
  "sha2",
  "tempfile",
  "terse-core",
  "terse-dirs",
+ "terse-web",
  "tersenet",
  "ttf-parser",
  "tungstenite",
@@ -3054,6 +3056,18 @@ name = "terse-testkit"
 version = "0.9.0"
 dependencies = [
  "tempfile",
+]
+
+[[package]]
+name = "terse-web"
+version = "0.9.0"
+dependencies = [
+ "blake3",
+ "miniz_oxide 0.8.9",
+ "sha2",
+ "tempfile",
+ "terse-core",
+ "terse-testkit",
 ]
 
 [[package]]

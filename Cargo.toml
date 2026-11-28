@@ -12,6 +12,7 @@ members = [
     "crates/terse-mame-crt",
     "crates/terse-testkit",
     "crates/terse-dirs",
+    "crates/terse-web",
     "sdk/rust",
 ]
 

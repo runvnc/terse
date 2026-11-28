@@ -18,8 +18,10 @@
 //!
 //! Besides the pages, [`site_dir`] copies the files of the manual's
 //! `site-files/` directory (for example `install.sh`, the install script
-//! the guide names) to the site as they are: text files only, no
-//! subdirectories.
+//! the guide names, and the "try it in your browser" page `try.html` with
+//! its script and `terse-web.wasm`) to the site as they are, no
+//! subdirectories; when they include `try.html` it also writes that page's
+//! content, `try-content.bin` ([`crate::try_page`]).
 
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
@@ -57,14 +59,14 @@ pub const EXTRA_DIR: &str = "site-files";
 
 /// The extra files of the manual in `dir` (its `site-files/`, if any):
 /// (file name, contents), sorted by name.
-pub fn extra_files(dir: &Path) -> Result<Vec<(String, String)>, String> {
+pub fn extra_files(dir: &Path) -> Result<Vec<(String, Vec<u8>)>, String> {
     let extra = dir.join(EXTRA_DIR);
     let mut files = Vec::new();
     let Ok(entries) = std::fs::read_dir(&extra) else { return Ok(files) };
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_file() {
-            let data = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+            let data = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
             files.push((entry.file_name().to_string_lossy().into_owned(), data));
         }
     }
@@ -72,13 +74,23 @@ pub fn extra_files(dir: &Path) -> Result<Vec<(String, String)>, String> {
     Ok(files)
 }
 
-/// Builds the manual in `dir` and writes its site to `out`, with the extra
-/// files of [`extra_files`]; `.html` files of articles no longer listed are
+/// The files besides the pages: the extra files of [`extra_files`], and
+/// the try page's content if they have the page.
+pub fn other_files(dir: &Path, built: &[Built]) -> Result<Vec<(String, Vec<u8>)>, String> {
+    let mut files = extra_files(dir)?;
+    if files.iter().any(|(n, _)| n == "try.html") {
+        files.push((crate::try_page::CONTENT.to_string(), crate::try_page::content(built)));
+    }
+    Ok(files)
+}
+
+/// Builds the manual in `dir` and writes its site to `out`, with the files
+/// of [`other_files`]; `.html` files of articles no longer listed are
 /// removed. Returns the files written.
-pub fn site_dir(dir: &Path, out: &Path) -> Result<Vec<(String, String)>, String> {
+pub fn site_dir(dir: &Path, out: &Path) -> Result<Vec<(String, Vec<u8>)>, String> {
     let built = crate::manual::build(&crate::manual::read_sources(dir)?)?;
-    let mut files = site(&built);
-    files.extend(extra_files(dir)?);
+    let mut files: Vec<(String, Vec<u8>)> = site(&built).into_iter().map(|(n, d)| (n, d.into_bytes())).collect();
+    files.extend(other_files(dir, &built)?);
     std::fs::create_dir_all(out).map_err(|e| format!("{}: {e}", out.display()))?;
     for entry in std::fs::read_dir(out).map_err(|e| format!("{}: {e}", out.display()))?.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();

@@ -1,0 +1,29 @@
+#!/bin/sh
+# Builds the WebAssembly of the website's try page (tersenet.org/try.html):
+# crates/terse-web (terse-core and the page's host) for wasm32-unknown-unknown,
+# copied to docs/manual/site-files/terse-web.wasm, where `terse manual site`
+# finds it, with crates/terse-web/wasm.sources, the hash of the
+# sources it was built from (the tests check that it is current).
+#
+#     scripts/build-web
+#
+# Needs only the Rust toolchain and its wasm32 target
+# (`rustup target add wasm32-unknown-unknown`): no wasm-bindgen, no npm.
+# Run it after changing terse-core or terse-web, then commit both files.
+set -e
+root=$(cd "$(dirname "$0")/.." && pwd)
+cd "$root"
+if ! rustc --print target-list >/dev/null 2>&1 || [ ! -d "$(rustc --print sysroot)/lib/rustlib/wasm32-unknown-unknown" ]; then
+    echo "scripts/build-web: the wasm32 target is missing: rustup target add wasm32-unknown-unknown" >&2
+    exit 1
+fi
+# Small and fast: one code unit, link-time optimisation, panics abort.
+CARGO_PROFILE_RELEASE_LTO=true CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 CARGO_PROFILE_RELEASE_PANIC=abort \
+    flock -o "/run/user/$(id -u)/terse-build.lock" "$root/scripts/cargo" rustc -p terse-web --release \
+    --target wasm32-unknown-unknown --crate-type cdylib
+out=docs/manual/site-files
+cp target/wasm32-unknown-unknown/release/terse_web.wasm "$out/terse-web.wasm"
+python3 scripts/web-sources.py > crates/terse-web/wasm.sources
+size=$(wc -c < "$out/terse-web.wasm")
+gz=$(gzip -9n < "$out/terse-web.wasm" | wc -c)
+echo "$out/terse-web.wasm: $size bytes ($gz gzipped), $(rustc --version)"

@@ -1,0 +1,23 @@
+[package]
+name = "terse-web"
+description = "Tersenet in a web page: terse-core compiled to WebAssembly, with an in-memory content device and a draw list a canvas plays (tersenet.org/try.html)."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+# A library only: the WebAssembly module is built from it with
+# `cargo rustc --crate-type cdylib --target wasm32-unknown-unknown`
+# (scripts/build-web), so a native workspace build makes no shared library.
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+terse-core.workspace = true
+blake3 = { version = "1.8", default-features = false }
+
+[dev-dependencies]
+terse-testkit.workspace = true
+tempfile = "3"
+sha2 = "0.10"
+miniz_oxide = "0.8"
