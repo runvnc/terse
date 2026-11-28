@@ -1,0 +1,72 @@
+# See walkthrough.txt for the transcript format.
+# The bell that rings itself: the parts in any order, the candle lit last,
+# the rig confirmed the moment it is set. The skiff will not leave before
+# ten is rung, or while nobody would ring eleven. Eleven strikes by itself.
+> fill lantern
+> light lantern
+> d
+> put candles in case
+< You see no candles here.
+> d
+> s
+> e
+> buy candles
+> buy cord
+> w
+> s
+> s
+> take fleece
+> sw
+> shine lantern at reeds
+> muffle oarlocks
+> e
+< Ten hasn't been rung.
+> ne
+> n
+> n
+> n
+> u
+> light candles
+< Set it in the case first.
+> put candles in case
+< where the flame will be at eleven
+> light candles
+< You strike a match and light the candle.
+! It is set.
+> put out candles
+< You pinch it out.
+> wind weight
+< until the pawl holds it high
+> wind crank
+< The weight is as high as it goes.
+> pull lever
+< That is what the cord is for.
+> tie cord
+< The lever stays up, held by the cord.
+> light candles
+< It is set.
+< [The bell that rings itself]
+! strike twelve
+> u
+> z
+> z
+> z
+> ring bell
+< Ten.
+> ring bell
+< Leave it. The candle has the next hour in hand.
+> d
+> d
+> s
+> s
+> s
+> sw
+> e
+< West Water
+status 10:1
+> z
+> z
+> z
+> z
+> z
+< It stops at eleven.

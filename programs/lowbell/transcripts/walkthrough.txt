@@ -1,4 +1,4 @@
-# The placeholder story's solution, from the start to the win.
+# Low Bell's solution, to the best ending (two lights), 10 points.
 #
 # Transcript format (crates/terse-cli/tests/lowbell.rs runs every file here):
 #   > command        typed, then Enter; a "-- more --" prompt is answered with Space
@@ -11,96 +11,157 @@
 #   novectors text   it does not
 #   wait N           N frames pass
 
-screen Low Bell (placeholder story)
-status The Jetty
-status 9:30 pm
-status bell in 30 min
+screen Low Bell
+status The Bell Chamber
+status 9:00 pm
 status score 0/10
 vectors c aa8250ff
-> north
-< The Square
-< The warden is here
-status 9:36 pm
-> ask warden about lamp
-< The hatch is locked
-> ask her about the key
-< chalk marks
-> talk to the warden
-< "Evening," says the warden.
-> examine bell
-< A bronze bell
-status 9:51 pm
-> wait
-< Time passes.
-! strike the hour
-> wait
-< Far off, a clock begins to strike the hour.
-status 10:01 pm
-> ring bell
-< the hour, on the hour.
-< [You rang the bell on the hour]
-! hisses
-status score 2/10
-> s
-< The Jetty
-< You can see a wooden box and a note here.
+> x notch
+< Tonight it points at nothing.
 > light lantern
-< You light the storm lantern.
-! The warden arrives.
-> open box
-< The warden arrives.
-< You open the wooden box, revealing a brass key and a copper coin.
-status score 3/10
-> take key
-< Taken.
-> take coin
-< Taken.
-> give coin to warden
-< The warden bites the coin
-> unlock door
-< (with the brass key)
-< You unlock the boathouse door.
-> open it
-< You open the boathouse door.
+< there's no oil to draw
+> fill lantern
+< It will burn the night.
+> light lantern
+< You strike a match and light the lantern.
+> shine lantern at notch
+< tally marks in fives, hundreds of them
+< [The ringers' marks]
+status 9:04 pm
+# The town: Ines has a wick waiting, and a parcel for Tolly.
+> d
+< The Clock Room
+> d
+> s
+< Church Lane
 > e
-< Inside the Boathouse
-< An oilskin coat hangs from a hook
-< On the workbench you see a flask of oil.
-> shine lantern at wall
-< Chalk marks leap out of the dark
-< [You found the chalk marks]
-vectors c ebebdc
-vectors w 32
-> lift board
-< lies an iron key
-> x key
-< Which key do you mean, the brass key or the iron key?
-> iron
-< Its bow is shaped like a little flame.
-> take iron key
-< Taken.
-> take flask
-< Taken.
-> wear coat
-< You put on the oilskin coat.
-< [Dressed for the weather]
-> i
-< You are carrying a storm lantern (lit), a brass key, a flask of oil, an oilskin coat (worn) and an iron key.
+< Marl's Chandlery
+< "Lamp's out, is it,"
+> take wick
+< "And the parcel," Ines says
+> buy cord
+< On the tower's slate
+> buy candles
+< A long night for one pair of hands
 > w
-< The Jetty
+> s
+< The Quay
+> e
+< Keep the one sat on top of the other and you're in the channel.
+> give parcel to tolly
+< That's her knot.
+> read chart
+< six in the middle
+> w
+> s
+< The Net Sheds
+> take fleece
+< You pull a handful of wool
+> sw
+< The Reed Bank
+> shine lantern at reeds
+< pushed in among the stems, a skiff
+> muffle oarlocks
+< They turn without a sound.
+# Back up the tower to set the bell to ring itself, then ring ten.
+> ne
 > n
-< The Square
-> unlock lamp with iron key
-< You unlock the street lamp.
-> open lamp
-< You open the street lamp.
-> pour oil into lamp
-< You tip the flask into the reservoir
+> n
+> n
+> u
+< The Clock Room
+> tie cord to lever
+< The lever stays up, held by the cord.
+> wind crank
+< until the pawl holds it high
+> put candles in case
+< where the flame will be at eleven
+> put candles in case
+< it will reach it an hour later
+> light candles
+< You strike a match and light both candles.
+< It is set.
+< [The bell that rings itself]
+< the train will strike twelve
+> u
+< The Bell Chamber
+> z
+> z
+> z
+< Time passes.
+status 10:04 pm
+> ring bell
+< Ten.
+< [Ten, on the hour]
+> shine lantern at frame
+< an old drawing stands out of the grain
+# Across the lake.
+> d
+> d
+> s
+> s
+> s
+> sw
+> e
+< You push the skiff off the mud
+< West Water
+> e
+< Over the Teeth
+< Your oar comes down on something that grates.
+> shine lantern at water
+< the gravel goes by
+< [Gravel where the chart says deep]
+> e
+< East Water
+> e
+< The Landing
+> n
+< Outside the Lamp Hut
+> shine lantern at hut
+< an oil hatch
+> open hatch
+< you could crawl in
+> in
+< The Lamp Room
+> read log
+< Covered the glass. Oake has wicks.
+< [The keeper's log]
+> x cover
+< The same knot was on Tolly's parcel.
+> put wick in lamp
+< It fits as if it were cut for this lamp
+> untie cover
+< pull the canvas off the lens
 > light lamp
-< the lamp throws its light across the square
-< *** You have won ***
+< the whole lens fills with light
+< [The Far Lamp, burning]
+> out
+> u
+< The Hillside
+> shine lantern at boulders
+< an arrow on each
+> u
+< The Cairn
+> shine lantern at stone
+< finishes on the tower of Low Bell
+< [Her bearing]
+> z
+< It stops at eleven.
+< Ines Marl comes up over the crest
+> ask ines about lamp
+< A dark lamp was the last thing I had to say it with.
+> put lantern in niche
+< the lantern above, the Lamp below it, and a mile off, the tower
+< "Two," she says.
+> d
+< It is black here.
+> u
+> z
+> z
+> z
+> z
+> z
+< strikes twelve
+< "Somebody set me a range,"
+< *** The end ***
 < You have scored 10 out of 10
-screen Type RESTART, RESTORE, UNDO or QUIT.
-vectors c ffb028
-> north
-< Type RESTART, RESTORE, UNDO or QUIT.

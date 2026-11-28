@@ -1,85 +1,50 @@
-# The parser: unknown words named, questions answered in a word, it, all,
-# again, several commands on a line, particles and prepositions,
-# synonyms, adjectives, the people's topics. PLACEHOLDER STORY.
-> n
-< The Square
-> ask the warden about the weather
-< I don't know the word "weather".
-> ask warden about boat
-< Last one tonight.
-> ask warden
-< What do you want to ask the warden about?
-> bell
-< On the hour, mind.
-> tell her about chalk
-< Dark as a pocket in there.
-> ask warden about box
-< "Can't help you there."
-> kiss warden
-< I don't know the word "kiss".
-> x woman
-< A small, square woman
-> take warden
-< The warden would not care for that.
-> hit warden
-< arms like a docker
-> go west
-< The tower door is bolted
-> up
-< You can't go that way.
+# See walkthrough.txt for the transcript format.
+# The parser: unknown words named, questions answered in a word, it,
+# again, several commands on a line, particles, prepositions, synonyms,
+# adjectives, the people's topics.
 > d
-< The Jetty
-> frob the box
-< I don't know the word "frob".
-> box
-< Begin with a verb
-> take
-< What do you want to take?
-> note
-< The note is fixed in place.
-> examine it
-< A square of paper pinned to the mooring post.
-> open the box then take all
-< You open the wooden box, revealing a brass key and a copper coin.
-< The brass key: Taken.
-< The copper coin: Taken.
-> drop all
-< The brass key: Dropped.
-< The copper coin: Dropped.
-> pick up the copper coin
-< Taken.
-> put the coin down
-< Dropped.
-> g
-< You aren't carrying it.
-> take coin and key
-< Please name one thing at a time.
-> take coin. take small key
-< Taken.
-> put coin in box
-< You put the copper coin in the wooden box.
-> look in the box
-< In the wooden box you find a copper coin.
-> close box
-< You close the wooden box.
-> take coin
-< You see no coin here.
-> unlock the door
-< (with the brass key)
-< You unlock the boathouse door.
-> lock door with key
-< You lock the boathouse door.
+> d
+> s
 > e
-< The boathouse door is closed.
-> turn lantern on
-< You light the storm lantern.
-> switch off lantern
-< You put out the storm lantern.
-> eat lantern
-< That isn't something you can eat.
-> xyzzy
-< I don't know the word "xyzzy".
-> help
-< Type what you want to do
-> score
-< You have scored 1 out of 10
+< Ines doesn't look up.
+> ask ines about the weather
+< I don't know the word "weather".
+> ask ines about boat
+< There's a boat in the reeds. Mine.
+> ask ines
+< What do you want to ask Ines Marl about?
+> candles
+< Twelve bands, a band an hour.
+> ask her about oake
+< He can count, is all.
+> x board
+< The paint after CHANDLER is fresher than the rest.
+> x it
+< The paint after CHANDLER is fresher than the rest.
+> look at the counter
+< scarred by forty years
+> take wick. take it
+< And the parcel
+> again
+< You already have
+> buy cord then buy candles
+< On the tower's slate
+< Ines puts two in your hand.
+> x cord
+< It will take a knot and keep it
+> x candle
+< ringed with twelve painted bands
+> i
+< parcel
+> w
+> s
+> e
+< I point her at it.
+> ask tolly about the water
+< Water's low. She'll float.
+> ask the deckhand about kell
+< like plates stacked on a shelf
+> show parcel to tolly
+< That's her knot.
+> x knot
+< You see no knot here.

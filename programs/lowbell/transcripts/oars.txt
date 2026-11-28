@@ -1,0 +1,64 @@
+# See walkthrough.txt for the transcript format.
+# The oarlocks squeal under the harbourmaster's window. The first time is a
+# warning; the second, he comes down through the reeds.
+> fill lantern
+> light lantern
+> d
+> d
+> s
+> e
+> take wick
+> buy cord
+> buy candles
+> w
+> s
+> e
+> give parcel to tolly
+> w
+> s
+> take fleece
+> sw
+> shine lantern at reeds
+> ne
+> n
+> n
+> n
+> u
+> tie cord to lever
+> wind crank
+> put candles in case
+> light candles
+< It is set.
+> u
+> z
+> z
+> z
+> ring bell
+< Ten.
+> d
+> d
+> s
+> s
+> w
+< Under the Office Window
+> listen
+< Two hundred years that lamp's stood.
+> s
+< The Reed Bank
+> x oarlocks
+< They will squeal at every stroke.
+> e
+< The oarlocks shriek like a gate.
+< "Who's that?"
+> e
+< "Ringer," he says. "Out of that boat."
+< *** The end ***
+> undo
+< Undone
+> ne
+> take fleece
+> sw
+> muffle oarlocks
+< They turn without a sound.
+> e
+< West Water

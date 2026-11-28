@@ -1,5 +1,5 @@
 //! programs/lowbell (an illustrated text adventure engine and its
-//! placeholder story): every transcript in programs/lowbell/transcripts/
+//! story, Low Bell): every transcript in programs/lowbell/transcripts/
 //! played headless, as `terse run` plays it, its replies checked (the
 //! walkthrough of the story is one of them); the walkthrough again through
 //! `terse run --events`; the frame budget and the scene's ink over the
@@ -310,6 +310,11 @@ fn walkthrough_through_terse_run() {
         script += &format!("{f} text {line}\n{} press enter\n", f + 1);
         f += 4;
     }
+    // The ending is longer than the text area: Esc answers its "more" prompts.
+    for _ in 0..4 {
+        script += &format!("{f} press esc\n");
+        f += 1;
+    }
     let tmp = tempfile::tempdir().unwrap();
     let events = tmp.path().join("walk.events");
     std::fs::write(&events, &script).unwrap();
@@ -336,9 +341,9 @@ fn frames_stay_inside_the_budget_and_ink() {
     let text = std::fs::read_to_string(dir().join("transcripts/walkthrough.txt")).unwrap();
     let mut g = Game::new(None);
     assert!(play("walkthrough.txt", &text, &mut g).is_empty());
-    // The beam swept over the boathouse, held down for a second each way.
+    // The beam swept over the dark clock room, held down for a second each way.
     let mut g2 = Game::new(None);
-    for c in ["light lantern", "open box", "take key", "unlock door", "open door", "east"] {
+    for c in ["fill lantern", "light lantern", "down"] {
         g2.command(c);
     }
     for k in ["left", "up", "right", "down"] {

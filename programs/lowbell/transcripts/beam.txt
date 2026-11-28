@@ -1,43 +1,21 @@
-# The lantern's beam: hidden lines appear where it falls, drawn wider and
-# brighter than the picture; once seen they stay, faint (each line on its
-# own, kept in the game's state: undo takes them back). PLACEHOLDER STORY.
-> shine lantern at post
+# See walkthrough.txt for the transcript format.
+# The lantern's beam: hidden lines appear where it falls, drawn dashed,
+# wider and brighter than the picture; once seen they stay, faint (each line
+# on its own, kept in the game's state: undo takes them back).
+> shine lantern at frame
 < You have no lit lantern to shine.
+> fill lantern
 > light lantern
-< You light the storm lantern.
 novectors c ebebdcff
-> shine lantern at post
-< You turn the beam on the mooring post.
-< NOT TOO LATE
+> shine lantern at frame
+< You turn the beam on the bell frame.
+< an old drawing stands out of the grain
 vectors c ebebdcff
-vectors w 32
-> x post
-< Cut into it, low down: a lamp, and NOT TOO LATE.
-> shine lantern at moon
-< I don't know the word "moon".
-> shine lantern at the lake
-< You turn the beam on the lake.
-novectors c ebebdcff
+@ down left
+wait 40
+@ up left
 vectors c 4e4e49ff
-# The arrow keys move the beam (the wreck in the water shows only in it).
-@ press down
-@ press down
-@ press down
-@ press down
-@ press down
-@ press down
-@ press right
-@ press right
-@ press right
-@ press right
-@ press right
-@ press right
-vectors c 468cdcff
 > undo
 < Undone
-> undo
-< Undone
+> look
 novectors c 4e4e49ff
-# The pointer moves it too, onto the post again: found again, said again.
-@ pointer 440 236
-< NOT TOO LATE

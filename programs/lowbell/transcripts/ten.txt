@@ -1,0 +1,39 @@
+# See walkthrough.txt for the transcript format.
+# The clock: looking, examining and reading take no time, walking a
+# minute, waiting ten. Ten must be rung from the tower: a warning at ten to
+# ten and five past, and at ten past the town comes out. UNDO goes back.
+status 9:00 pm
+> look
+> x bell
+> x notch
+> inventory
+< You are carrying a storm lantern and a box of matches.
+status 9:00 pm
+> d
+status 9:01 pm
+> u
+> z
+< Time passes.
+status 9:12 pm
+> z
+> z
+> z
+> z
+< Ten minutes to ten
+> z
+! Ten.
+status 10:02 pm
+> d
+> u
+> d
+< Five past ten, and the bell has not spoken.
+> ring bell
+< It is too dark to see that.
+> u
+> z
+< Ten does not ring.
+< *** The end ***
+> undo
+< Undone
+> ring bell
+< Ten.
