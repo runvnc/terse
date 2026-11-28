@@ -506,7 +506,14 @@ mod tests {
         assert!(page.starts_with("<!doctype html>"), "{page}");
         assert!(page.contains("<title>Try it - Tersenet</title>"), "{page}");
         assert!(page.contains("<a href=\"try.html\" aria-current=\"page\">Try in browser</a>"), "{page}");
-        assert!(page.contains("<main>\n<h1>Try <i>it</i></h1>\n<p>Hi</p>\n</main>\n"), "{page}");
+        assert!(page.contains("<main class=\"try\">\n<h1>Try <i>it</i></h1>\n<p>Hi</p>\n</main>\n"), "{page}");
         assert!(page.contains(&footer()));
+        // Another page: no class; its style goes in the head, its scripts
+        // after the footer.
+        let page = fragment_page("about.html", "<style>\np { x: y; }\n</style>\n<h1>About</h1>\n<script src=\"a.js\"></script>\n");
+        assert!(page.contains("<title>About - Tersenet</title>"), "{page}");
+        assert!(page.contains("<style>\np { x: y; }\n</style>\n</head>"), "{page}");
+        assert!(page.contains("<main>\n<h1>About</h1>\n</main>\n"), "{page}");
+        assert!(page.contains(&format!("{}<script src=\"a.js\"></script>\n</body>", footer())), "{page}");
     }
 }
