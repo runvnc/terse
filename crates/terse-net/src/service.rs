@@ -56,6 +56,8 @@ enum Work {
     /// Read a slot's snapshot and get its image, for machine `tag`.
     Restore(u32, Owner, u8),
     DeleteSnapshot(Owner, u8),
+    /// The blobs an image lists (SPEC §image.blobs), fetched if not held.
+    Listed(Vec<terse_core::image::ListedBlob>),
 }
 
 /// How the host answers the requests that need the user's consent
@@ -349,6 +351,18 @@ impl ContentService {
     /// Fetches the whole blob `id` (from the store, else the relays);
     /// completed, with `tag`, as handle 0 with `Outcome::Got`, `NotFound`
     /// or `Failed`.
+    /// Gets the blobs `image` lists that the store does not hold (SPEC
+    /// §image.blobs), without waiting and without reporting: a host calls it
+    /// when it starts a machine of the image. A shell's start, `start_program`
+    /// and restore ([`Self::fetch`], [`Self::fetch_program`]) do it for the
+    /// image they get.
+    pub fn fetch_listed(&mut self, image: &terse_core::Image) {
+        let listed = image.blob_list();
+        if !listed.is_empty() {
+            let _ = self.jobs.send(Work::Listed(listed));
+        }
+    }
+
     pub fn fetch(&mut self, tag: u32, id: [u8; 32]) {
         self.outstanding += 1;
         let _ = self.jobs.send(Work::Fetch(tag, id));
@@ -1000,6 +1014,7 @@ fn worker(mut node: Node, consent: Consent, jobs: Receiver<Work>, finished: Send
                     return;
                 }
             }
+            Some(Work::Listed(listed)) => node.fetch_blobs(listed),
             Some(Work::Fetch(tag, id)) => {
                 pending.insert(next, (tag, Job::Fetch));
                 node.start_get(next, id);
@@ -1183,6 +1198,9 @@ fn worker(mut node: Node, consent: Consent, jobs: Receiver<Work>, finished: Send
                 },
                 // SPEC §machines.snapshots: the snapshot's image, by its ID.
                 Some((tag, Job::Restore(snapshot))) => {
+                    if let Done::Got(blob) = &done {
+                        node.fetch_listed(blob);
+                    }
                     let result = match done {
                         Done::Got(blob) => terse_core::load_image(&blob).map(|image| (image, *snapshot)),
                         Done::NotFound => Err(StartFailure::not_found("the snapshot's image was not found")),
@@ -1190,7 +1208,13 @@ fn worker(mut node: Node, consent: Consent, jobs: Receiver<Work>, finished: Send
                     };
                     finished.send(Finished::Restored(tag, result)).is_ok()
                 }
-                Some((tag, job)) => finished.send(Finished::Done(tag, completion(job, done))).is_ok(),
+                Some((tag, job)) => {
+                    // SPEC §image.blobs: an image fetched to start it brings its blobs.
+                    if let (Job::Fetch, Done::Got(blob)) = (&job, &done) {
+                        node.fetch_listed(blob);
+                    }
+                    finished.send(Finished::Done(tag, completion(job, done))).is_ok()
+                }
                 None => true,
             };
             if !sent {

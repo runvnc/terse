@@ -417,6 +417,63 @@ one, and one without its driver runs the image with the device absent,
 as for any optional device. No profile includes one, and §conformance
 does not cover a machine that was granted one.
 
+### §image.blobs The blobs an image lists
+
+A program may need data it fetches by blob ID through the content device
+(§content): a game's scenes, a dictionary, a font. An image can **list**
+those blobs, so that a host gets them with the image rather than when the
+program first asks for each (which, the first time, waits on a relay, and
+with no relay never comes). The **blob list** is the last bytes of the
+ROM before the experimental device table (§experimental.image), or the
+last bytes of the ROM if the header lists no experimental slot:
+
+| ROM offset | Size | Field |
+|---|---|---|
+| `e` − 4 − 36k | 36 × k | k entries, each: the blob ID (32), then the blob's size in bytes (4, little-endian, 1 to 1,048,576) |
+| `e` − 4 | 1 | k: the number of entries, 1 to 64 |
+| `e` − 3 | 3 | `54h 42h 4Ch` (`TBL`) |
+
+where `e` is `rom_len`, less 4 + 32 × (the number of experimental slots
+the header lists) when it lists any.
+
+The list is **valid** if the ROM is long enough to hold it, it ends with
+the three bytes `TBL`, k is 1 to 64, every size is 1 to 1,048,576 (a
+blob's sizes, `NETWORK.md` section 1), the sizes total at most 4,194,304
+(4 MiB), and no ID is listed twice. An image whose ROM does not end so,
+or whose list is not valid, has no list; it runs exactly as any other.
+
+- **It is ROM.** It is covered by the image ID, loaded at `0001_0000h`
+  with the rest of the ROM, and the program may read it. It changes
+  nothing in the machine: no call, event, charge, state or budget
+  depends on it, and a host that ignores it runs the image identically.
+  A host that knows nothing of it parses the header as before (as for
+  the experimental table, nothing is added to the header).
+- **What a host does.** When a host gets an image in order to run it (a
+  program's image downloaded from a feed, `NETWORK.md` 4.4; an image a
+  shell starts by ID or by program, or a snapshot's image, §machines.calls,
+  §machines.snapshots) or starts a machine of an image, it **gets each
+  listed blob it does not hold** through its relays, as a get (`NETWORK.md`
+  2: verified by its ID), and stores it only if its size is the listed
+  size. It does so beside the start, never before it: the machine starts
+  as it would otherwise (§responsiveness), and a content get for a listed
+  blob still on its way is answered like any get, from the store if it has
+  come, else from the relays. A blob that cannot be had is simply not held
+  (the program's get fails as it would have). A host that turns program
+  downloads off (`NETWORK.md` 4.4) does not get the blobs of the images it
+  does not download.
+- **Bounded and fixed.** The list is part of the image, so a program
+  cannot add to it, change it or make the host fetch anything with it
+  while it runs; what it costs is at most 64 gets and 4 MiB per image,
+  once, in the host's own time, and nothing of the program's budget.
+- **Publishing.** Whoever publishes an image (a program entry, `NETWORK.md`
+  4.2) also puts its listed blobs, each with an attachment entry whose
+  reply-to is the image's ID, so that relays keep them as long as they
+  keep the program.
+
+`terse build` and `terse pack` write the list, from files given with
+`--blob <file>` (each file's bytes are one blob), before the experimental
+table, and refuse a list that would not be valid; `terse info` shows it.
+
 ### §profiles Machine hosts and profiles
 
 A **machine host** implements this document: the machine of §profile,

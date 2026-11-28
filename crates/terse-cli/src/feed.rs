@@ -498,6 +498,21 @@ fn publish_program(args: &Args) -> Result<ExitCode, String> {
     let identity = load_identity(args)?;
     let relays = relay_urls(args, true)?;
     let mut node = open_node(args, &relays)?;
+    // SPEC §image.blobs: the blobs the image lists are published with it,
+    // so every one must be at hand first.
+    let mut listed = Vec::new();
+    for b in parsed.blob_list() {
+        match node.store().read(&b.id) {
+            Ok(Some(bytes)) if bytes.len() == b.size as usize => listed.push(bytes),
+            _ => {
+                return Err(format!(
+                    "{path} lists the blob {} ({} bytes), which is not in the store: put it first (terse put {path} <blob files>)",
+                    to_hex(&b.id),
+                    b.size
+                ));
+            }
+        }
+    }
     node.set_identity(identity);
     let done = node.publish_program(&image, &name, now());
     crate::say_delivery(&mut node);
@@ -507,6 +522,16 @@ fn publish_program(args: &Args) -> Result<ExitCode, String> {
                 eprintln!("terse: no relay: stored locally only");
             }
             println!("seq {seq} program {name} image {}", to_hex(&blob));
+            // Each listed blob with an attachment entry (NETWORK 4.2), so
+            // relays keep it as long as the program's entry.
+            for bytes in &listed {
+                let done = node.publish_attachment(bytes, blob, now());
+                crate::say_delivery(&mut node);
+                match done {
+                    Done::Published { seq, .. } => println!("seq {seq} attachment {}", to_hex(&terse_net::blob::blob_id(bytes))),
+                    _ => return Err(format!("the blob {} the image lists was not published", to_hex(&terse_net::blob::blob_id(bytes)))),
+                }
+            }
             Ok(ExitCode::SUCCESS)
         }
         Done::Refused => Err("every relay refused the entry (each one's reason is above)".into()),

@@ -227,15 +227,15 @@ painted scenes would be 200-300 KB of documents.
 What the content device does not give, said plainly rather than worked
 round:
 
-- **No way for an image to name the blobs it needs.** A host fetches a
-  program's image from its feed (NETWORK.md 4.4) and nothing else; the
-  scenes are found only when the program asks for them by hash, so the
-  first time a player meets a scene its fetch waits on a relay, and a
-  host with no relay can show no scene it was not given by hand
-  (`terse put`). The engine preloads, which hides this inside a session
-  but not on first play. What would close it: a list of blob IDs
-  published with (or inside) the image that the host fetches with it, or
-  a "these blobs belong to this program" entry kind.
+- **An image names the blobs it needs** (closed: `SPEC.md` §image.blobs).
+  The image lists the scenes' blobs (`build.sh` gives `terse build` a
+  `--blob` for each), so a host that downloads the program from its feed,
+  or starts it, gets the scenes with it, beside the start, and `terse
+  put` and `terse feed publish --program` send them with the image. Before
+  that, the first time a player met a scene its fetch waited on a relay,
+  and a host with no relay could show no scene it was not given by hand.
+  A host with no relay still needs them put in its store (`terse put
+  stillwind.terse blobs/*.scene`).
 - **No cancel.** A preload for a room she turned away from keeps its
   request slot until it completes (§content.unspecified lists cancelling
   as not yet specified). The engine fetches one scene at a time to keep
@@ -288,7 +288,7 @@ The cap that binds is the **length cap of the lowest figure**, the one
 that must hold Ysolde (her 11 poses take 129 paths and 19,276 of its
 65,536 before any ground is painted); its path cap comes next. Upper
 figures have room to spare, which is where the detail goes. The image is
-52,424 bytes of ROM (the scenes are not in it); RAM is 28 pages, of which
+52,536 bytes of ROM (the scenes are not in it, only the list of them); RAM is 28 pages, of which
 four scene slots of 32 KiB are 128 KiB. Nothing the scenes add is paid
 per frame: a richer scene costs only its submit (1 unit per 4 bytes, once
 per scene change, about 7,200 for the 29 KB foot) and its fetch.

@@ -356,7 +356,9 @@ passed on like any other) and need not open their blobs (section 6).
 
 An **attachment** entry (kind 5) keeps a part of an earlier entry of the
 same feed: its blob is something that entry's article links to (another
-article, a document), and its reply-to is that earlier entry's blob ID.
+article, a document), or a blob that entry's program image lists
+(`SPEC.md` §image.blobs: published with the image), and its reply-to is
+that earlier entry's blob ID.
 Its title is empty or a short label, any title as for an article. It
 exists so that relays keep the part as long as they keep the entry (a
 relay that drops blobs no entry names, section 5.3, would otherwise drop
@@ -439,8 +441,11 @@ received first is kept.
   whenever one of its program entries arrives, the client gets the image
   of the current version of each of the feed's programs that it does not
   hold, whatever the article limit, if its size is at most 262,208 bytes
-  (the largest image); not older versions. The user may turn this off. A
-  client that does not run programs does not download them.
+  (the largest image); not older versions. With the image it gets the
+  blobs the image lists (`SPEC.md` §image.blobs: at most 64, 4 MiB in
+  all) that it does not hold, each kept only if its size is the one
+  listed; they are not scanned for links. The user may turn this off
+  (both). A client that does not run programs does not download them.
 - **Prefetch:** when the client stores an article blob through automatic
   download for an article entry (kind 1) of a subscribed feed, it scans
   the text for article links (`terse:` and 64 lowercase hexadecimal
@@ -1037,7 +1042,9 @@ This section concerns only clients that run the Terse machine
   user's consent first (`spec/content.md` §content.feeds). The timeline of section
   4.4 is what a program reads with the timeline operation (`spec/content.md` §content.feeds).
 - A host may start a program by image ID: it gets the blob, validates it
-  as an image (`SPEC.md` §image) and runs it. A program's identity,
+  as an image (`SPEC.md` §image) and runs it, and gets the blobs the image
+  lists that it does not hold beside the start, without waiting for them
+  (`SPEC.md` §image.blobs). A program's identity,
   (feed key, name) of section 4.2, is the one of `spec/machines.md` §machines.shell;
   a host looks a program up (section 4.8) when a shell starts a program
   it holds no entry for (`spec/machines.md` §machines.calls, `start_program`), and

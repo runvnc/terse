@@ -12,9 +12,11 @@ sounds of Low Bell are gone. Nobody needs to touch C.
     python3 paint.py scenes/meadow.paths --actor scenes/actor.paths --costs 186
     python3 actor.py -o scenes/actor.paths   Ysolde's poses (build.sh does it)
 
-To play, the scenes' blobs must be where the host can get them (below):
+To play, the scenes' blobs must be where the host can get them (below).
+The image lists them (SPEC.md §image.blobs), so a host that gets it from a
+relay gets them too; from the file, put them with it:
 
-    for f in blobs/*.scene; do terse put "$f" --store <store> --relay none; done
+    terse put stillwind.terse blobs/*.scene --store <store> --relay none
     terse-host stillwind.terse --store <store>
 
 ## A room

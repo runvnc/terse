@@ -148,7 +148,9 @@ The device's events (§events):
   automatic download of those entries' articles has finished or failed, so
   the timeline's "local" flags are already correct. The download of a
   program's image (`NETWORK.md` 4.4), which starts once its feed is caught
-  up, is announced by a feeds-updated event of its own when it ends.
+  up, is announced by a feeds-updated event of its own when it ends (the
+  blobs the image lists, `SPEC.md` §image.blobs, come after it and are
+  not announced: a get finds them in the store once they have come).
   It is also sent when the subscription list changed (a machine's
   subscribe or unsubscribe, or another program of the host changing the
   list it keeps, such as a command run while the host runs): the

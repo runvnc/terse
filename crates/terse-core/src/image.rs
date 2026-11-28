@@ -56,6 +56,59 @@ pub fn experimental_table(entries: &[(u8, String)]) -> Vec<u8> {
     out
 }
 
+/// The end of an image's blob list (SPEC §image.blobs): its last 3 bytes.
+pub const BLOB_LIST_MAGIC: [u8; 3] = *b"TBL";
+/// The most blobs an image may list.
+pub const BLOB_LIST_MAX: usize = 64;
+/// The most bytes the blobs an image lists may total (4 MiB).
+pub const BLOB_LIST_TOTAL: u64 = 4 * 1024 * 1024;
+/// The largest blob (NETWORK.md section 1).
+pub const BLOB_SIZE_MAX: u32 = 1_048_576;
+/// Bytes of one entry of the list: the blob's ID and its size.
+const BLOB_LIST_ENTRY: usize = 36;
+
+/// A blob an image lists (SPEC §image.blobs): its ID and size in bytes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ListedBlob {
+    pub id: [u8; 32],
+    pub size: u32,
+}
+
+/// Why a blob list cannot be made: too many blobs, a size out of range,
+/// too many bytes in all, or a blob twice.
+pub fn check_blob_list(blobs: &[ListedBlob]) -> Result<(), String> {
+    if blobs.is_empty() || blobs.len() > BLOB_LIST_MAX {
+        return Err(format!("an image lists 1 to {BLOB_LIST_MAX} blobs, not {}", blobs.len()));
+    }
+    if let Some(b) = blobs.iter().find(|b| !(1..=BLOB_SIZE_MAX).contains(&b.size)) {
+        return Err(format!("a blob is 1 to {BLOB_SIZE_MAX} bytes, not {}", b.size));
+    }
+    let total: u64 = blobs.iter().map(|b| b.size as u64).sum();
+    if total > BLOB_LIST_TOTAL {
+        return Err(format!("the blobs an image lists total at most {BLOB_LIST_TOTAL} bytes; these are {total}"));
+    }
+    for (i, b) in blobs.iter().enumerate() {
+        if blobs[..i].iter().any(|a| a.id == b.id) {
+            return Err("a blob is listed twice".into());
+        }
+    }
+    Ok(())
+}
+
+/// The blob list for `blobs`, the bytes `terse pack` puts at the end of the
+/// ROM, before any experimental device table (SPEC §image.blobs). The
+/// caller checks it ([`check_blob_list`]).
+pub fn blob_list_table(blobs: &[ListedBlob]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(BLOB_LIST_ENTRY * blobs.len() + 4);
+    for b in blobs {
+        out.extend_from_slice(&b.id);
+        out.extend_from_slice(&b.size.to_le_bytes());
+    }
+    out.push(blobs.len() as u8);
+    out.extend_from_slice(&BLOB_LIST_MAGIC);
+    out
+}
+
 /// Device slots and versions this implementation provides (SPEC §image).
 pub const SUPPORTED_DEVICES: [DeviceReq; 9] = [
     DeviceReq::new(1, 0),
@@ -324,6 +377,30 @@ impl Image {
         Some(slots.iter().map(|s| names.iter().find(|(t, _)| t == s).cloned().unwrap()).collect())
     }
 
+    /// The blobs the image lists (SPEC §image.blobs), in its order: empty if
+    /// it has no list or an invalid one. The list ends where the
+    /// experimental device table begins, if the header lists experimental
+    /// slots, else at the end of the ROM.
+    pub fn blob_list(&self) -> Vec<ListedBlob> {
+        let k = self.devices.iter().filter(|d| d.experimental()).count();
+        let table = if k == 0 { 0 } else { 4 + EXPERIMENTAL_ENTRY * k };
+        let Some(end) = self.rom.len().checked_sub(table) else { return Vec::new() };
+        let rom = &self.rom[..end];
+        if end < 4 || rom[end - 3..] != BLOB_LIST_MAGIC {
+            return Vec::new();
+        }
+        let n = rom[end - 4] as usize;
+        let Some(start) = (end - 4).checked_sub(BLOB_LIST_ENTRY * n) else { return Vec::new() };
+        let blobs: Vec<ListedBlob> = rom[start..end - 4]
+            .chunks_exact(BLOB_LIST_ENTRY)
+            .map(|e| ListedBlob { id: e[..32].try_into().unwrap(), size: u32::from_le_bytes(e[32..36].try_into().unwrap()) })
+            .collect();
+        if check_blob_list(&blobs).is_err() {
+            return Vec::new();
+        }
+        blobs
+    }
+
     /// The name of the experimental device on `slot`, if the image lists one
     /// there and its table is valid.
     pub fn experimental_name(&self, slot: u8) -> Option<String> {
@@ -567,6 +644,44 @@ mod tests {
         assert!(valid_experimental_name("example.dice") && valid_experimental_name("a-1.x"));
         // No experimental slot: no table looked for.
         assert_eq!(Image::parse(&valid()).unwrap().experimental(), Some(vec![]));
+    }
+
+    /// SPEC §image.blobs: the list at the end of the ROM, before an
+    /// experimental device table; an invalid one is no list.
+    #[test]
+    fn blob_lists() {
+        let a = ListedBlob { id: [1; 32], size: 30_000 };
+        let b = ListedBlob { id: [2; 32], size: 1 };
+        let mut rom = vec![0x13, 0, 0, 0];
+        rom.extend(blob_list_table(&[a, b]));
+        let img = Image::parse(&Image::build("", 1, &[], &rom)).unwrap();
+        assert_eq!(img.blob_list(), vec![a, b]);
+        // Before the experimental table.
+        let mut with_x = rom.clone();
+        with_x.extend(experimental_table(&[(240, "a.b".to_string())]));
+        let img = Image::parse(&Image::build("", 1, &[DeviceReq::optional(240, 0)], &with_x)).unwrap();
+        assert_eq!(img.blob_list(), vec![a, b]);
+        assert_eq!(img.experimental(), Some(vec![(240, "a.b".to_string())]));
+        // The header lists no experimental slot: the table's bytes are the end.
+        assert!(Image::parse(&Image::build("", 1, &[], &with_x)).unwrap().blob_list().is_empty());
+        // None, and invalid ones.
+        assert!(Image::parse(&valid()).unwrap().blob_list().is_empty());
+        let bad = |blobs: &[ListedBlob]| {
+            let mut rom = vec![0x13, 0, 0, 0];
+            rom.extend(blob_list_table(blobs));
+            Image::parse(&Image::build("", 1, &[], &rom)).unwrap().blob_list()
+        };
+        assert!(bad(&[a, a]).is_empty(), "a blob twice");
+        assert!(bad(&[ListedBlob { size: 0, ..a }]).is_empty());
+        assert!(bad(&[ListedBlob { size: BLOB_SIZE_MAX + 1, ..a }]).is_empty());
+        let big: Vec<ListedBlob> = (0..5).map(|i| ListedBlob { id: [i; 32], size: BLOB_SIZE_MAX }).collect();
+        assert!(bad(&big).is_empty(), "over 4 MiB in all");
+        assert_eq!(bad(&big[..4]).len(), 4);
+        let many: Vec<ListedBlob> = (0..65).map(|i| ListedBlob { id: [i; 32], size: 1 }).collect();
+        assert!(check_blob_list(&many).is_err() && check_blob_list(&many[..64]).is_ok());
+        let mut short = blob_list_table(&[a]);
+        short.remove(0);
+        assert!(Image::parse(&Image::build("", 1, &[], &short)).unwrap().blob_list().is_empty());
     }
 
     /// A slot is listed once, whether required or optional.

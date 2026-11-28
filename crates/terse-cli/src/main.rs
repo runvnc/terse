@@ -29,16 +29,16 @@ const USAGE: &str = "usage:
             [--audio-out <file.wav>]
   terse run --shell [<image|id>] [--builtin <image|id>]... [--hash-all] [the options of run]
   terse info <image|id> [--relay ws://...|none] [--store <dir>] [--config <dir>]
-  terse put <file> [--relay ws://...|none] [--store <dir>] [--config <dir>]
+  terse put <file>... [--relay ws://...|none] [--store <dir>] [--config <dir>]
   terse get <id> [-o <file>] [--relay ws://...|none] [--store <dir>] [--config <dir>]
   terse hash <file>
   terse build <source>... [-o <out.terse>] [--title <t>] [--ram-pages <n>] [--device <slot:version>]...
-              [--optional <slot:version>]... [--cflag <flag>]... [--clang <path>] [--lld <path>] [--rustc <path>]
-              [--show] [--run [the options of run]...]   (C, assembly or Rust to an image; `terse build` alone: details)
+              [--optional <slot:version>]... [--blob <file>]... [--cflag <flag>]... [--clang <path>] [--lld <path>]
+              [--rustc <path>] [--show] [--run [the options of run]...]   (C, assembly or Rust to an image; `terse build` alone: details)
   terse build --write-lib <dir>   (the C library, linker script and Rust runtime built into terse)
   terse new <file.c|file.rs|file.S>   (a starter program)
   terse pack --rom <raw.bin> --title <t> --ram-pages <n> [--device <slot:version>]... [--optional <slot:version>[=<name>]]...
-             -o <out.terse>
+             [--blob <file>]... -o <out.terse>
   terse key new|show
   terse feed publish <file> --title <t> [--reply-to <id>] [--dry-run] [--force]
   terse feed publish --program <image.terse> [--name <n>]
@@ -173,6 +173,9 @@ refused; an optional device it does not provide is absent (SPEC §image).
 pack: --device lists a required device, --optional one the program can run without (--device 10:0
 or --optional 10:0: full text, SPEC §terminal.text); `info` shows both. An experimental device (slots
 240-255, spec/experimental.md) is only optional and named: --optional 240:0=example.dice.
+--blob <file> lists the file's bytes as a blob the program needs (SPEC §image.blobs: at most 64, 4 MiB
+in all): a host gets the blobs an image lists with the image, and `put` and `feed publish --program`
+send them with it. put: each file; an image's listed blobs go with it, from the files given or the store.
 A shell keeps the snapshots its machines' `snapshot` calls make in <data>/snapshots (SPEC §machines.snapshots).
 --consent: how `run` answers a program's requests that need consent (subscribe, unsubscribe, publish,
 set profile, set nickname; SPEC §content.feeds), since nobody can be asked (default deny).
@@ -631,6 +634,8 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         node.set_program_download(!args.has("--no-program-download"));
         let mut content = ContentService::start_with_consent(node, consent);
         content.set_reading_profile(reading);
+        // SPEC §image.blobs: the blobs it lists, if not held, while it starts.
+        content.fetch_listed(&image);
         // Start from a caught-up store, so that a run sees what the relay
         // holds when it starts; later entries arrive while it runs.
         if content.following()
@@ -1032,6 +1037,15 @@ fn info(args: &[String]) -> Result<ExitCode, String> {
         None => "basic (no device 10)",
     };
     println!("text:      {text}");
+    // SPEC §image.blobs: the blobs a host gets with the image.
+    let listed = image.blob_list();
+    if !listed.is_empty() {
+        let total: u64 = listed.iter().map(|b| b.size as u64).sum();
+        println!("blobs:     {} listed, {total} bytes", listed.len());
+        for b in &listed {
+            println!("           {} {} bytes", to_hex(&b.id), b.size);
+        }
+    }
     println!("id:        {}", image.id_hex());
     Ok(ExitCode::SUCCESS)
 }
@@ -1039,21 +1053,64 @@ fn info(args: &[String]) -> Result<ExitCode, String> {
 fn put(args: &[String]) -> Result<ExitCode, String> {
     let args = Args::parse(args, &[])?;
     args.check_known(&NET_OPTIONS)?;
-    let data = read(args.one_positional()?)?;
-    if !terse_net::blob::valid_size(data.len()) {
-        return Err(format!("a blob is 1 to {} bytes; this is {}", terse_net::blob::MAX_BLOB, data.len()));
+    if args.positional.is_empty() {
+        return Err(USAGE.to_string());
+    }
+    let mut files = Vec::new();
+    for path in &args.positional {
+        let data = read(path)?;
+        if !terse_net::blob::valid_size(data.len()) {
+            return Err(format!("{path}: a blob is 1 to {} bytes; this is {}", terse_net::blob::MAX_BLOB, data.len()));
+        }
+        files.push(data);
     }
     let mut net = Net { args: &args, node: None, find: true };
     let node = net.node()?;
-    let done = node.publish(&data);
-    say_delivery(node);
-    match done {
-        Done::Put(id) => {
-            println!("{}", to_hex(&id));
-            Ok(ExitCode::SUCCESS)
+    let mut put: Vec<terse_net::BlobId> = Vec::new();
+    for data in &files {
+        let done = node.publish(data);
+        say_delivery(node);
+        match done {
+            Done::Put(id) => {
+                println!("{}", to_hex(&id));
+                put.push(id);
+            }
+            _ => return Err("put failed (store error, or the relay refused or did not answer)".into()),
         }
-        _ => Err("put failed (store error, or the relay refused or did not answer)".into()),
     }
+    // SPEC §image.blobs: an image's listed blobs go with it, from the store
+    // (where the files given now are too).
+    let mut missing = Vec::new();
+    for data in &files {
+        let Ok(image) = Image::parse(data) else { continue };
+        for b in image.blob_list() {
+            if put.contains(&b.id) {
+                continue;
+            }
+            match node.store().read(&b.id) {
+                Ok(Some(bytes)) if bytes.len() == b.size as usize => {
+                    let done = node.publish(&bytes);
+                    say_delivery(node);
+                    match done {
+                        Done::Put(id) => {
+                            println!("{} (listed by {})", to_hex(&id), image.id_hex());
+                            put.push(id);
+                        }
+                        _ => return Err("put failed (store error, or the relay refused or did not answer)".into()),
+                    }
+                }
+                _ => missing.push(b.id),
+            }
+        }
+    }
+    if !missing.is_empty() {
+        let list: Vec<String> = missing.iter().map(|id| to_hex(id)).collect();
+        return Err(format!(
+            "the image lists blobs that are neither given nor in the store: {} (put them with it: terse put <image> <blob files>)",
+            list.join(", ")
+        ));
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 fn get(args: &[String]) -> Result<ExitCode, String> {
@@ -1148,9 +1205,30 @@ pub(crate) fn with_experimental_table(args: &Args, devices: &[DeviceReq], mut ro
     Ok(rom)
 }
 
+/// `rom` with the blob list at its end (SPEC §image.blobs), if `--blob`
+/// names files: each file's bytes are a blob the program needs, listed by
+/// its ID and size, in the order given. The experimental device table, if
+/// any, goes after it.
+pub(crate) fn with_blob_list(args: &Args, mut rom: Vec<u8>) -> Result<Vec<u8>, String> {
+    let mut blobs = Vec::new();
+    for path in args.all("--blob") {
+        let bytes = read(path)?;
+        if !terse_net::blob::valid_size(bytes.len()) {
+            return Err(format!("--blob {path}: a blob is 1 to {} bytes; this is {}", terse_net::blob::MAX_BLOB, bytes.len()));
+        }
+        blobs.push(terse_core::image::ListedBlob { id: terse_net::blob::blob_id(&bytes), size: bytes.len() as u32 });
+    }
+    if blobs.is_empty() {
+        return Ok(rom);
+    }
+    terse_core::image::check_blob_list(&blobs).map_err(|e| format!("--blob: {e}"))?;
+    rom.extend(terse_core::image::blob_list_table(&blobs));
+    Ok(rom)
+}
+
 fn pack(args: &[String]) -> Result<ExitCode, String> {
     let args = Args::parse(args, &[])?;
-    args.check_known(&["--rom", "--title", "--ram-pages", "--device", "--optional", "-o"])?;
+    args.check_known(&["--rom", "--title", "--ram-pages", "--device", "--optional", "--blob", "-o"])?;
     if !args.positional.is_empty() {
         return Err(USAGE.to_string());
     }
@@ -1170,6 +1248,7 @@ fn pack(args: &[String]) -> Result<ExitCode, String> {
     if devices.len() > terse_core::image::MAX_DEVICES {
         return Err("more than 16 devices".into());
     }
+    let rom = with_blob_list(&args, rom)?;
     let rom = with_experimental_table(&args, &devices, rom)?;
     let file = Image::build(title, ram_pages, &devices, &rom);
     // Validate exactly as a host would.
