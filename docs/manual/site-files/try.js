@@ -74,7 +74,7 @@
       if (phosphor) {
         ctx.globalCompositeOperation = "lighter";
         ctx.strokeStyle = colour.replace(/[\d.]+\)$/, (a) => (parseFloat(a) * 0.25).toFixed(3) + ")");
-        ctx.lineWidth = w * 3 + 1;
+        ctx.lineWidth = w * 2 + 0.67;
         ctx.stroke();
         ctx.strokeStyle = colour;
         ctx.lineWidth = w;
@@ -213,8 +213,8 @@
         const c = sc.ctx;
         c.setTransform(1, 0, 0, 1, 0, 0);
         if (fade) {
-          // The afterglow: what was drawn fades (to 2% in persistence/4 frames).
-          const k = Math.pow(0.02, 1 / Math.max(1, sc.persistence / 4));
+          // The afterglow: what was drawn fades (to 2% in persistence/6 frames).
+          const k = Math.pow(0.02, 1 / Math.max(1, sc.persistence / 6));
           c.fillStyle = `rgba(0,0,0,${(1 - k).toFixed(3)})`;
         } else c.fillStyle = "#000";
         c.fillRect(0, 0, w, h);
