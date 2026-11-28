@@ -189,6 +189,25 @@ struct game {
 #define GAME_MAGIC 0x444E4957u /* "WIND" */
 static struct game G;
 static struct game undo_ring[UNDO_N];
+/* The game copied and compared a word at a time (the library's memcpy and
+ * memcmp go a byte at a time; a command does both for UNDO). */
+_Static_assert(sizeof(struct game) % 4 == 0, "struct game is whole words");
+#define GAME_WORDS (sizeof(struct game) / 4)
+static void game_copy(struct game *to, const struct game *from)
+{
+    uint32_t *t = (uint32_t *)to;
+    const uint32_t *f = (const uint32_t *)from;
+    for (uint32_t i = 0; i < GAME_WORDS; i++)
+        t[i] = f[i];
+}
+static int game_same(const struct game *a, const struct game *b)
+{
+    const uint32_t *x = (const uint32_t *)a, *y = (const uint32_t *)b;
+    for (uint32_t i = 0; i < GAME_WORDS; i++)
+        if (x[i] != y[i])
+            return 0;
+    return 1;
+}
 static uint8_t undo_n, undo_head;
 
 static int bit(const uint8_t *b, uint32_t i) { return b[i >> 3] >> (i & 7) & 1; }
@@ -485,38 +504,119 @@ static const uint16_t cp1252[32] = {
 };
 static uint16_t code_point(uint8_t b) { return b < 0x80 ? b : b < 0xA0 ? cp1252[b - 0x80] : b; }
 
-/* Writes text `id`: pairs expanded, escapes read raw. */
+/* Each token's expansion, worked out once at the start (tokens_init):
+ * text() copies it instead of walking the pairs for every character. */
+static uint8_t tok_buf[1024];
+static uint16_t tok_at[N_TOKENS];
+static uint8_t tok_n[N_TOKENS];   /* 0: not expanded (no room), walked as pairs */
+static uint8_t tok_plain[N_TOKENS]; /* no byte below a space in it */
+
+/* Expands byte `c` (a token or not) onto `out`, up to `room` bytes (with
+ * no `out`, onto the current line); the count, or more than `room` if it
+ * did not fit. */
+static uint32_t expand(uint8_t c, uint8_t *out, uint32_t room)
+{
+    uint8_t stack[48];
+    uint32_t sp = 0, n = 0;
+    stack[sp++] = c;
+    while (sp) {
+        uint8_t b = stack[--sp];
+        uint8_t k = token_of[b];
+        if (k == 255) {
+            if (!out)
+                out_ch(b);
+            else if (n < room)
+                out[n] = b;
+            n++;
+        } else if (sp < sizeof stack - 2) {
+            stack[sp++] = text_tokens[k][1];
+            stack[sp++] = text_tokens[k][0];
+        }
+    }
+    return n;
+}
+
+static void tokens_init(void)
+{
+    uint32_t at = 0;
+    for (uint32_t c = 0; c < 256; c++) {
+        uint8_t k = token_of[c];
+        if (k == 255)
+            continue;
+        uint32_t room = sizeof tok_buf - at < 255 ? sizeof tok_buf - at : 255;
+        uint32_t n = expand((uint8_t)c, tok_buf + at, room);
+        if (n && n <= room) {
+            tok_at[k] = at;
+            tok_n[k] = n;
+            tok_plain[k] = 1;
+            for (uint32_t i = 0; i < n; i++)
+                if (tok_buf[at + i] < ' ')
+                    tok_plain[k] = 0;
+            at += n;
+        }
+    }
+}
+
+/* Writes text `id`: pairs expanded, escapes read raw. Text is most of what
+ * a frame costs: the common character (not the first of a wrapped line,
+ * not one that fills or ends the line, not capitalised or captured) goes
+ * straight onto the current line, with the line's length kept in a
+ * register; out_ch handles the rest. */
 static void text(uint16_t id)
 {
     if (!id)
         return;
     const uint8_t *p = text_data + text_off[id];
-    uint8_t stack[48];
+    uint32_t len = curlen;
+    uint8_t *line = cur;
+    /* 0: onto the line; 1: captured (to_buf); 2: capitalising. */
+    uint32_t slow = cap_next ? 2 : to_buf;
+#define TEXT_SLOW(x) do { curlen = len; x; len = curlen; slow = cap_next ? 2 : to_buf; } while (0)
     for (;;) {
         uint8_t c = *p++;
         if (c == 0)
             break;
         if (c == 1) {
-            out_ch(*p++);
+            uint8_t d = *p++;
+            TEXT_SLOW(out_ch(d));
             continue;
         }
         if (c == 2) {
-            placeholder(*p++);
+            uint8_t ph = *p++;
+            TEXT_SLOW(placeholder(ph));
             continue;
         }
-        uint8_t sp = 0;
-        stack[sp++] = c;
-        while (sp) {
-            uint8_t b = stack[--sp];
-            uint8_t k = token_of[b];
-            if (k == 255)
-                out_ch(b);
-            else if (sp < sizeof stack - 2) {
-                stack[sp++] = text_tokens[k][1];
-                stack[sp++] = text_tokens[k][0];
+        uint8_t k = token_of[c];
+        const uint8_t *s = p - 1;
+        uint32_t n = 1;
+        if (k != 255) {
+            n = tok_n[k];
+            s = tok_buf + tok_at[k];
+            if (!n) {
+                TEXT_SLOW(expand(c, 0, 0));
+                continue;
+            }
+            /* The whole token fits on the line after something: copied. */
+            if (!slow && len && len + n <= COLS && tok_plain[k]) {
+                for (const uint8_t *e = s + n; s < e; s++)
+                    line[len++] = *s;
+                continue;
             }
         }
+        for (const uint8_t *e = s + n; s < e; s++) {
+            uint8_t b = *s;
+            if (!slow && len < COLS && (b > ' ' || (b == ' ' && len)))
+                line[len++] = b;
+            else if (slow == 1 && b != '\n') {
+                /* Captured (the status line): as out_ch does. */
+                if (sbuf_len < sizeof sbuf)
+                    sbuf[sbuf_len++] = b;
+            } else
+                TEXT_SLOW(out_ch(b));
+        }
     }
+#undef TEXT_SLOW
+    curlen = len;
 }
 
 /* A message or text on its own line(s). */
@@ -1038,28 +1138,51 @@ static void row_put(uint8_t col, const uint8_t *s, uint8_t n, uint8_t fg)
 
 static void row_write(uint8_t row) { term_cells_write(row * 80, cells, 80); }
 
+/* The text rows as last written, and how many columns of each (from 1)
+ * hold characters: a row is written over its characters and blanked only
+ * where the line it held was longer, then all of them in one call. */
+static uint32_t text_cells[TEXT_ROWS * 80];
+static uint8_t text_used[TEXT_ROWS];
+
 static void draw_text(void)
 {
     uint32_t bottom = more ? view_end : nlines;
     bottom = bottom > scroll ? bottom - scroll : 0;
+    uint32_t blank = ' ' | (uint32_t)C_TEXT << 16;
     for (uint8_t r = 0; r < TEXT_ROWS; r++) {
-        row_clear(C_TEXT);
+        uint32_t *c = text_cells + r * 80 + 1;
+        uint32_t n = 0;
         int32_t li = (int32_t)bottom - TEXT_ROWS + r;
         if (li >= 0 && (uint32_t)li + RING >= nlines && (uint32_t)li < nlines) {
             const uint8_t *l = ring[li % RING];
-            row_put(1, l + 2, l[0], l[1]);
+            const uint8_t *s = l + 2;
+            uint32_t f = (uint32_t)l[1] << 16;
+            n = l[0] < 79 ? l[0] : 79;
+            for (const uint8_t *e = s + n; s < e; s++) {
+                uint8_t b = *s;
+                *c++ = (b < 0x80 ? b : code_point(b)) | f;
+            }
         }
-        row_write(TEXT_TOP + r);
+        for (uint32_t *e = text_cells + r * 80 + 1 + text_used[r]; c < e; c++)
+            *c = blank;
+        text_used[r] = n;
     }
+    term_cells_write(TEXT_TOP * 80, text_cells, TEXT_ROWS * 80);
 }
 
 static void draw_status(void)
 {
-    row_clear(C_STATUS);
     to_buf = 1;
     sbuf_len = 0;
     text(TEXT_STATUS);
     to_buf = 0;
+    /* Unchanged since it was last written: nothing to do. */
+    static uint8_t last[sizeof sbuf], last_len = 0xFF;
+    if (last_len == sbuf_len && !memcmp(last, sbuf, sbuf_len))
+        return;
+    memcpy(last, sbuf, sbuf_len);
+    last_len = sbuf_len;
+    row_clear(C_STATUS);
     /* Left part || right part. */
     uint8_t split = sbuf_len;
     for (uint8_t i = 0; i + 1 < sbuf_len; i++)
@@ -2536,7 +2659,7 @@ static void dispatch(void)
 
 static void undo_push(void)
 {
-    undo_ring[undo_head] = G;
+    game_copy(&undo_ring[undo_head], &G);
     undo_head = (undo_head + 1) % UNDO_N;
     if (undo_n < UNDO_N)
         undo_n++;
@@ -2999,7 +3122,7 @@ static void line(void)
     if (pushed && undo_n) {
         uint8_t last = (undo_head + UNDO_N - 1) % UNDO_N, it = G.it;
         G.it = undo_ring[last].it;
-        if (!memcmp(&G, &undo_ring[last], sizeof G)) {
+        if (game_same(&G, &undo_ring[last])) {
             undo_head = last;
             undo_n--;
         }
@@ -3185,6 +3308,9 @@ int main(void)
     for (uint32_t id = 1; id < 64; id++)
         page_layer(id, 0, 0, 0, PAGE_SCALE_FULL), lay_s[id] = PAGE_SCALE_FULL;
     has_content = terse_has_device(4);
+    tokens_init();
+    for (uint32_t i = 0; i < TEXT_ROWS * 80; i++)
+        text_cells[i] = ' ' | (uint32_t)C_TEXT << 16;
     then_word = lookup((const uint8_t *)"then", 4);
     (void)tv.marker[0]; /* keeps the transcript's marker in the image */
     game_init();

@@ -256,14 +256,27 @@ software renderer at 1280 x 960, through a scene change):
 
 | | Units a frame | Budget |
 |---|---|---|
-| Walking (arrows; only `layer` calls, for what changed) | about 1,880 | 1.5 % |
+| Walking (arrows; only `layer` calls, for what changed) | about 1,860 | 1.5 % |
 | Standing still | nothing is called | ~0 % |
 | Typing a letter (the input line) | about 1,190 | 0.95 % |
-| A command and its reply (the parser and world, Low Bell's) | about 28,700 | 23 % |
-| A new room's text (the busiest kind of frame) | about 45,300 | 36 % |
+| A command and its reply (LISTEN; EXAMINE GOAT 14.9 %, SOUTH 8.0 %) | about 14,900 | 11.9 % |
+| A new room's text (the busiest kind of frame) | about 23,400 | 18.7 % |
 | The scene change itself (a submit from RAM, the frame after the text) | about 8,200 | 6.6 % |
 | A fetch completing (16 KiB delivered, 1 unit per 4 bytes) | up to 4,400 | 3.5 % |
-| The busiest frame of any transcript (the ending's long text) | 52,909 | 42.3 % |
+| The busiest frame of any transcript (the provisional ending's text) | 27,647 | 22.1 % |
+
+Where a command's frame goes (EXAMINE GOAT, measured by counting the
+instructions at each address): the reply's text about a third, drawing
+the eight text rows about a fifth, the parser (words, noun phrases, rules)
+about a quarter, UNDO's copy and comparison of the game a fiftieth. Text
+was half of it before: each character went through `out_ch` and each
+compressed pair was walked for every character. Now each token's
+expansion is worked out once at the start (451 bytes) and copied, a
+character that needs nothing special goes straight onto the line (Low
+Bell's fast path), the rows are written over only as far as their old
+text reached and in one call, the status line only when it changed, and
+UNDO's game is copied and compared a word at a time. The text, the
+screens and every transcript are the same, byte for byte.
 
 | Scene | Document | Paths per figure (top, middle, bottom) | Length cap, bottom figure | Layers |
 |---|---|---|---|---|
@@ -275,7 +288,7 @@ The cap that binds is the **length cap of the lowest figure**, the one
 that must hold Ysolde (her 11 poses take 129 paths and 19,276 of its
 65,536 before any ground is painted); its path cap comes next. Upper
 figures have room to spare, which is where the detail goes. The image is
-52,036 bytes of ROM (the scenes are not in it); RAM is 28 pages, of which
+52,424 bytes of ROM (the scenes are not in it); RAM is 28 pages, of which
 four scene slots of 32 KiB are 128 KiB. Nothing the scenes add is paid
 per frame: a richer scene costs only its submit (1 unit per 4 bytes, once
 per scene change, about 7,200 for the 29 KB foot) and its fetch.
