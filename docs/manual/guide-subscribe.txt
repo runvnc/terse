@@ -10,7 +10,7 @@ The relay your window starts can be reached from your computer only. To read eac
 terse-relay --listen 0.0.0.0:7878 --store terse-relay-store
 ```
 
-The other adds it once, with the first one's computer name or address on your network, and starts `terse-host` again:
+The other adds it once, with the first one's computer name or address on your network, and starts `terse-host` again. In the window: F10, page 5 (Relays), type `ws://their-computer:7878` under "Add a relay" and press Enter. In a terminal:
 
 ```sh
 terse relay add ws://their-computer:7878
@@ -20,7 +20,9 @@ A relay has no accounts: anyone who can reach it can read what is on it, but nob
 
 ## From an address
 
-Ask for their address: what `terse feed address` prints, or what the reader's help page (?) shows. It is a key of 64 hexadecimal digits, sometimes followed by `@` and a relay. In the reader press F for your feeds, then S, and type or paste it (Ctrl+V pastes). Enter subscribes, and the window asks you first:
+Ask for their address: what their Signature page (F10) copies, what `terse feed address` prints, or what the reader's help page (?) shows. It is a key of 64 hexadecimal digits, sometimes followed by `@` and a relay. The simplest way: F10, page 4 (Follow), paste it (Ctrl+V) and press Enter. Their articles appear in your timeline, and the feed in the list below.
+
+In the reader, press F for your feeds, then S, and type or paste it. Enter subscribes, and the window asks you first, since a program asks for it:
 
 ```text
 Tersenet · permission
@@ -35,7 +37,7 @@ In a terminal, `terse feed subscribe` and the address does the same; an open win
 
 ## From a name
 
-If they let search find their name (`--listed`, in the profile page), search for it: / in the reader, the name, Enter.
+If they let search find their name ("Let search find my name" on their Profile page, or `--listed`), type it on the Follow page (F10) and press Enter: the feeds found are listed, and Enter on one follows it. In the reader: /, the name, Enter.
 
 ```text
 Feeds
@@ -48,7 +50,7 @@ Enter on the feed shows its page; S subscribes. In a terminal, `terse find Ana` 
 
 ## Nicknames, unsubscribing, syncing
 
-In the feeds view (F), N gives the selected feed a nickname that only you see, such as "Ana from choir"; an empty one removes it. U unsubscribes. In a terminal: `terse feed nickname <key> "Ana from choir"` and `terse feed unsubscribe <key>`.
+On the Follow page (F10), Enter or Delete on a feed you follow stops following it, after asking. In the reader's feeds view (F), N gives the selected feed a nickname that only you see, such as "Ana from choir"; an empty one removes it. U unsubscribes. In a terminal: `terse feed nickname <key> "Ana from choir"` and `terse feed unsubscribe <key>`.
 
 While the window is open it keeps up by itself. From a terminal, `terse feed sync` fetches what is new in every feed you follow, and `terse feed list` lists the entries, one a line: date, feed, entry number, size, whether it is downloaded, and title.
 

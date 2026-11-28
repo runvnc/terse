@@ -16,7 +16,13 @@ pub const FIRST_ROW: usize = ROWS - PROMPT_ROWS;
 pub const FG_TEXT: u8 = 0;
 pub const FG_KEY: u8 = 1;
 pub const FG_DIM: u8 = 2;
+/// Dark text, on the key colour (the host's screens, `you`).
+pub const FG_INK: u8 = 3;
 pub const BG_BASE: u8 = 0;
+/// The key colour as a background: what has the focus (`you`).
+pub const BG_KEY: u8 = 1;
+/// A text field (`you`).
+pub const BG_FIELD: u8 = 2;
 pub const BG_BAND: u8 = 3;
 
 /// `3fa9c2…c21e07`: the first and last six hex digits of a feed key.
@@ -35,7 +41,7 @@ pub fn size_text(n: u32) -> String {
 }
 
 /// Columns `ch` takes in the grid (SPEC §terminal.cells; above U+FFFF it shows as U+FFFD).
-fn width(ch: char) -> usize {
+pub fn width(ch: char) -> usize {
     match u16::try_from(ch as u32) {
         Ok(c) if terse_core::wide::is_wide(c) => 2,
         _ => 1,
@@ -153,6 +159,28 @@ pub fn with_prompt(shown: &Terminal, program: &str, prompt: &Prompt, waiting: us
     );
     t.command(0x06); // no cursor in the prompt
     t
+}
+
+/// What the shell's screen shows with the host's own drawing over it,
+/// and the first row of that drawing (the overlay): the host's screens
+/// (`you`) from row 1, then a consent prompt or else a notice over the
+/// bottom rows.
+pub fn host_drawn<'a>(
+    shown: std::borrow::Cow<'a, Terminal>,
+    screen: Option<&Terminal>,
+    prompt: &crate::display::ShownPrompt,
+    notice: Option<&Notice>,
+) -> (std::borrow::Cow<'a, Terminal>, Option<usize>) {
+    use std::borrow::Cow;
+    let (shown, first) = match screen {
+        Some(s) => (Cow::Owned(crate::you::over(&shown, s)), Some(1)),
+        None => (shown, None),
+    };
+    match (prompt, notice) {
+        (Some((p, waiting, title)), _) => (Cow::Owned(with_prompt(&shown, title, p, *waiting)), first.or(Some(FIRST_ROW))),
+        (None, Some(n)) => (Cow::Owned(with_notice(&shown, &n.heading, &n.what, &n.then)), first.or(Some(FIRST_ROW))),
+        (None, None) => (shown, first),
+    }
 }
 
 /// A notice of the host's (`PERFORMANCE.md` R15): a heading and two lines.

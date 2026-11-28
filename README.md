@@ -130,6 +130,24 @@ Enter does nothing. While the prompt is up, the keyboard goes to the host,
 not to the program, and the program can neither see nor draw over the
 prompt. Several requests are asked about one at a time.
 
+**Your feed without a terminal.** With the shell, **F10** opens the host's own
+screens, drawn by `terse-host` itself over everything below the bar (no program
+sees them, nor any key or pointer movement while they are open; F10, Esc or F12
+closes them). Five pages, chosen with Left and Right on the top row, 1 to 5, or a
+click: **Signature** makes your key with one key press (or takes a key file you
+already have), says where it is kept and that it must be backed up, and shows and
+copies your feed address (the secret key itself is never shown); **Profile**
+publishes your name, a description and whether search finds you, listing the
+relays the profile names (encrypted ones only); **Publish** picks a text file
+from your documents folder (or a typed path), previews it, and publishes it after
+asking, as `terse feed publish` does; **Follow** follows a pasted address or a
+feed found by name, and lists and unfollows the feeds you follow; **Relays**
+shows the relays in use and edits the relay list (with `pin=` and authority
+options), taking effect at the next start. Up, Down and Tab move, Enter does
+what is chosen, Ctrl+V pastes; whatever goes to the network or cannot be undone
+asks first (Y or N). Each page does what the `terse` command does, through the
+same code (`terse_net::account`).
+
 **Which relays.** Without `--relay`, `terse-host` uses, in this order: the
 URLs listed in the file `relays` in the config directory, one per line
 (`terse relay add <url>` writes it; an older single-URL `relay` file is read
@@ -419,7 +437,8 @@ followed feeds; `--data` is where named records are kept
 program's requests to subscribe, unsubscribe, publish, set its profile and set a
 nickname: `ask` (the default) shows the
 host's prompt, `allow` and `deny` answer every one without asking. Keys go to the
-host's prompt first, then F12 (the home key, with a shell), then to the machine with
+host's prompt first, then F10 (the host's own screens, with a shell; while they are
+open every key is theirs), then F12 (the home key, with a shell), then to the machine with
 the focus. Ctrl+V and
 Shift+Insert paste: the clipboard's text goes to the focused program as text events (SPEC §events),
 tabs and newlines kept and other control characters dropped, fed in only as fast as the event
@@ -802,7 +821,10 @@ to an article (a blob of UTF-8 text); see NETWORK.md section 4. All `key` and
 Commands:
 
 - `key new` creates your identity (refuses to replace one) and prints its feed key;
-  `key show` prints it again.
+  `key show` prints it again; `key import <file>` takes a key file kept elsewhere (a
+  backup, another computer's) as your identity, never replacing one. The window's F10
+  screens do these, and the profile, publish, follow and relay commands below, without a
+  terminal ([Getting started](#getting-started)).
 - `feed publish <file> --title <t> [--reply-to <blob id>] [--dry-run] [--force]` puts the
   article and publishes the next entry of your feed; prints `seq N blob <id>`. First it
   lists each `terse:` link of the article (`link terse:<id>: held here, uploaded now ...;
@@ -1142,10 +1164,10 @@ without a frame number run one after another, `wait <frames>` and `type
     time 1800000000       hold the Unix time the machines see (the shell's clock) at this value
     settle [max N]        until 10 presented pictures in a row are the same
     shot out.png          the picture last presented, as presented
-    dump page             page (this host's layout), terminal, vectors or state; `> file` to a file
+    dump page             page (this host's layout), terminal, vectors, state or host (the host's own screens, F10); `> file` to a file
     watch 120 [save dir]  report pictures that changed, where, how much, and blinks
     expect idle 60        fail if the picture changes in the next 60 frames
-    expect page contains Total     (or lacks; terminal, vectors, state)
+    expect page contains Total     (or lacks; terminal, vectors, state, host)
     expect budget 80      fail if a machine used more than 80% of a frame's budget
     expect no-slow        fail if a frame was late or the host warned
     perf / budget         the slow-frame notes / each machine's budget use

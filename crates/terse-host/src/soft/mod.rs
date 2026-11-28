@@ -111,6 +111,8 @@ pub struct SoftScreens {
     composed: (Vec<IRect>, IRect),
     /// The host's notice (R15), drawn like the prompt.
     notice: Option<consent::Notice>,
+    /// The host's own screens (`you`), over the shell's screen from row 1.
+    screen: Option<terse_core::Terminal>,
 }
 
 impl SoftScreens {
@@ -132,6 +134,7 @@ impl SoftScreens {
             last_damage: Vec::new(),
             composed: (Vec::new(), IRect::EMPTY),
             notice: None,
+            screen: None,
         }
     }
 
@@ -324,23 +327,9 @@ impl Display for SoftScreens {
         if system.is_system() {
             self.shell.set_rect(Some(system_rect(viewport)));
         }
-        let shown = displayed_terminal(shell);
-        match &prompt {
-            Some((p, waiting, title)) => {
-                self.shell.update(&consent::with_prompt(&shown, title, p, *waiting));
-                self.shell.set_overlay(Some(consent::FIRST_ROW));
-            }
-            None => match &self.notice {
-                Some(n) => {
-                    self.shell.update(&consent::with_notice(&shown, &n.heading, &n.what, &n.then));
-                    self.shell.set_overlay(Some(consent::FIRST_ROW));
-                }
-                None => {
-                    self.shell.update(&shown);
-                    self.shell.set_overlay(None);
-                }
-            },
-        }
+        let (shown, overlay) = consent::host_drawn(displayed_terminal(shell), self.screen.as_ref(), &prompt, self.notice.as_ref());
+        self.shell.update(&shown);
+        self.shell.set_overlay(overlay);
         let eye = self.eye;
         // With Screens in effect the shell's 3D lines are drawn over the
         // panels, not in its own screen (SPEC §machines.screens); with its own
@@ -455,6 +444,10 @@ impl Display for SoftScreens {
 
     fn set_notice(&mut self, notice: Option<consent::Notice>) {
         self.notice = notice;
+    }
+
+    fn set_screen(&mut self, screen: Option<terse_core::Terminal>) {
+        self.screen = screen;
     }
 
     fn configure(&mut self, no_trails: bool, force_phosphor: bool, animate_page: bool) {

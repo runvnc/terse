@@ -111,6 +111,32 @@ pub const MAX_PASTE: usize = 1 << 20;
 /// The host's home key (SPEC §machines.input) when it runs a shell.
 pub const HOME_KEY: KeyCode = KeyCode::F12;
 
+/// The key that opens and closes the host's own screens (`you`: your
+/// signature, profile, publishing, follows and relays), with a shell.
+pub const YOU_KEY: KeyCode = KeyCode::F10;
+
+/// A key as the host's own screens take it.
+pub fn you_key(code: KeyCode, mods: ModifiersState) -> Option<crate::you::Key> {
+    use crate::you::Key;
+    Some(match code {
+        KeyCode::ArrowUp => Key::Up,
+        KeyCode::ArrowDown => Key::Down,
+        KeyCode::ArrowLeft => Key::Left,
+        KeyCode::ArrowRight => Key::Right,
+        KeyCode::Home => Key::Home,
+        KeyCode::End => Key::End,
+        KeyCode::PageUp => Key::PageUp,
+        KeyCode::PageDown => Key::PageDown,
+        KeyCode::Enter | KeyCode::NumpadEnter => Key::Enter,
+        KeyCode::Escape => Key::Escape,
+        KeyCode::Tab if mods.shift_key() => Key::BackTab,
+        KeyCode::Tab => Key::Tab,
+        KeyCode::Backspace => Key::Backspace,
+        KeyCode::Delete => Key::Delete,
+        _ => return None,
+    })
+}
+
 /// The volume keys the host keeps (SPEC §events "Keys a host keeps"):
 /// Ctrl+Alt+minus and Ctrl+Alt+equals (plus) a tenth down and up,
 /// Ctrl+Alt+M mute, and the keyboard's own volume keys when the desktop

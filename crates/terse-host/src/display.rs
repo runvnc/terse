@@ -389,6 +389,11 @@ pub trait Display {
     /// R15: a slow machine, or the host's own drawing), shown from the
     /// next `update` while no consent prompt is; `None` takes it away.
     fn set_notice(&mut self, notice: Option<crate::consent::Notice>);
+    /// The host's own screens (`you`), drawn over the shell's screen from
+    /// row 1 on (and over every machine's picture), from the next
+    /// `update`; a consent prompt or a notice is drawn over them. `None`
+    /// takes them away.
+    fn set_screen(&mut self, screen: Option<terse_core::Terminal>);
     /// The user's presentation options: the phosphor style without its
     /// afterglow, the phosphor presentation whatever the style, and whether
     /// the page's scroll is animated (and its figures rasterised on their

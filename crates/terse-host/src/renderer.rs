@@ -173,22 +173,25 @@ fn phosphor_screen(pos: vec2<f32>) -> vec3<f32> {
     return to_srgb(min(shown, vec3<f32>(1.0)));
 }
 
-// The host's overlay (its consent prompt): fixed colours, not the
-// program's palette. Foreground codes 0 text, 1 key, 2 dim; background
-// codes 0 base, 3 band (sRGB).
+// The host's overlay (its consent prompt, its own screens): fixed
+// colours, not the program's palette. Foreground codes 0 text, 1 key,
+// 2 dim, 3 ink; background codes 0 base, 1 key, 2 field, 3 band (sRGB).
 fn overlay_fg(code: u32) -> vec3<f32> {
     switch code {
         case 1u: { return vec3<f32>(1.0, 0.80, 0.26); }
         case 2u: { return vec3<f32>(0.66, 0.70, 0.78); }
+        case 3u: { return vec3<f32>(0.09, 0.10, 0.14); }
         default: { return vec3<f32>(0.96, 0.96, 0.98); }
     }
 }
 
 fn overlay_bg(code: u32) -> vec3<f32> {
-    if code == 3u {
-        return vec3<f32>(0.20, 0.23, 0.33);
+    switch code {
+        case 1u: { return vec3<f32>(1.0, 0.80, 0.26); }
+        case 2u: { return vec3<f32>(0.16, 0.18, 0.25); }
+        case 3u: { return vec3<f32>(0.20, 0.23, 0.33); }
+        default: { return vec3<f32>(0.09, 0.10, 0.14); }
     }
-    return vec3<f32>(0.09, 0.10, 0.14);
 }
 
 // The overlay's colour at `pos`, or a negative red if `pos` is not in it.

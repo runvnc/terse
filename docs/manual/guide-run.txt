@@ -37,6 +37,8 @@ Up and Down move the cursor, which starts on "reader". Enter starts the program 
 
 F12 is the home key. Wherever you are, F12 brings you back to the launcher; no program ever sees it. From there, Enter on another program starts it beside the first, and Esc goes back to the one you were using.
 
+F10 opens the window's own screens, where you make your key, publish and follow feeds; the next page is about them.
+
 ## The reader and this manual
 
 Choose "reader" and press Enter. The reader opens on your timeline, the newest articles of the feeds you follow. It is empty for now:
@@ -63,6 +65,6 @@ Close the window. Nothing needs saving: what you publish and follow is kept as y
 
 ## What you have now
 
-Tersenet running, the launcher, and the reader with this manual in it. Next, make the key that is your identity: [Create your profile](terse:{guide-profile}).
+Tersenet running, the launcher, and the reader with this manual in it. Next, make the key that is your identity, with F10 in this window: [Your feed without the command line](terse:{guide-you}).
 
 Every key of the launcher, the layouts and the tiles is in [Using the shell](terse:{using}).

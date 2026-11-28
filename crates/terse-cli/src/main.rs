@@ -3,7 +3,6 @@
 mod build;
 mod drivers;
 mod feed;
-mod links;
 mod node;
 mod perf;
 mod perflog;
@@ -15,7 +14,7 @@ use std::process::ExitCode;
 
 use terse_core::{DeviceReq, Image, Machine, Script, Stopped, System};
 use terse_net::relay::DEFAULT_TIMEOUT;
-use terse_net::{Consent, ContentService, Delivery, Done, HeadlessSystem, Node, blob_id, builtin, local, to_hex};
+use terse_net::{Consent, ContentService, Done, HeadlessSystem, Node, blob_id, builtin, local, to_hex};
 
 /// Frames `run` executes when neither `--frames` nor an exit stops it (10 minutes).
 const DEFAULT_FRAME_CAP: u64 = 60 * 60 * 10;
@@ -39,7 +38,7 @@ const USAGE: &str = "usage:
   terse new <file.c|file.rs|file.S>   (a starter program)
   terse pack --rom <raw.bin> --title <t> --ram-pages <n> [--device <slot:version>]... [--optional <slot:version>[=<name>]]...
              -o <out.terse>
-  terse key new|show
+  terse key new|show|import <file>
   terse feed publish <file> --title <t> [--reply-to <id>] [--dry-run] [--force]
   terse feed publish --program <image.terse> [--name <n>]
   terse feed programs [<key>]
@@ -407,28 +406,7 @@ pub(crate) fn relay_urls(args: &Args, find: bool) -> Result<Vec<String>, String>
 /// that did not (it succeeds when one does, NETWORK 5.1; README: puts and
 /// publishes go to each relay).
 pub(crate) fn say_delivery(node: &mut Node) {
-    let delivery = node.take_delivery();
-    let taken: Vec<&str> = delivery.iter().filter(|(_, d)| *d == Delivery::Accepted).map(|(u, _)| u.as_str()).collect();
-    if !taken.is_empty() {
-        eprintln!("terse: taken by {} of {} relays: {}", taken.len(), delivery.len(), taken.join(", "));
-    }
-    for (url, d) in &delivery {
-        let why = match d {
-            Delivery::Accepted => continue,
-            // NETWORK 3.1: the relay's reason, in words.
-            Delivery::Refused(why) => format!("refused it: {}", why.describe()),
-            Delivery::BlobRefused(why) => {
-                eprintln!("terse: warning: {url} took the entry but refused its blob: {}", why.describe());
-                continue;
-            }
-            Delivery::Failed => "did not answer (connection lost or timed out)".into(),
-            Delivery::NotConnected => match node.relay_failure(url) {
-                Some(why) => format!("could not be connected: {why}"),
-                None => "could not be connected".into(),
-            },
-        };
-        eprintln!("terse: warning: not on {url}: it {why}");
-    }
+    terse_net::account::delivery(node, &mut feed::say);
 }
 
 pub(crate) fn open_node(args: &Args, relays: &[String]) -> Result<Node, String> {

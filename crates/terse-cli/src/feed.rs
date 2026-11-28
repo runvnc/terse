@@ -9,11 +9,12 @@
 
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
-use terse_net::entry::{self, MAX_TITLE};
-use terse_net::identity::valid_feed_key;
+use terse_net::account::{self, BAD_NAME, Said, name_of, now, short_key};
 use terse_net::address::parse_address;
+use terse_net::entry;
+use terse_net::identity::valid_feed_key;
 use terse_net::profile::{self, Nicknames};
 use terse_net::protocol::{SCOPE_ENTRIES, SCOPE_FEEDS, SCOPE_PROGRAMS};
 use terse_net::{
@@ -39,19 +40,24 @@ fn config_dir(args: &Args) -> Result<PathBuf, String> {
 }
 
 pub fn identity_path(args: &Args) -> Result<PathBuf, String> {
-    Ok(config_dir(args)?.join("identity.key"))
+    Ok(account::identity_path(&config_dir(args)?))
 }
 
 pub(crate) fn load_identity(args: &Args) -> Result<Identity, String> {
-    let path = identity_path(args)?;
-    if !path.exists() {
-        return Err(format!("no identity in {} (create one with `terse key new`)", path.display()));
-    }
-    Identity::load(&path)
+    account::load_identity(&config_dir(args)?)
 }
 
 pub fn load_subscriptions(args: &Args) -> Result<Subscriptions, String> {
-    Subscriptions::load(config_dir(args)?.join("subscriptions"))
+    account::load_subscriptions(&config_dir(args)?)
+}
+
+/// What an operation of [`account`] says: results on standard output,
+/// notes on standard error.
+pub(crate) fn say(s: Said) {
+    match s {
+        Said::Out(line) => println!("{line}"),
+        Said::Note(line) => eprintln!("terse: {line}"),
+    }
 }
 
 pub fn load_nicknames(args: &Args) -> Result<Nicknames, String> {
@@ -80,17 +86,19 @@ pub fn key(args: &[String]) -> Result<ExitCode, String> {
     let (command, rest) = args.split_first().ok_or(USAGE)?;
     let args = Args::parse(rest, &[])?;
     known(&args, &[])?;
-    if !args.positional.is_empty() {
-        return Err(USAGE.into());
-    }
-    let identity = match command.as_str() {
-        "new" => {
-            let path = identity_path(&args)?;
-            let identity = Identity::create(&path)?;
-            eprintln!("terse: new identity saved in {}", path.display());
+    let identity = match (command.as_str(), args.positional.as_slice()) {
+        ("new", []) => {
+            let identity = account::create_identity(&config_dir(&args)?)?;
+            eprintln!("terse: new identity saved in {}", identity_path(&args)?.display());
             identity
         }
-        "show" => load_identity(&args)?,
+        // A key file made elsewhere (a copy kept safe, another computer's).
+        ("import", [file]) => {
+            let identity = account::import_identity(&config_dir(&args)?, std::path::Path::new(file))?;
+            eprintln!("terse: identity from {file} saved in {}", identity_path(&args)?.display());
+            identity
+        }
+        ("show", []) => load_identity(&args)?,
         _ => return Err(USAGE.into()),
     };
     println!("{}", to_hex(&identity.feed_key()));
@@ -214,57 +222,18 @@ pub fn relay(args: &[String]) -> Result<ExitCode, String> {
     }
     let config = config_dir(&args)?;
     // The list as written: each relay's URL and its line (with options).
-    let mut list = terse_net::local::read_relay_lines(&config)?.map(|(l, _)| l).unwrap_or_default();
-    let save = |list: &[(String, String)]| -> Result<(), String> {
-        let lines: Vec<String> = list.iter().map(|(_, l)| l.clone()).collect();
-        let path = terse_net::local::write_relays(&config, &lines)?;
-        eprintln!("terse: relays saved in {}", path.display());
-        Ok(())
-    };
-    // A relay typed without a scheme is taken as wss:// (over TLS).
-    let typed = |text: &String| -> Result<String, String> {
-        let url = terse_net::local::typed_url(text).ok_or(format!("not a relay: {text} (a ws:// or wss:// URL, or a host name)"))?;
-        if !text.contains("://") {
-            if url.starts_with("ws://") {
-                eprintln!("terse: taken as {url} (plain: a relay on this machine; for TLS give wss://{text})");
-            } else {
-                eprintln!("terse: taken as {url} (encrypted; for a plain relay give ws://{text})");
-            }
-        }
-        Ok(url)
-    };
-    // The relay, then its options as given (authority=, only-authority=,
-    // pin=: checked when saved).
-    let positional: Vec<String> = match (command.as_str(), args.positional.split_first()) {
-        ("set" | "add" | "remove", Some((relay, options))) => {
-            let mut v = vec![typed(relay)?];
-            v.extend(options.iter().cloned());
-            v
-        }
-        _ => args.positional.clone(),
-    };
-    let line = |p: &[String]| (p[0].clone(), p.join(" "));
-    match (command.as_str(), positional.as_slice()) {
+    let list = account::relay_list(&config)?;
+    // The relay (one without a scheme is taken as wss://), then its
+    // options as given (authority=, only-authority=, pin=: checked when
+    // saved).
+    use account::RelayChange;
+    match (command.as_str(), args.positional.as_slice()) {
         ("set", [_, ..]) => {
-            let one = [line(&positional)];
-            save(&one)?;
-            println!("{}", one[0].1);
+            let list = account::change_relays(&config, RelayChange::Set(&args.positional), &mut say)?;
+            println!("{}", list[0].1);
         }
-        ("add", [url, ..]) => {
-            if list.iter().any(|(u, _)| u == url) {
-                return Err(format!("{url} is already in the list (remove it first to change its options)"));
-            }
-            list.push(line(&positional));
-            save(&list)?;
-        }
-        ("remove", [url]) => {
-            let before = list.len();
-            list.retain(|(u, _)| u != url);
-            if list.len() == before {
-                return Err(format!("{url} is not in the list"));
-            }
-            save(&list)?;
-        }
+        ("add", [_, ..]) => drop(account::change_relays(&config, RelayChange::Add(&args.positional), &mut say)?),
+        ("remove", [url]) => drop(account::change_relays(&config, RelayChange::Remove(url), &mut say)?),
         ("list" | "show", []) if list.is_empty() => {
             let port = terse_net::local::local_port();
             eprintln!(
@@ -340,22 +309,6 @@ pub fn fonts(args: &[String]) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// The name to show beside a feed key: the nickname, else the declared
-/// name (NETWORK 4.6), with control characters replaced.
-fn name_of(node: &Node, key: &FeedKey) -> Option<String> {
-    node.display_name(key).map(|(n, _)| printable(&n, false))
-}
-
-/// A feed key shortened as the reader shows it: the first and last six
-/// hex digits.
-fn short_key(key: &FeedKey) -> String {
-    let hex = to_hex(key);
-    format!("{}…{}", &hex[..6], &hex[58..])
-}
-
-fn now() -> u32 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs().min(u32::MAX as u64) as u32)
-}
 
 /// `terse feed publish <file> --title <t> [--reply-to <id>] [--dry-run]
 /// [--force]`: an article entry (NETWORK 4.2). Each `terse:` link of the
@@ -374,13 +327,8 @@ fn publish(args: &[String]) -> Result<ExitCode, String> {
         return publish_program(&args);
     }
     let data = read(args.one_positional()?)?;
-    if !terse_net::blob::valid_size(data.len()) {
-        return Err(format!("an article is 1 to {} bytes; this is {}", terse_net::blob::MAX_BLOB, data.len()));
-    }
     let title = args.require("--title")?.to_string();
-    if title.len() > MAX_TITLE {
-        return Err(format!("title is {} bytes, at most {MAX_TITLE} allowed", title.len()));
-    }
+    account::check_article(&data, &title)?;
     let reply_to = match args.get("--reply-to") {
         Some(id) => Some(parse_hex(id).ok_or(format!("{id} is not a blob ID (64 hex digits)"))?),
         None => None,
@@ -391,94 +339,10 @@ fn publish(args: &[String]) -> Result<ExitCode, String> {
     let identity = if dry_run { load_identity(&args).ok() } else { Some(load_identity(&args)?) };
     let relays = if dry_run { Vec::new() } else { relay_urls(&args, true)? };
     let mut node = open_node(&args, &relays)?;
-    let own = identity.as_ref().map(Identity::feed_key);
-    let linked = crate::links::survey(&data, &node, own.as_ref());
-    let names: std::collections::HashMap<FeedKey, String> = linked
-        .iter()
-        .filter_map(|l| match l.keep {
-            crate::links::Keep::Others { feed, .. } => Some((feed, name_of(&node, &feed).unwrap_or_else(|| format!("feed {}", short_key(&feed))))),
-            _ => None,
-        })
-        .collect();
-    let name = |key: &FeedKey| names.get(key).cloned().unwrap_or_default();
-    // The user's own parts (named by an entry of their feed) that this host
-    // does not hold cannot go up with the article.
-    let missing: Vec<String> = linked
-        .iter()
-        .filter(|l| matches!(l.keep, crate::links::Keep::Own { .. }) && !l.held)
-        .map(|l| l.link())
-        .collect();
-    let refusal = (!missing.is_empty() && !args.has("--force")).then(|| {
-        let (what, them, it) = if missing.len() == 1 { ("an article", "it", "it is") } else { ("articles", "them", "they are") };
-        format!(
-            "not published: the article links to {what} of your feed that this host does not hold: {}, so {it} not \
-             uploaded with it. Get {them} first (terse get <id>), or give --force if your relays hold {them}",
-            missing.join(", ")
-        )
-    });
-    if dry_run || refusal.is_some() {
-        let would = if dry_run { "would be uploaded" } else { "not uploaded" };
-        for l in &linked {
-            println!("{}", l.line(l.upload.map(|_| would), name));
-        }
-        if let Some(refusal) = refusal {
-            return Err(refusal);
-        }
-        println!("dry run: nothing uploaded or published");
-        return Ok(ExitCode::SUCCESS);
-    }
-    // What is the user's own (or named by nothing) goes up first, so that
-    // the article's links lead somewhere from the moment it is published.
-    let mut lines = Vec::new();
-    for l in &linked {
-        let uploaded = match l.upload.map(|id| node.store().read(&id)) {
-            None => None,
-            Some(Ok(Some(bytes))) => Some(match (node.publish(&bytes), node.take_delivery()) {
-                (Done::Put(_), d) if d.is_empty() => "stored here only (no relay)".to_string(),
-                (Done::Put(_), d) => {
-                    let taken = d.iter().filter(|(_, d)| *d == terse_net::Delivery::Accepted).count();
-                    format!("uploaded now (taken by {taken} of {} relays)", d.len())
-                }
-                _ => "upload failed (no relay took it)".to_string(),
-            }),
-            Some(_) => Some("not uploaded (it could not be read here)".to_string()),
-        };
-        lines.push(l.line(uploaded.as_deref(), name));
-    }
-    for line in lines {
-        println!("{line}");
-    }
-    node.set_identity(identity.expect("not a dry run"));
-    let done = node.publish_article(&Draft { data, title, reply_to, time: now() });
-    crate::say_delivery(&mut node);
-    match done {
-        Done::Published { seq, blob } => {
-            if relays.is_empty() {
-                eprintln!("terse: no relay: stored locally only");
-            }
-            println!("seq {seq} blob {}", to_hex(&blob));
-            // The article's own parts that no entry names: an attachment
-            // entry each (NETWORK 4.2), so relays keep them with it.
-            for l in linked.iter().filter(|l| l.keep == crate::links::Keep::Unnamed) {
-                let Some(Ok(Some(bytes))) = l.upload.map(|id| node.store().read(&id)) else { continue };
-                let done = node.publish_attachment(&bytes, blob, now());
-                crate::say_delivery(&mut node);
-                match done {
-                    Done::Published { seq, .. } => println!("seq {seq} attachment {}", l.link()),
-                    _ => eprintln!(
-                        "terse: warning: no attachment entry for {}: a relay that drops blobs no entry names (NETWORK.md \
-                         5.3) will drop it",
-                        l.link()
-                    ),
-                }
-            }
-            Ok(ExitCode::SUCCESS)
-        }
-        Done::Refused => Err("every relay refused the entry (each one's reason is above)".into()),
-        _ => Err("publish failed (store error, or no relay accepted it)".into()),
-    }
+    let article = account::Article { data, title, reply_to, dry_run, force: args.has("--force") };
+    account::publish_article(&mut node, identity, article, &mut say)?;
+    Ok(ExitCode::SUCCESS)
 }
-
 /// `terse feed publish --program <image> [--name <n>]`: a program entry
 /// (NETWORK 4.2) for a valid image, named by default by its title.
 fn publish_program(args: &Args) -> Result<ExitCode, String> {
@@ -500,7 +364,7 @@ fn publish_program(args: &Args) -> Result<ExitCode, String> {
     let mut node = open_node(args, &relays)?;
     node.set_identity(identity);
     let done = node.publish_program(&image, &name, now());
-    crate::say_delivery(&mut node);
+    account::delivery(&mut node, &mut say);
     match done {
         Done::Published { seq, blob } => {
             if relays.is_empty() {
@@ -541,29 +405,7 @@ fn subscribe(args: &[String], add: bool) -> Result<ExitCode, String> {
     let args = Args::parse(args, &[])?;
     known(&args, &[])?;
     let text = args.one_positional()?;
-    let address = parse_address(text).map_err(|e| format!("{}: {e}", printable(text.trim(), false)))?;
-    let key = address.key;
-    let mut subs = load_subscriptions(&args)?;
-    let changed = if add { subs.add(key) } else { subs.remove(&key) }.map_err(|e| e.to_string())?;
-    let hinted = add && !address.hints.is_empty();
-    let new_hints = hinted && subs.set_hints(&key, Some(&address.hints)).map_err(|e| e.to_string())?;
-    match (add, changed) {
-        (true, true) => println!("subscribed to {}", to_hex(&key)),
-        (true, false) if new_hints => println!("already subscribed to {}; its hints are now {}", to_hex(&key), address.hints),
-        (true, false) => println!("already subscribed to {}", to_hex(&key)),
-        (false, true) => println!("unsubscribed from {}", to_hex(&key)),
-        (false, false) => return Err(format!("not subscribed to {}", to_hex(&key))),
-    }
-    if hinted {
-        let hints = address.hint_list();
-        let shown: Vec<String> = hints.iter().map(|h| h.to_string()).collect();
-        println!("if your relays do not hold it, it is looked for on {}", shown.join(" and "));
-        for h in &hints {
-            if !profile::usable_profile_relay(&h.url()) {
-                eprintln!("terse: {h} is a loopback, private or link-local address: that hint will not be used (NETWORK 5.1)");
-            }
-        }
-    }
+    account::subscribe(&config_dir(&args)?, text, add, &mut say)?;
     Ok(ExitCode::SUCCESS)
 }
 
@@ -585,15 +427,10 @@ fn address(args: &[String]) -> Result<ExitCode, String> {
     };
     let mut node = open_node(&args, &relays)?;
     node.set_identity(identity);
-    let hints = terse_net::address::hint_text(&node.own_hints());
-    let key = to_hex(&node.identity_key().unwrap());
-    if hints.is_empty() {
-        println!("{key}");
-        eprintln!(
-            "terse: no public encrypted (wss://) relay in your profile or relay list, so your address has no hints (plain ws:// relays are never given out): only people who use the same relay as you will find your feed"
-        );
-    } else {
-        println!("{key}@{hints}");
+    let (address, hinted) = account::own_address(&node).expect("an identity");
+    println!("{address}");
+    if !hinted {
+        eprintln!("terse: {}", account::NO_HINTS);
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -633,11 +470,7 @@ fn article_label(article: Option<Article>) -> &'static str {
 
 /// Text from the network with control characters (other than newline and
 /// tab) replaced, so it cannot drive the terminal.
-fn printable(text: &str, keep_lines: bool) -> String {
-    text.chars()
-        .map(|c| if c.is_control() && !(keep_lines && (c == '\n' || c == '\t')) { '\u{FFFD}' } else { c })
-        .collect()
-}
+use account::printable;
 
 /// `YYYY-MM-DD HH:MM` in UTC.
 fn utc(time: u32) -> String {
@@ -918,7 +751,6 @@ fn site(args: &[String]) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-const BAD_NAME: &str = "is not a valid name (1 to 48 bytes, no control characters, no space at either end)";
 
 /// `terse feed nickname <key> [<name>]`: sets or (without a name) removes
 /// the local nickname of a feed (NETWORK 4.6).
@@ -971,29 +803,13 @@ fn profile_set(args: &[String]) -> Result<ExitCode, String> {
     let identity = load_identity(&args)?;
     let relays = relay_urls(&args, true)?;
     let mut node = open_node(&args, &relays)?;
-    let current = node.profile(&identity.feed_key()).and_then(|(_, d)| d);
-    let listed = args.has("--listed") || (!args.has("--unlisted") && current.as_ref().is_some_and(|d| d.listed));
-    node.set_identity(identity);
-    // Plain relays are not listed (NETWORK 4.6); this machine's go
-    // without a word, others are named.
-    let plain: Vec<&String> = relays.iter().filter(|u| u.starts_with("ws://") && !profile::loopback_url(u)).collect();
-    if !plain.is_empty() {
-        let list: Vec<&str> = plain.iter().map(|u| u.as_str()).collect();
-        eprintln!("terse: not in the profile: {}: {}", list.join(", "), profile::PLAIN_NOT_LISTED);
-    }
-    let done = node.publish_profile(name, listed, description, now());
-    crate::say_delivery(&mut node);
-    match done {
-        Done::Published { seq, blob } => {
-            if relays.is_empty() {
-                eprintln!("terse: no relay: stored locally only");
-            }
-            println!("seq {seq} blob {} ({})", to_hex(&blob), if listed { "listed" } else { "unlisted" });
-            Ok(ExitCode::SUCCESS)
-        }
-        Done::Refused => Err("every relay refused the profile entry (each one's reason is above)".into()),
-        _ => Err("publishing the profile failed (store error, or no relay accepted it)".into()),
-    }
+    let listed = match (args.has("--listed"), args.has("--unlisted")) {
+        (true, _) => Some(true),
+        (_, true) => Some(false),
+        _ => None,
+    };
+    account::publish_profile(&mut node, identity, name, listed, description, &mut say)?;
+    Ok(ExitCode::SUCCESS)
 }
 
 fn profile_show(args: &[String]) -> Result<ExitCode, String> {
@@ -1052,9 +868,6 @@ pub fn find(args: &[String]) -> Result<ExitCode, String> {
         return Err("the text to find is 1 to 48 bytes".into());
     }
     let relays = relay_urls(&args, true)?;
-    if relays.is_empty() {
-        return Err("no relay to ask: give --relay, or add one with `terse relay add <url>`".into());
-    }
     let mut node = open_node(&args, &relays)?;
     let scope = match (args.has("--entries"), args.has("--programs")) {
         (true, _) => SCOPE_ENTRIES,

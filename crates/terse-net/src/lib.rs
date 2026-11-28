@@ -25,6 +25,7 @@
 //! - [`service`]: runs a node on a background thread for the frame loop.
 //! - [`timeline`]: the arrival order of entries and the feed records of SPEC §content.feeds.
 
+pub mod account;
 pub mod address;
 pub mod article;
 pub mod article_parse;
@@ -37,6 +38,7 @@ pub mod driverlist;
 pub mod fontlist;
 pub mod identity;
 pub mod link;
+pub mod links;
 pub mod local;
 pub mod manual;
 pub mod manual_site;

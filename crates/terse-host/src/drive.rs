@@ -341,22 +341,22 @@ fn parse(line: &str) -> Result<Option<(Option<u32>, String, String)>, String> {
             w.first().ok_or("missing file")?;
         }
         "dump" => match w.first().copied() {
-            Some("terminal" | "page" | "vectors" | "state") => {}
-            _ => return Err("dump terminal|page|vectors|state [<handle>] [> <file>]".into()),
+            Some("terminal" | "page" | "vectors" | "state" | "host") => {}
+            _ => return Err("dump terminal|page|vectors|state|host [<handle>] [> <file>]".into()),
         },
         "watch" | "settle" => {}
         "expect" => match w.first().copied() {
             Some("idle") => {
                 num(1, "frame count")?;
             }
-            Some("terminal" | "page" | "vectors" | "state") if matches!(w.get(1).copied(), Some("contains" | "lacks")) => {}
+            Some("terminal" | "page" | "vectors" | "state" | "host") if matches!(w.get(1).copied(), Some("contains" | "lacks")) => {}
             Some("budget") => {
                 num(1, "percent")?;
             }
             Some("no-slow") => {}
             _ => {
                 return Err(
-                    "expect idle <frames> [tolerance <pixels>] | expect <terminal|page|vectors|state> contains|lacks <text> | expect budget <percent> | expect no-slow"
+                    "expect idle <frames> [tolerance <pixels>] | expect <terminal|page|vectors|state|host> contains|lacks <text> | expect budget <percent> | expect no-slow"
                         .into(),
                 );
             }
@@ -851,7 +851,7 @@ impl Drive {
 
     fn expect(&mut self, w: &[&str], args: &str, frame: u32, probe: &dyn Probe) {
         match w.first().copied() {
-            Some(what @ ("terminal" | "page" | "vectors" | "state")) => {
+            Some(what @ ("terminal" | "page" | "vectors" | "state" | "host")) => {
                 let want = w[1] == "contains";
                 let needle = args.splitn(3, char::is_whitespace).nth(2).unwrap_or("").trim();
                 match probe.dump(what, None) {

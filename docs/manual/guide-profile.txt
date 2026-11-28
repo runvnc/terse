@@ -2,7 +2,7 @@
 
 On Tersenet nobody gives out accounts: there is no sign-up, no e-mail address and no password. You are a key that your computer makes, and your articles are a feed signed with it. Anyone can check that an article in your feed came from you, and nobody without your key can add to it.
 
-These commands go in a terminal, with the window from the last page still open. (On Windows, open PowerShell in the folder where you unzipped Tersenet and write `.\terse` for `terse`.)
+The window does all of this on its own screens: F10, then the Signature and Profile pages (the last page, "Your feed without the command line"). This page does the same in a terminal and says more about each part. The commands go in a terminal, with the window still open. (On Windows, open PowerShell in the folder where you unzipped Tersenet and write `.\terse` for `terse`.)
 
 ## Your key
 
@@ -15,7 +15,7 @@ terse: new identity saved in /home/me/.config/terse/identity.key
 7105227f05be8a2efd2ef3e7d503342cebf594666854b14db7680ef9987e084c
 ```
 
-The 64 hexadecimal digits are the public half of your key: your feed's address, which you give to people. The file holds the secret half. Keep it safe and keep a copy: whoever has the file can publish as you, and if you lose it you cannot add to your feed again. `terse key show` prints your key whenever you need it.
+The 64 hexadecimal digits are the public half of your key: your feed's address, which you give to people. The file holds the secret half. Keep it safe and keep a copy: whoever has the file can publish as you, and if you lose it you cannot add to your feed again. `terse key show` prints your key whenever you need it, and `terse key import` and a file takes a key you kept as yours (it never replaces one you have).
 
 You can skip this step: the window makes a key by itself the first time something publishes, for example when you press T in the reader.
 
@@ -42,7 +42,7 @@ profile:     #1 of 2026-11-22 00:17, blob c87e03f4…0369e33e
 listed:      yes
 ```
 
-In the reader you can do the same without a terminal: F opens your feeds, P asks for your name and then whether search may find it, and the window asks you to confirm.
+Without a terminal: the Profile page (F10) has your name, a description and whether search finds you; in the reader, F opens your feeds and P asks for your name and then whether search may find it. Either way the window asks you to confirm.
 
 ## Your address
 
@@ -50,7 +50,7 @@ In the reader you can do the same without a terminal: F opens your feeds, P asks
 terse feed address
 ```
 
-prints the address to give to people: your key, and after an `@` the relays where others can find you. For now it is the key alone, with a note that only people on the same relay will find your feed: your relay is on your own computer. [Subscribe to someone's feed](terse:{guide-subscribe}) says how to share a relay. The reader's help page (?) shows the address too.
+prints the address to give to people (the Signature page shows it too, with a button that copies it): your key, and after an `@` the relays where others can find you. For now it is the key alone, with a note that only people on the same relay will find your feed: your relay is on your own computer. [Subscribe to someone's feed](terse:{guide-subscribe}) says how to share a relay. The reader's help page (?) shows the address too.
 
 ## What is kept where
 

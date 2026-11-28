@@ -264,6 +264,8 @@ pub struct Screens {
     eye: Eye,
     /// The host's notice (R15), drawn like the prompt.
     pub notice: Option<consent::Notice>,
+    /// The host's own screens (`you`), over the shell's screen from row 1.
+    pub screen: Option<terse_core::Terminal>,
 }
 
 impl Screens {
@@ -284,6 +286,7 @@ impl Screens {
             look: crate::phosphor::Look::default(),
             eye: (0.0, 0.0),
             notice: None,
+            screen: None,
         }
     }
 
@@ -348,23 +351,9 @@ impl Screens {
             // multiple of the native grid.
             self.shell.set_rect(device, Some(system_rect(viewport)));
         }
-        let shown = crate::displayed_terminal(shell);
-        match &prompt {
-            Some((p, waiting, title)) => {
-                self.shell.update(queue, &consent::with_prompt(&shown, title, p, *waiting));
-                self.shell.set_overlay(Some(consent::FIRST_ROW));
-            }
-            None => match &self.notice {
-                Some(n) => {
-                    self.shell.update(queue, &consent::with_notice(&shown, &n.heading, &n.what, &n.then));
-                    self.shell.set_overlay(Some(consent::FIRST_ROW));
-                }
-                None => {
-                    self.shell.update(queue, &shown);
-                    self.shell.set_overlay(None);
-                }
-            },
-        }
+        let (shown, overlay) = consent::host_drawn(crate::displayed_terminal(shell), self.screen.as_ref(), &prompt, self.notice.as_ref());
+        self.shell.update(queue, &shown);
+        self.shell.set_overlay(overlay);
         let eye = self.eye;
         // With Screens in effect the shell's 3D lines are drawn over the
         // panels, not in its own screen (SPEC §machines.screens); with Surfaces, over
@@ -702,6 +691,10 @@ impl Display for GpuDisplay {
 
     fn set_notice(&mut self, notice: Option<consent::Notice>) {
         self.screens.notice = notice;
+    }
+
+    fn set_screen(&mut self, screen: Option<terse_core::Terminal>) {
+        self.screens.screen = screen;
     }
 
     fn configure(&mut self, no_trails: bool, force_phosphor: bool, animate_page: bool) {
