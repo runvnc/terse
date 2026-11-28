@@ -156,7 +156,10 @@ flags), are the client's merged answers of `NETWORK.md` 4.7 and 4.8:
 every entry in them is verified. The cursor of a node's Find reply is
 the node's own (it stands for the relays' cursors, which the node keeps
 or puts in it), and a page is the next 16 of the merged results
-(`NETWORK.md` 4.7, "More results"). A Find that no relay answered (or
+(`NETWORK.md` 4.7, "More results"). A node keeps a bounded number of
+searches (the reference 64, the one used least recently dropped first)
+and refuses (status 3, `count` 0, `c` 0) a cursor for a search it no
+longer keeps; the reader starts again from the first page. A Find that no relay answered (or
 that the node had no relay to ask) is refused: status 3, `count` 0; a
 Lookup that no relay answered has status 2. The relay protocol's other
 requests (Put, Publish, Subscribe, Unsubscribe, Peer) are not local

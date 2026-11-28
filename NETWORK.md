@@ -562,8 +562,9 @@ declared name.
   last one of the page before, in the same order, so a page holds no
   result of an earlier one. Results the relay stores after the first
   page do not move the pages after it: an entry stored since then is not
-  in them. (A feed whose profile changes between pages may be missed or
-  shown twice; clients drop the repeat.)
+  in them; for scope 1, a feed whose profile in force was stored after
+  the first page is not in them. (A feed whose profile changes between
+  pages may be missed or shown twice; clients drop the repeat.)
 - The cursor is the relay's own: the client sends it back unchanged, only
   to the relay that gave it, with the same scope and query. A relay
   should put in the cursor what it needs to continue (for example, the
@@ -573,8 +574,12 @@ declared name.
   client starts again from the first page. A page is a find like any
   other, for the relay's allowance below.
 - Before this revision a find ended at the query and its reply at the
-  last entry. A relay takes a find that ends at the query as `c` 0; a
-  client takes a reply that ends at the last entry as `c` 0.
+  last entry. A relay takes a find that ends at the query as `c` 0 and
+  answers it with a reply that ends at the last entry (no `c`, so no
+  cursor: its client could not read one); a client takes a reply that
+  ends at the last entry as `c` 0. A client whose first page (with `c`)
+  is refused with status `3` may ask once more without `c`: a relay from
+  before this revision refuses a find with `c`.
 - A relay may refuse a find (status `3`, or a "try again" status of
   section 3.1; `count` 0) from a connection or an address that searches
   too often.
@@ -591,8 +596,13 @@ declared name.
   for more, it sends the next find to each relay whose last reply carried
   a cursor, merges those pages by the rules above, drops results it has
   already shown (same feed and `seq`; scope 1, same feed), and shows up
-  to 16 more after the ones already shown. There are more while any relay
-  has a cursor. A relay that refuses a cursor is asked again from its
+  to 16 more after the ones already shown. Results a relay returned that
+  are not shown yet are kept for the next pages, not dropped; a relay is
+  asked for its next page only when fewer than 16 of its results are
+  waiting. For scope 1, a result is shown only once every relay that has
+  a cursor has returned a result at or after it in the order, so a page
+  may hold fewer than 16. There are more while any relay has a cursor or
+  a result waiting. A relay that refuses a cursor is asked again from its
   first page, and the results already shown are dropped from it.
 
 ### 4.8 Lookup

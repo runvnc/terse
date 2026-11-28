@@ -5008,6 +5008,7 @@ static const char *const help_keys[] = {
              "a\xE2\x80\x93z match each other, other characters only themselves",
     "\xE2\x86\x91 \xE2\x86\x93  wheel, click", "select a result; Enter opens it (an article of yours at its first match; a "
                                        "feed's page, where S subscribes; a document as in the timeline)",
+    "Enter on More results", "the next results from your relays, added at the end of the section",
     "typing, Enter on a result, Esc", "stop the search of your articles",
     "Esc", "back",
     0, "Help",
