@@ -52,11 +52,15 @@ fn host_part(c: terse_perflog::Component) -> &'static str {
 /// R15): `machine<h>:<ms>:<frame>`, machine h's frames (0: the shell or the
 /// machine alone) each sleep ms milliseconds from the host's frame on;
 /// `compose:<ms>:<frame>`, the drawing; `:spin` after either, busy on a CPU
-/// for that much CPU time instead.
+/// for that much CPU time instead. For R20: `store:<ms>`, every content
+/// request the host answers itself waits that long first; `figures:<ms>`,
+/// every page figure takes that much longer to rasterise.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SlowPart {
     Machine(u8),
     Compose,
+    Store,
+    Figures,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -73,6 +77,8 @@ impl Slow {
         let mut f = s.split(':');
         let what = match f.next()? {
             "compose" => SlowPart::Compose,
+            "store" => SlowPart::Store,
+            "figures" => SlowPart::Figures,
             m => SlowPart::Machine(m.strip_prefix("machine")?.parse().ok()?),
         };
         let ms = f.next()?.parse().ok()?;
@@ -114,7 +120,7 @@ impl Slow {
         let v = std::env::var("TERSE_HOST_SLOW").ok()?;
         let s = Slow::parse(&v);
         if s.is_none() {
-            eprintln!("terse-host: TERSE_HOST_SLOW={v} not understood (machine<h>:<ms>:<frame>[:spin] or compose:<ms>:<frame>[:spin])");
+            eprintln!("terse-host: TERSE_HOST_SLOW={v} not understood (machine<h>:<ms>:<frame>[:spin], compose:<ms>:<frame>[:spin], store:<ms> or figures:<ms>)");
         }
         s
     }
@@ -202,6 +208,11 @@ pub fn run(
         watch,
         data: program.data.clone(),
         slow: Slow::from_env(),
+        page_seen: None,
+        page_wait: None,
+        page_slow: None,
+        slow_lines: 0,
+        slow_notice_after: 0,
         notice: None,
         halted: None,
         monitor: None,
@@ -209,6 +220,16 @@ pub fn run(
         used: Vec::new(),
         audio,
     };
+    // The test hooks of R20: a slow store, slow figures.
+    match app.slow {
+        Some(Slow { what: SlowPart::Store, ms, .. }) => {
+            if let Some(c) = &mut app.content {
+                c.set_local_delay(Duration::from_millis(ms));
+            }
+        }
+        Some(Slow { what: SlowPart::Figures, ms, .. }) => crate::figures::slow_by(ms),
+        _ => {}
+    }
     event_loop.run_app(&mut app).map_err(|e| e.to_string())?;
     if let Some(e) = app.error {
         return Err(e);
@@ -811,6 +832,18 @@ struct App {
     slow: Option<Slow>,
     /// The host's notice (R15) and the host frame after which it goes.
     notice: Option<(crate::consent::Notice, u64)>,
+    /// R20: the shell's (or the machine alone's) page generation last seen,
+    /// and the document submitted and not yet shown whole: its generation,
+    /// when it was submitted (the end of that frame's emulation).
+    page_seen: Option<u64>,
+    page_wait: Option<(u64, Instant)>,
+    /// A page shown too late, said at the next frame's start.
+    page_slow: Option<f64>,
+    /// `slow` and `relay` lines written this run (at most
+    /// `SLOW_LINES_MAX`), and the frame before which no other notice of a
+    /// slow response is shown.
+    slow_lines: u64,
+    slow_notice_after: u64,
     /// The device whose slowness stopped the shell or the machine alone,
     /// and where its snapshot went: the run ends with status 4.
     halted: Option<(u8, String)>,
@@ -895,6 +928,7 @@ impl App {
         self.watch.begin();
         // SPEC §content.submit: whatever finished since the last frame completes now;
         // images the shell started arrive (SPEC §machines.frames).
+        let mut timings = Vec::new();
         if let Some(content) = &mut self.content {
             for (tag, c) in content.take_finished_tagged() {
                 if c.handle == 0 && self.fetching.contains(&tag) {
@@ -912,6 +946,12 @@ impl App {
             for (tag, r) in restored {
                 self.system.deliver_snapshot(tag, r);
             }
+            timings = content.take_timings();
+        }
+        self.responses(&timings);
+        if let Some(ms) = self.page_slow.take() {
+            let image = *self.system.shell().image_id();
+            self.host_slow("page", ms, Some(image));
         }
         // Pasted text, as much as the focused machine's queue has room for
         // (with space for the completions' events and a page anchor), the
@@ -953,6 +993,12 @@ impl App {
         // Panels are hit as the eye now sees them (SPEC §machines.input).
         self.system.set_eye(self.eye);
         self.system.frame(&self.pending, controllers, &mut driver);
+        // R20: a new page document is timed from here to its picture shown.
+        let generation = self.system.shell().page().map(|p| p.generation());
+        if generation != self.page_seen {
+            self.page_seen = generation;
+            self.page_wait = generation.map(|g| (g, Instant::now()));
+        }
         let ran = driver.ran;
         self.used = driver.used;
         if let Some(text) = self.copied.take() {
@@ -1224,6 +1270,46 @@ impl App {
         }
         if pressed {
             self.pending.extend(crate::keymap::typed_text(text, self.modifiers).into_iter().map(Event::text));
+        }
+    }
+
+    /// R20: the content requests completed this frame, timed. One the host
+    /// answered itself over its bound is the host's fault (recorded, said,
+    /// noticed); one that went to the relays is only recorded, when long.
+    fn responses(&mut self, timings: &[terse_net::Timing]) {
+        use terse_perflog::record::{RELAY_NOTED_MS, SLOW_LINES_MAX, SLOW_STORE_MS};
+        for t in timings {
+            let image = self.system.machine_by_serial(t.tag).map(|(_, m)| *m.image_id());
+            if t.relay {
+                if t.ms >= RELAY_NOTED_MS && self.slow_lines < SLOW_LINES_MAX {
+                    self.slow_lines += 1;
+                    self.watch.add(terse_perflog::Line::relay(self.watch.frame, t.ms, image.as_ref()));
+                }
+            } else if t.ms > SLOW_STORE_MS {
+                self.host_slow("store", t.ms, image);
+            }
+        }
+    }
+
+    /// R20: a response of the host's own (`store`, `page`) took longer than
+    /// its bound: recorded as the host's, said on standard error and to
+    /// `--drive`, and shown (at most once in 300 frames). The program is
+    /// not blamed: it did not choose how long this took.
+    fn host_slow(&mut self, what: &str, ms: f64, image: Option<[u8; 32]>) {
+        let frame = self.watch.frame;
+        if self.slow_lines < terse_perflog::record::SLOW_LINES_MAX {
+            self.slow_lines += 1;
+            self.watch.add(terse_perflog::Line::slow(frame, ms, what, image.as_ref()));
+        }
+        let text = match what {
+            "store" => format!("a content request answered from this computer's own store took {ms:.0} ms"),
+            _ => format!("a page took {ms:.0} ms from its submit to its picture shown"),
+        };
+        eprintln!("terse-host: slow: {text} (PERFORMANCE.md R20: the host's doing; `terse perf log` shows the record)");
+        self.note_slow(format!("host slow: {text}"));
+        if frame >= self.slow_notice_after {
+            self.slow_notice_after = frame + 300;
+            self.show_notice("Tersenet was slow", format!("{text}."), "The host's doing, not the program's; recorded (terse perf log).");
         }
     }
 
@@ -1556,6 +1642,9 @@ impl ApplicationHandler for App {
                 }
                 let capture = self.drive.as_ref().is_some_and(crate::drive::Drive::wants_picture);
                 let holding = self.hold.holding();
+                // R20: a page is ready when the drawing that shows it whole
+                // begins (its own time is the drawing's, judged as compose).
+                let draw_start = Instant::now();
                 if !self.occluded
                     && let Some(gfx) = &mut self.gfx
                     && let Some((acquire, render, picture)) = if holding { gfx.draw_held(capture, &mut self.watch) } else { gfx.draw(capture, &mut self.watch) }
@@ -1570,6 +1659,19 @@ impl ApplicationHandler for App {
                     }
                     let render = render + slept;
                     self.presented_at = Some(Instant::now());
+                    // R20: the page document waited for is shown whole.
+                    if let Some((g, at)) = self.page_wait
+                        && gfx.display().page_shown_generation() == Some(g)
+                    {
+                        self.page_wait = None;
+                        let ms = draw_start.saturating_duration_since(at).as_secs_f64() * 1000.0;
+                        if self.trace {
+                            eprintln!("page: frame {}: document {g} shown {ms:.1} ms after its submit", self.system.shell().frame());
+                        }
+                        if ms > terse_perflog::record::SLOW_PAGE_MS {
+                            self.page_slow = Some(ms);
+                        }
+                    }
                     if self.trace {
                         for line in gfx.display_mut().take_page_figure_log() {
                             eprintln!("page: frame {}: {line}", self.system.shell().frame());

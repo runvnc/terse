@@ -1114,6 +1114,9 @@ pub struct PageLayer {
     rasterizer: Option<Rasterizer>,
     figure_textures: HashMap<FigureKey, FigureTexture>,
     figures_pending: HashSet<FigureKey>,
+    /// The figures in view (shown groups of layered ones) as the last
+    /// prepare wanted them drawn (PERFORMANCE.md R20).
+    figures_wanted_shown: Vec<FigureKey>,
     figures_ready: Vec<figures::Done>,
     figure_log: Vec<String>,
     figure_draws: Vec<(u32, FigureKey)>,
@@ -1262,6 +1265,7 @@ impl PageLayer {
             rasterizer: None,
             figure_textures: HashMap::new(),
             figures_pending: HashSet::new(),
+            figures_wanted_shown: Vec::new(),
             figures_ready: Vec::new(),
             figure_log: Vec::new(),
             figure_draws: Vec::new(),
@@ -1490,6 +1494,7 @@ impl PageLayer {
         let bottom = scroll + (1.0 + FIGURE_MARGIN) * h;
         let max_side = device.limits().max_texture_dimension_2d;
         let mut wanted = HashSet::new();
+        let mut wanted_shown = Vec::new();
         let (mut keep, mut shown) = (HashSet::new(), HashMap::new());
         // Those to be drawn now first, then the rest (hidden groups, the margin).
         let (mut jobs, mut later) = (Vec::new(), Vec::new());
@@ -1529,6 +1534,7 @@ impl PageLayer {
                     }
                     let Some((rect, uv)) = place_group(px, state, (x, y), s, scale, clip) else { continue };
                     let slot = i << 8 | (gi + 1);
+                    wanted_shown.push(key);
                     let mut draw = key;
                     if !self.figure_textures.contains_key(&key)
                         && let Some(&before) = self.figure_shown.get(&slot).filter(|k| k.1 == px.1 && self.figure_textures.contains_key(k))
@@ -1556,6 +1562,7 @@ impl PageLayer {
                 // the same size, until it is.
                 let mut draw = key;
                 let slot = i << 8;
+                wanted_shown.push(key);
                 if !self.figure_textures.contains_key(&key)
                     && let Some(&before) = self.figure_shown.get(&slot).filter(|k| k.1 == size && self.figure_textures.contains_key(k))
                 {
@@ -1569,6 +1576,7 @@ impl PageLayer {
         }
         jobs.append(&mut later);
         self.figure_shown = shown;
+        self.figures_wanted_shown = wanted_shown;
         self.figure_textures.retain(|k, _| wanted.contains(k) || keep.contains(k));
         self.figures_pending.retain(|k| wanted.contains(k));
         let mut done = Vec::new();
@@ -1614,6 +1622,13 @@ impl PageLayer {
     }
 
     /// What the figures did since the last call, for `TERSE_PAGE_TRACE`.
+    /// As `SoftPage::shown_generation`: the document drawn whole by the
+    /// last prepare, if it was (PERFORMANCE.md R20).
+    pub fn shown_generation(&self) -> Option<u64> {
+        let all = self.figures_wanted_shown.iter().all(|k| self.figure_textures.contains_key(k));
+        self.layout.as_ref().filter(|_| all).map(|l| l.key.0)
+    }
+
     pub fn take_figure_log(&mut self) -> Vec<String> {
         std::mem::take(&mut self.figure_log)
     }

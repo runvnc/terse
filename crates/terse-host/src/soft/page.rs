@@ -119,6 +119,9 @@ pub struct SoftPage {
     /// changed figure is rasterised, the one shown before stays in its
     /// place (SPEC §page.layout: re-submitting never makes a figure blink).
     figure_shown: HashMap<usize, FigureKey>,
+    /// Figures in view (shown groups of layered ones) not drawn as they
+    /// are yet when the quads were last prepared (PERFORMANCE.md R20).
+    awaited: usize,
 }
 
 impl Default for SoftPage {
@@ -142,6 +145,7 @@ impl Default for SoftPage {
             arrived: 0,
             pending_quads: Vec::new(),
             figure_shown: HashMap::new(),
+            awaited: 0,
         }
     }
 }
@@ -183,6 +187,14 @@ impl SoftPage {
 
     pub fn take_figure_log(&mut self) -> Vec<String> {
         std::mem::take(&mut self.figure_log)
+    }
+
+    /// The generation of the document shown whole by the quads prepared
+    /// last: laid out, and every figure in view drawn as it is (not the one
+    /// shown before in its place, nor nothing); `None` while it is not
+    /// (PERFORMANCE.md R20).
+    pub fn shown_generation(&self) -> Option<u64> {
+        self.layout.as_ref().filter(|_| self.awaited == 0).map(|l| l.key.0)
     }
 
     /// What the page would show drawn into `screen` (the 640 × 480 screen
@@ -445,10 +457,13 @@ impl SoftPage {
             }
         }
         // Quads of figures that arrived just now.
+        self.awaited = 0;
         for (at, key, t) in std::mem::take(&mut self.pending_quads) {
             if let Some(img) = self.figure_images.get(&key) {
                 let t = t.unwrap_or_else(|| img.whole());
                 self.quads.quads[at].paint = Paint::Figure(img.clone(), t);
+            } else {
+                self.awaited += 1;
             }
         }
     }

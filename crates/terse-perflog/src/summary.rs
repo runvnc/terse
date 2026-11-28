@@ -35,6 +35,12 @@ pub struct Summary {
     pub fails: Vec<String>,
     /// Late frames the rule did not count, by reason (`excused` lines).
     pub excused: BTreeMap<String, u64>,
+    /// Responses the host was slow to give (`slow` lines, R20), by what:
+    /// (count, worst ms).
+    pub slow: BTreeMap<String, (u64, f64)>,
+    /// Content requests the relays were slow to answer (`relay` lines):
+    /// count, worst ms. Not the host's.
+    pub relay: (u64, f64),
     pub checks: Vec<String>,
     pub dropped: u64,
     /// Devices whose CPU wait the system did not say (`readings`).
@@ -108,6 +114,13 @@ impl Summary {
                         self.fails.push(format!("frame {frame}: the host's own {component}, {count} late frames with nothing left to shed"));
                     } else if let Some((_, why)) = l.as_excused() {
                         *self.excused.entry(why.to_string()).or_default() += 1;
+                    } else if let Some((_, ms, what)) = l.as_slow() {
+                        let e = self.slow.entry(what.to_string()).or_default();
+                        e.0 += 1;
+                        e.1 = e.1.max(ms);
+                    } else if let Some((_, ms)) = l.as_relay() {
+                        self.relay.0 += 1;
+                        self.relay.1 = self.relay.1.max(ms);
                     }
                 }
                 Line::Format(_) => {}
@@ -208,6 +221,17 @@ impl Summary {
         if !self.excused.is_empty() {
             let e: Vec<String> = self.excused.iter().map(|(why, n)| format!("{why} {n}")).collect();
             let _ = writeln!(o, "  late frames not counted (excused): {}", e.join(", "));
+        }
+        for (what, (n, worst)) in &self.slow {
+            let kind = match what.as_str() {
+                "store" => "a content request answered from the host's own store",
+                "page" => "a page shown after its submit (layout and figures)",
+                _ => what.as_str(),
+            };
+            let _ = writeln!(o, "  slow responses of the host (R20): {kind}: {n}, the slowest {worst:.1} ms");
+        }
+        if self.relay.0 > 0 {
+            let _ = writeln!(o, "  content requests the relays took a second or more to answer (the network's, not a fault): {}, the slowest {:.1} ms", self.relay.0, self.relay.1);
         }
         if self.dropped > 0 {
             let _ = writeln!(o, "  lines lost (the writer fell behind): {}", self.dropped);

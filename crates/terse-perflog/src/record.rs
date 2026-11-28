@@ -31,6 +31,19 @@ pub const MAX_LATE_LINES: u64 = 2000;
 pub const QUEUE: usize = 1024;
 /// Memory is sampled every this many frames (10 s at 60 a second).
 pub const MEM_EVERY: u64 = 600;
+/// R20: a content request the host answers itself (its store, its own
+/// state) may take this long, from its submit to its completion, before
+/// it is the host's fault (`slow ... store`): six frames.
+pub const SLOW_STORE_MS: f64 = 100.0;
+/// R20: a page document may take this long from its submit to its picture
+/// shown (laid out, every figure in view drawn) before it is the host's
+/// fault (`slow ... page`): twelve frames.
+pub const SLOW_PAGE_MS: f64 = 200.0;
+/// R20: a content request that went to the relays is recorded (`relay`)
+/// when it took this long or more: the network's, not a fault.
+pub const RELAY_NOTED_MS: f64 = 1000.0;
+/// R20: at most this many `slow` and `relay` lines a run.
+pub const SLOW_LINES_MAX: u64 = 2000;
 /// A single wait on a component this long or longer is a blockage.
 pub const BLOCK_NS: u64 = 100_000_000;
 
@@ -213,6 +226,44 @@ impl Line {
         let f: Vec<&str> = s.split(' ').collect();
         match f[..] {
             ["fail", frame, c, count, ..] => Some((frame.parse().ok()?, Component::parse(c)?, count.parse().ok()?)),
+            _ => None,
+        }
+    }
+
+    /// `slow <frame> <ms> <what> <image>`: a response of the host's own
+    /// that a program waited on took longer than its bound (R20,
+    /// `RECORD.md` 2): `store` a content request the host answered itself
+    /// (its store, its own state), over [`SLOW_STORE_MS`]; `page` a page
+    /// document from its submit to its picture shown (laid out, the
+    /// figures in view drawn), over [`SLOW_PAGE_MS`]. The host's fault,
+    /// never the program's; the frame is the one in which it was seen.
+    pub fn slow(frame: u64, ms: f64, what: &str, image: Option<&[u8; 32]>) -> Line {
+        Line::Other(format!("slow {frame} {ms:.1} {} {}", escape(what), image_field(image)))
+    }
+
+    /// A `slow` line's frame, time and what.
+    pub fn as_slow(&self) -> Option<(u64, f64, &str)> {
+        let Line::Other(s) = self else { return None };
+        let f: Vec<&str> = s.split(' ').collect();
+        match f[..] {
+            ["slow", frame, ms, what, ..] => Some((frame.parse().ok()?, ms.parse().ok()?, what)),
+            _ => None,
+        }
+    }
+
+    /// `relay <frame> <ms> <image>`: a content request that went to the
+    /// relays took [`RELAY_NOTED_MS`] or more: the network's time, recorded
+    /// apart and never a fault of the host's or the program's (R20).
+    pub fn relay(frame: u64, ms: f64, image: Option<&[u8; 32]>) -> Line {
+        Line::Other(format!("relay {frame} {ms:.1} {}", image_field(image)))
+    }
+
+    /// A `relay` line's frame and time.
+    pub fn as_relay(&self) -> Option<(u64, f64)> {
+        let Line::Other(s) = self else { return None };
+        let f: Vec<&str> = s.split(' ').collect();
+        match f[..] {
+            ["relay", frame, ms, ..] => Some((frame.parse().ok()?, ms.parse().ok()?)),
             _ => None,
         }
     }
@@ -659,6 +710,21 @@ mod tests {
         assert_eq!(Line::Readings { component: Component::Device(3), readings: Readings { cpu: true, wait: true, stall: false, idle: true } }.encode(), "readings dev3 cpu,wait,idle");
         assert_eq!(Line::parse("late 1 2"), None);
         assert_eq!(Line::parse("# a comment"), None);
+        // R20: the host's slow responses and the relays' slow answers.
+        let slow = Line::slow(640, 812.5, "page", Some(&[0xab; 32]));
+        assert_eq!(slow.encode(), "slow 640 812.5 page abababababababab");
+        assert_eq!(Line::parse(&slow.encode()).unwrap().as_slow(), Some((640, 812.5, "page")));
+        let relay = Line::relay(7, 1500.0, None);
+        assert_eq!(relay.encode(), "relay 7 1500.0 -");
+        assert_eq!(Line::parse(&relay.encode()).unwrap().as_relay(), Some((7, 1500.0)));
+        let mut s = crate::summary::Summary::default();
+        s.add(&[slow, Line::slow(9, 150.0, "store", None), Line::slow(700, 300.0, "page", None), relay]);
+        assert_eq!(s.slow.get("page"), Some(&(2, 812.5)));
+        assert_eq!(s.slow.get("store"), Some(&(1, 150.0)));
+        assert_eq!(s.relay, (1, 1500.0));
+        let r = s.report();
+        assert!(r.contains("slow responses of the host (R20): a page shown after its submit (layout and figures): 2, the slowest 812.5 ms"), "{r}");
+        assert!(r.contains("not a fault): 1"), "{r}");
     }
 
     #[test]

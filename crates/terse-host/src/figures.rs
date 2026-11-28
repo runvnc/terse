@@ -104,9 +104,22 @@ pub struct Done {
     pub ms: f64,
 }
 
+/// Milliseconds every figure takes longer (`TERSE_HOST_SLOW=figures:<ms>`,
+/// for the tests of PERFORMANCE.md R20).
+static SLOW_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Makes every figure take `ms` longer to rasterise (a test hook).
+pub fn slow_by(ms: u64) {
+    SLOW_MS.store(ms, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// Runs `job` (on any thread).
 pub fn run(job: &Job) -> Done {
     let start = std::time::Instant::now();
+    let slow = SLOW_MS.load(std::sync::atomic::Ordering::Relaxed);
+    if slow > 0 {
+        std::thread::sleep(std::time::Duration::from_millis(slow));
+    }
     let (w, h) = job.key.1;
     let data = rasterize_at(&job.paths, (w, h), job.scale, job.origin, job.key.2)
         .map(Pixmap::take)

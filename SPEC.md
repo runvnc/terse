@@ -1434,7 +1434,11 @@ attributes each late frame to one of them, keeps a record of it on the
 computer (never sent: `RECORD.md`), warns the user about a device that
 keeps making frames late and then stops the machines that use it, saved
 first (stopped state Halted, §stopping). `PERFORMANCE.md` R13–R16 give the
-rule and its numbers.
+rule and its numbers. A program can also be kept waiting by the host
+without a late frame (a content request answered slowly from the host's
+own store, a page document laid out or drawn slowly beside the frames):
+the host times those responses, and past their bounds records them as its
+own and says so (`PERFORMANCE.md` R20).
 
 How a host presents a frame (drawing, the phosphor style) is not machine
 state and has no requirement here; `PERFORMANCE.md` gives the reference

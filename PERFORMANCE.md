@@ -87,6 +87,7 @@ spread, from `terse perf` on a release build.
 | Machine host | R16 | A host checks at start that this computer can draw each device's worst legal frame in time, once per build and computer; where it cannot, the optional look is not offered and the device is said to be too slow here | ms (a target) | `terse-host --hardware-check`; `cargo test -p terse-host hwcheck` |
 | Machine host | R18 | Sound is prompt: a frame's samples (`SPEC.md` §sound, rendered at the frame's end) reach the system's audio output (the sound server's sink, or the ALSA device) within 3 frames of that end, and the host's hand-over never makes the output run dry while it keeps up (no gap and no dropped sample at 60 frames a second). Only the hand-over is timed: the machines' samples are what they are | ms; gaps | by hand on Linux (below): a private PipeWire with a null sink, `TERSE_AUDIO_TRACE` (each frame's hand-over time) against a recording of the sink, and the recording compared with `terse run --audio-out`, sample for sample |
 | Machine host | R19 | Sound leaves the host promptly: each frame's samples are handed to the system's audio interface (the write to libpulse-simple or ALSA that carries the frame's first pair has returned; on CoreAudio or WASAPI, the callback has copied it) within 2 frames of the frame's end for 99 frames in 100, through the host's own queue and output thread; the host asks that interface to hold at most 3 frames (50 ms) ahead of playing, and drops nothing while it keeps up. What the system adds after the hand-over (the sound server, the card) is not counted here (R18 times it to the sink) | ms; pairs dropped | `terse perf` S1: `terse-host --sound-check` runs `programs/tune` headless for 240 frames at 60 a second and hands its sound to the null output, a device's buffer of the size the host asks for that takes 48,000 pairs a second with no device behind it (nothing is opened, nothing is heard), and prints the hand-over's p50, p99 and max, the buffer and the pairs dropped; `cargo test -p terse-host --test sound` (`sound_check_runs_headless_with_no_device`), `cargo test -p terse-host audio` (how each frame's hand-over is counted) |
+| Machine host | R20 | A response the host gives a program from this computer alone is not slow, and when it is, the host notices it, records it as its own and says so: a content request it answers itself (a held blob, its own state) completes within 100 ms (6 frames) of its submit, and a page document is shown whole (laid out, every figure in view drawn as it is) within 200 ms (12 frames) of its submit. Over either it is a host fault (a `slow` line, `RECORD.md` 2; a notice; never the program's). A content request that went to the relays is timed apart: one of a second or more is recorded (`relay`), the network's, never a fault | ms | `cargo test -p terse-host --test slow_response` (`TERSE_HOST_SLOW=store:<ms>` and `figures:<ms>` flag a slowed store and slowed figures; the normal paths are not flagged; `--drive`'s `expect no-slow` fails on a slow response); `cargo test -p terse-perflog` (the lines and `terse perf log`) |
 | Machine host | R12 | The host work a whole system can demand is bounded: the machines a shell shows share the system ink, 691,200 square units of the shell's screen (their pictures' areas first, then their lists' ink times their scale; a picture that does not fit is a plate, a list is cut where the ink runs out), the shell's own screen drawn within its own caps (`spec/machines.md` §machines.ink) | square screen units | `terse perf` W rows `sys-*`: a shell and 8 machines, each with every device at its worst, tiled, overlapping and as panels, with the system ink and without (target: the machines add no more than about one machine's worst); `cargo test -p terse-core --test system_ink` (plates, scales, where lists are cut); `cargo test -p terse-cli --test shell` (`the_layouts_stay_within_the_system_ink`: the bundled layouts are never cut); `cargo test -p terse-devices --test pictures` (terse-bus counts the same shares, frame by frame, and draws the same plates and cut lists) |
 | Machine host | R17 | The first frame waits on nothing but the image, the settings and the fonts they list: before it a host reads only the image (a shell's built-ins), its settings, the listed fonts, its own store and data directories and its hardware check's result (R16), besides opening its window and graphics device; it waits on no relay, reads no font directory and asks the user nothing (`SPEC.md` §responsiveness item 6) | files read; no wait | `cargo test -p terse-host --test startup`: the built-in shell's first frame with a relay that never answers and the user's font directories, a fontconfig file's and the listed font's own directory holding only FIFOs (which block whoever opens them): it comes with no FIFO opened and no connection to the relay given up before it (judged by order, not by time), and nothing is written outside the store and data; `terse perf` H1, H5, H7, H8 (ceiling 1.5 s) |
 
@@ -897,6 +898,44 @@ and `terse perf` build in a stated sample, "NON-CONFORMANT IN SAMPLE"
 when at least 1 in 3 of at least 5 reporters had it halted (R15) or a
 requirement or ceiling failed. `RECORD.md` section 5 is the format, the
 publishing and the rule.
+
+**R20, slow responses.** The rule above judges frames; a program can
+also be kept waiting by the host without any frame being late: a content
+request answered from a store that takes half a second, a page document
+laid out or its figures rasterised beside the frames for a second while
+the old picture stays up. The program did all it could (its request or
+its submit was in time); the wait is the host's. So the host times what
+it answers from this computer alone and calls it a fault of its own past
+a bound:
+
+| Response | From | To | Bound | Over it |
+|---|---|---|---|---|
+| A content request the host answers itself (a held blob, its records, its feeds) | the submit (the end of the frame that made it) | its completion, carried out (not when the frame loop takes it) | 100 ms (6 frames) | `slow <frame> <ms> store <image>`, a notice, a line on standard error |
+| A page document | the submit (the end of the frame that made it) | the start of the first drawing that shows it whole: its layout, and every figure in view (each shown group of a layered one) as it is | 200 ms (12 frames) | `slow <frame> <ms> page <image>`, a notice, a line on standard error |
+| A content request that went to the relays | the submit | its completion | none: the network's time | `relay <frame> <ms> <image>` when 1 s or more; nothing else |
+
+Why these bounds: R6 asks a request that needs no network to complete
+within 2 frames; 6 frames is a ceiling in this document's sense, far
+above it, which only a store waiting on a disk, a lock or a scan
+crosses. A page's layout runs on its own thread and its figures on
+threads of their own (as many as the cores less one, at most 4; those in
+view first): a scene of Stillwind (three figures the width of the
+screen, twenty layer groups) is shown whole 3 frames after its submit
+at 2560 × 1440 (about 50 ms, the software renderer, release and debug
+builds alike), and a person sees 200 ms as a delay: past that the host
+is in the way. It is timed to the start of the drawing that shows it, so
+that a slow drawing is not counted twice (it is `compose`'s, R14). The relays are not the
+host's: their time is recorded so that a slow relay can be told from a
+slow host, and never warned about or counted against the host. A notice
+says the host was slow (at most once in 300 frames), as for the host's
+own late frames; nothing is stopped and no program is blamed: it did not
+choose how long the host took. `terse perf log` counts each kind with its
+slowest, `--drive`'s `expect no-slow` fails on one, and the reference
+host (`terse-host`) times the page of the machine it shows full screen
+(a machine alone, or the shell's own page), not yet the pages of the
+machines in a shell's panels. `TERSE_HOST_SLOW=store:<ms>` makes every
+request the host answers itself wait that long, and `figures:<ms>` every
+figure take that much longer to rasterise, for its tests.
 
 ## 7. Not yet specified
 

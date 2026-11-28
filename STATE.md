@@ -764,7 +764,7 @@ The commands of a window:
 | `expect idle` | frames, optionally `tolerance <pixels>` (0) | as `watch`; fails if a picture differs from the one before by more pixels than the tolerance, or blinks |
 | `expect <terminal\|page\|vectors\|state> contains\|lacks` | text (the rest of the line) | fails unless the dump contains (lacks) the text |
 | `expect budget` | percent | fails if a machine used more of a frame's budget (SPEC §frames) in any frame so far |
-| `expect no-slow` | — | fails if a frame was late (`PERFORMANCE.md` R14) or the rule acted |
+| `expect no-slow` | — | fails if a frame was late (`PERFORMANCE.md` R14), the rule acted, or a response of the host's was slow (R20) |
 | `perf`, `budget` | — | the slow-frame notes so far; each machine's worst and last budget use since the last `budget` |
 | `say` | text | prints the text |
 | `quit` | — | ends the run (so does the end of a script file) |

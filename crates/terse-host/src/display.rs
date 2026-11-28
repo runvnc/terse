@@ -414,6 +414,9 @@ pub trait Display {
     fn row_height(&self, viewport: (u32, u32)) -> f64;
     /// What the shell's page figures did since the last call (`TERSE_PAGE_TRACE`).
     fn take_page_figure_log(&mut self) -> Vec<String>;
+    /// The generation of the shell's page document as last drawn whole:
+    /// laid out and every figure in view drawn (PERFORMANCE.md R20).
+    fn page_shown_generation(&self) -> Option<u64>;
     /// Draws the whole picture offscreen and returns it as RGBA, 8 bits a
     /// channel, sRGB, `viewport` pixels, rows packed.
     fn snapshot(&mut self, viewport: (u32, u32)) -> Result<Vec<u8>, String>;

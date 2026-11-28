@@ -1144,7 +1144,7 @@ without a frame number run one after another, `wait <frames>` and `type
     expect idle 60        fail if the picture changes in the next 60 frames
     expect page contains Total     (or lacks; terminal, vectors, state)
     expect budget 80      fail if a machine used more than 80% of a frame's budget
-    expect no-slow        fail if a frame was late or the host warned
+    expect no-slow        fail if a frame was late, the host warned or was slow to respond
     perf / budget         the slow-frame notes / each machine's budget use
     quit
 
