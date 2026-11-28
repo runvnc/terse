@@ -56,11 +56,20 @@ impl Identity {
     /// into place, so `path` never holds a partial key and an existing file
     /// is never replaced.
     pub fn create(path: &Path) -> Result<Self, String> {
-        let fail = |e: io::Error| format!("{}: {e}", path.display());
         if path.exists() {
             return Err(format!("{}: an identity already exists; not overwriting it", path.display()));
         }
-        let identity = Self::generate().map_err(fail)?;
+        let identity = Self::generate().map_err(|e| format!("{}: {e}", path.display()))?;
+        identity.save_new(path)?;
+        Ok(identity)
+    }
+
+    /// Writes this identity's secret key file to `path`, which must not
+    /// exist, as [`Identity::create`] does (an existing file is never
+    /// replaced): for a key brought from elsewhere.
+    pub fn save_new(&self, path: &Path) -> Result<(), String> {
+        let fail = |e: io::Error| format!("{}: {e}", path.display());
+        let identity = self;
         let dir = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
         private_dir(dir).map_err(fail)?;
         let name = path.file_name().map_or("key".into(), |n| n.to_string_lossy().into_owned());
@@ -73,7 +82,7 @@ impl Identity {
         })();
         let _ = fs::remove_file(&temp);
         match written {
-            Ok(()) => Ok(identity),
+            Ok(()) => Ok(()),
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
                 Err(format!("{}: an identity already exists; not overwriting it", path.display()))
             }

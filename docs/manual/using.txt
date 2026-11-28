@@ -45,6 +45,19 @@ A click on a program starts it; a click on a machine selects it and gives it the
 
 sheet is a small spreadsheet ("Find and play a game" in the user guide); a sheet document opened from the reader (`◆`) starts it on that document. reef is Lumen Reef, a game on the 3D vector display: the user guide's page "Find and play a game" gives its keys. holo shows the 3D vector display: 1 to 6 (or Space) choose a scene, the arrows turn the model, P switches to the phosphor style, H makes the wireframes solid. Scene 6, the cockpit, looks out of a small craft through its canopy; its three consoles show parts of holo's own terminal (instruments, a log, a list of targets) on [Surfaces](terse:{device-vector3-surfaces}), and a click on a row of the list on its tilted console selects it. The arrows bank and pitch the craft; the status line stays on the glass.
 
+F10 opens the window's own screens, and F10, Esc or F12 closes them ("Your feed without the command line" in the user guide). They are the host's, not a program's: drawn over everything under the bar, and while they are open no program gets a key, a character or the pointer. Five pages: Signature (make your key, or take a key file you have; where it is kept; your feed address, which Copy puts on the clipboard), Profile (name, description, whether search finds you), Publish (choose a text file, preview it, publish it), Follow (follow by address or by a name found by search; stop following), Relays (the relays in use; add to and take from your relay list, with options).
+
+| Key | In the window's own screens |
+|---|---|
+| Left, Right | on the top row: the previous or next page |
+| 1 to 5 | (outside a text field) that page |
+| Up, Down, Tab, Shift+Tab | the previous or next field, button or line |
+| Enter, Space | do what is chosen (Space types a space in a field) |
+| Delete | on a feed you follow or a relay of your list: take it out, after asking |
+| Ctrl+V | paste into the field |
+| Y, N or Esc | answer a question: go ahead, or do nothing |
+| Esc, F10, F12 | close the screens (Esc first leaves a list of files or a preview) |
+
 ## Sessions
 
 S saves the session: every running or paused machine as a snapshot of its whole state, and the layout, the selected machine and how many there are. The bar says "Session saved" or "Could not save the session". When the shell starts and a session was saved, the launcher's first entry is "Restore last session (N programs)": Enter restores the machines in their order, where they were (a game mid-play, the reader on its article at the same place), with the layout and the keyboard on the machine that was selected. D, with the cursor on that entry, discards the session. A machine that cannot be restored (its image is gone from the store and no relay has it, or the snapshot is unreadable) shows why, as a failed start does. A snapshot holds one exact version of a program; named records are not in it. Nothing is saved without S. The snapshot format is in [The state hash](terse:{state}).

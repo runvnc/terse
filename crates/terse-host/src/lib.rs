@@ -66,6 +66,7 @@ pub mod halt;
 pub mod hold;
 pub mod rule;
 pub mod watch;
+pub mod you;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -160,7 +161,9 @@ const USAGE: &str = "usage:
   With no image, runs the shell built into terse-host (programs/shell, SPEC §machines): it starts the
   built-in programs (reader, sparks, fetch, hello, sketch, holo, reports, reef, sheet, and each --builtin image) as machines of their
   own and shows them as tiles. F12, the home key, gives the keyboard back to the shell (its
-  launcher); F12 never reaches a program. --shell <image> runs another image as the shell; with
+  launcher); F12 never reaches a program. F10 opens and closes the host's own screens: your
+  signature (key), profile, publishing, the feeds you follow and your relays, without a
+  terminal (README, Getting started). --shell <image> runs another image as the shell; with
   --screenshot and --selftest, --shell alone is the built-in shell. <image> alone runs that image
   as a single machine, as before. A terse: link instead of <image> (README, Links on the command
   line): terse:<id> runs an image alone and gives any other blob (an article, a document) to the
@@ -607,7 +610,12 @@ pub fn run(args: Vec<String>) -> Result<ExitCode, String> {
     };
     // The built-in shell has the identity of a built-in (SPEC §machines.calls).
     let identity = image_path.is_none().then(|| terse_core::ProgramId { publisher: [0; 32], name: image.title.clone() });
-    let program = Program { image, shell, builtins, identity, data, argument: shell_argument };
+    // The host's own screens: with a shell and the content device.
+    let you = (shell && content.is_some()).then(|| {
+        let home = you::home_dir();
+        you::Setup { config: config.clone(), store: store.clone(), relays: relays.clone(), feed_relays, documents: you::documents_dir(&home), home }
+    });
+    let program = Program { image, shell, builtins, identity, data, argument: shell_argument, you };
 
     if sound_check {
         let script = match &events {
@@ -713,6 +721,9 @@ pub struct Program {
     /// The shell's argument (SPEC §system `argument`): a blob a link on the
     /// command line named, which the built-in shell opens.
     pub argument: Option<[u8; 32]>,
+    /// Where the host's own screens (`you`) find the user's things: a
+    /// shell with the content device only.
+    pub you: Option<you::Setup>,
 }
 
 #[cfg(feature = "window")]

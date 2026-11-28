@@ -18,10 +18,10 @@
 
 use std::collections::HashMap;
 
-use terse_net::article_parse::{self, Block, Inline, Parsed, Target};
-use terse_net::blob::{BlobId, to_hex};
-use terse_net::entry::KIND_PROGRAM;
-use terse_net::{FeedKey, Node};
+use crate::article_parse::{self, Block, Inline, Parsed, Target};
+use crate::blob::{BlobId, to_hex};
+use crate::entry::KIND_PROGRAM;
+use crate::{FeedKey, Node};
 
 /// What a link leads to.
 #[derive(Clone, Debug, PartialEq, Eq)]

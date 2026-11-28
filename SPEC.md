@@ -724,7 +724,8 @@ full is dropped.
   delivered). A paste key is not kept: it is delivered as above. A host
   should keep as few as it can and say which. (The reference host keeps,
   for its volume, Control+Alt with minus, equals or M, and the keyboard's
-  volume keys: README "Sound".)
+  volume keys: README "Sound"; in a system, F10 for its own screens, and
+  every key while they are shown: README "Getting started".)
 - **Pointer** positions are in screen units (§screen): x is 0–639 and y
   is 0–479. It is sent when the position or a button changes, at most once
   per frame for movement; a button change is sent at once, with the current

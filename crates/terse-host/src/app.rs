@@ -23,7 +23,7 @@ use winit::window::{Window, WindowId};
 use crate::display::{Display, GlyphSource, RendererChoice};
 use crate::gamepad::Gamepads;
 use crate::glyphs::TermGlyphs;
-use crate::keymap::{HOME_KEY, MAX_PASTE, hid_usage, modifier_bits, paste_chars, prompt_answer, swallow};
+use crate::keymap::{HOME_KEY, MAX_PASTE, YOU_KEY, hid_usage, modifier_bits, paste_chars, prompt_answer, swallow, you_key};
 use crate::page::{PageThread, PageWorker};
 use crate::selftest::SelfTest;
 use crate::soft::SoftScreens;
@@ -208,6 +208,9 @@ pub fn run(
         drive,
         used: Vec::new(),
         audio,
+        you_setup: program.you.clone(),
+        you: None,
+        you_open: false,
     };
     event_loop.run_app(&mut app).map_err(|e| e.to_string())?;
     if let Some(e) = app.error {
@@ -824,6 +827,12 @@ struct App {
     /// first gives samples.
     /// The sound (SPEC §sound.presentation).
     audio: crate::audio::Audio,
+    /// The host's own screens (`you`): where they find the user's things
+    /// (with a shell and the content device), the screens once opened,
+    /// and whether they are open.
+    you_setup: Option<crate::you::Setup>,
+    you: Option<crate::you::You>,
+    you_open: bool,
 }
 
 use terse_net::service::image_from;
@@ -880,6 +889,10 @@ impl App {
             self.drive = Some(d);
         }
         self.coalesced_input();
+        // The host's screens take in what their thread finished.
+        if self.you_open && self.you.as_mut().is_some_and(crate::you::You::poll) {
+            self.show_you();
+        }
         let mut controllers = self.gamepads.poll();
         if let Some(c) = self.drive.as_ref().and_then(|d| d.controllers()) {
             controllers = c;
@@ -1175,6 +1188,28 @@ impl App {
                 return;
             }
         }
+        // The host's own screens: their key opens and closes them; while
+        // they are open every key is theirs (the home key closes them too).
+        if self.is_system() && self.you_setup.is_some() && physical_key == PhysicalKey::Code(YOU_KEY) {
+            if pressed {
+                swallow(&mut self.swallowed, usage);
+                if !repeat {
+                    self.toggle_you();
+                }
+            }
+            return;
+        }
+        if self.you_open {
+            if physical_key == PhysicalKey::Code(HOME_KEY) && pressed {
+                self.toggle_you();
+            } else {
+                if pressed {
+                    swallow(&mut self.swallowed, usage);
+                    self.you_input(physical_key, text);
+                }
+                return;
+            }
+        }
         // SPEC §machines.input: the home key is the host's, never a key event.
         if self.is_system() && physical_key == PhysicalKey::Code(HOME_KEY) {
             if pressed && !repeat {
@@ -1227,6 +1262,65 @@ impl App {
         }
     }
 
+    /// Opens or closes the host's own screens (`you`).
+    fn toggle_you(&mut self) {
+        self.you_open = !self.you_open;
+        if self.you_open {
+            match &mut self.you {
+                Some(y) => y.reopen(),
+                None => self.you = self.you_setup.clone().map(crate::you::You::new),
+            }
+        }
+        self.show_you();
+    }
+
+    /// The host's screens as they are now, to the display (or away).
+    fn show_you(&mut self) {
+        let screen = self.you.as_ref().filter(|_| self.you_open).map(crate::you::You::render);
+        if let Some(gfx) = &mut self.gfx {
+            gfx.display_mut().set_screen(screen);
+        }
+    }
+
+    /// What the host's screens asked for after an input.
+    fn you_effect(&mut self, e: crate::you::Effect) {
+        match e {
+            crate::you::Effect::None => {}
+            crate::you::Effect::Close => {
+                self.you_open = false;
+            }
+            crate::you::Effect::Copy(text) => self.copy_to_clipboard(text.as_bytes()),
+        }
+        self.show_you();
+    }
+
+    /// A key pressed while the host's screens are open: theirs, with the
+    /// text it types; Ctrl+V and Shift+Insert paste into them.
+    fn you_input(&mut self, physical_key: PhysicalKey, text: Option<&str>) {
+        let PhysicalKey::Code(code) = physical_key else { return };
+        let Some(you) = &mut self.you else { return };
+        let paste = (self.modifiers.control_key() && !self.modifiers.alt_key() && code == KeyCode::KeyV)
+            || (self.modifiers.shift_key() && code == KeyCode::Insert);
+        let mut effect = crate::you::Effect::None;
+        if paste {
+            let text = self.clipboard_text().unwrap_or_default();
+            let you = self.you.as_mut().unwrap();
+            for c in paste_chars(&text).take(MAX_PASTE) {
+                you.text(c);
+            }
+        } else if let Some(k) = you_key(code, self.modifiers) {
+            effect = you.key(k);
+        } else {
+            for c in crate::keymap::typed_text(text, self.modifiers) {
+                effect = you.text(c);
+                if effect != crate::you::Effect::None {
+                    break;
+                }
+            }
+        }
+        self.you_effect(effect);
+    }
+
     /// The host noted a slow frame: `--drive` reports it.
     fn note_slow(&mut self, note: String) {
         if let Some(d) = &mut self.drive {
@@ -1257,7 +1351,16 @@ impl App {
                 };
                 self.key_input(PhysicalKey::Code(code), pressed, repeat, text.as_deref(), answer);
             }
-            // As a paste: no faster than the focused machine's queue has room for.
+            // As a paste: no faster than the focused machine's queue has
+            // room for; into the host's screens when they are open.
+            Action::Text(t) if self.you_open => {
+                if let Some(you) = &mut self.you {
+                    for c in paste_chars(&t) {
+                        you.text(c);
+                    }
+                }
+                self.show_you();
+            }
             Action::Text(t) => self.paste.extend(t.chars()),
             Action::Pointer { x, y, px } => {
                 let pos = if px {
@@ -1308,17 +1411,28 @@ impl App {
         }
     }
 
-    fn paste_clipboard(&mut self) {
+    /// The clipboard's text, if there is a clipboard with text.
+    fn clipboard_text(&mut self) -> Option<String> {
         if self.clipboard.is_none() {
             match arboard::Clipboard::new() {
                 Ok(c) => self.clipboard = Some(c),
-                Err(e) => return eprintln!("terse-host: clipboard: {e}"),
+                Err(e) => {
+                    eprintln!("terse-host: clipboard: {e}");
+                    return None;
+                }
             }
         }
-        let text = match self.clipboard.as_mut().unwrap().get_text() {
-            Ok(t) => t,
-            Err(e) => return eprintln!("terse-host: clipboard: {e}"),
-        };
+        match self.clipboard.as_mut().unwrap().get_text() {
+            Ok(t) => Some(t),
+            Err(e) => {
+                eprintln!("terse-host: clipboard: {e}");
+                None
+            }
+        }
+    }
+
+    fn paste_clipboard(&mut self) {
+        let Some(text) = self.clipboard_text() else { return };
         let room = MAX_PASTE.saturating_sub(self.paste.len());
         self.paste.extend(paste_chars(&text).take(room));
     }
@@ -1336,6 +1450,18 @@ impl App {
             }
         }
         if self.selftest.is_some() {
+            return;
+        }
+        // The host's screens take the wheel; no program sees the pointer.
+        if self.you_open {
+            let steps = self.wheel.0.trunc();
+            self.wheel = (self.wheel.0 - steps, 0.0);
+            if steps != 0.0
+                && let Some(you) = &mut self.you
+            {
+                you.wheel(steps as i32);
+                self.show_you();
+            }
             return;
         }
         if let Some((x, y)) = self.pointer
@@ -1390,6 +1516,18 @@ impl App {
             ElementState::Pressed => self.buttons |= bit,
             ElementState::Released => self.buttons &= !bit,
         }
+        if self.you_open {
+            // Theirs, and no program's: the release that follows too.
+            self.pointer_sent = self.pointer;
+            if state == ElementState::Pressed
+                && bit == buttons::PRIMARY
+                && let (Some((x, y)), Some(you)) = (self.pointer, &mut self.you)
+            {
+                let e = you.click(x, y);
+                self.you_effect(e);
+            }
+            return;
+        }
         // Button changes are sent at once, in order with key events, at the
         // current position.
         if let Some((x, y)) = self.pointer {
@@ -1409,6 +1547,12 @@ impl crate::drive::Probe for App {
     fn dump(&self, what: &str, handle: Option<u8>) -> Result<String, String> {
         if what == "state" {
             return Ok(self.state_dump());
+        }
+        if what == "host" {
+            return Ok(match self.you.as_ref().filter(|_| self.you_open) {
+                Some(y) => y.screen_text(),
+                None => "-- the host's screens are closed --\n".into(),
+            });
         }
         let h = handle.unwrap_or_else(|| self.system.focus());
         let (machine, serial) = match h {

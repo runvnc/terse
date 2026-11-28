@@ -6,7 +6,8 @@ The manual has three parts. The user guide gets you from installing Tersenet to 
 
 - [Install Tersenet](terse:{guide-install}): one command on Linux and macOS, a zip on Windows, or from the source.
 - [Run Tersenet](terse:{guide-run}): the window, the launcher, the reader and this manual.
-- [Create your profile](terse:{guide-profile}): your key, your name and your address; no account needed.
+- [Your feed without the command line](terse:{guide-you}): the window's own screens (F10): your key, your name, publishing, following and relays.
+- [Create your profile](terse:{guide-profile}): your key, your name and your address, in a terminal; no account needed.
 - [Write and publish an article](terse:{guide-write}): a plain text file, how it compares with Markdown, and your feed.
 - [Read articles and follow links](terse:{guide-read}): the timeline, links and search.
 - [Subscribe to someone's feed](terse:{guide-subscribe}): a shared relay, by address or by name, nicknames.

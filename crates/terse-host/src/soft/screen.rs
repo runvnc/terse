@@ -129,20 +129,27 @@ impl CellAtlas {
     }
 }
 
-/// The host overlay's colours (its consent prompt): foreground codes 0
-/// text, 1 key, 2 dim; background codes 0 base, 3 band (as `renderer.rs`).
+/// The host overlay's colours (its consent prompt, its own screens):
+/// foreground codes 0 text, 1 key, 2 dim, 3 ink; background codes 0 base,
+/// 1 key, 2 field, 3 band (as `renderer.rs`, `consent.rs`).
 fn overlay_fg(code: u8) -> u32 {
     let c = |r: f32, g: f32, b: f32| pack((r * 255.0 + 0.5) as u8, (g * 255.0 + 0.5) as u8, (b * 255.0 + 0.5) as u8);
     match code {
         1 => c(1.0, 0.80, 0.26),
         2 => c(0.66, 0.70, 0.78),
+        3 => c(0.09, 0.10, 0.14),
         _ => c(0.96, 0.96, 0.98),
     }
 }
 
 fn overlay_bg(code: u8) -> u32 {
     let c = |r: f32, g: f32, b: f32| pack((r * 255.0 + 0.5) as u8, (g * 255.0 + 0.5) as u8, (b * 255.0 + 0.5) as u8);
-    if code == 3 { c(0.20, 0.23, 0.33) } else { c(0.09, 0.10, 0.14) }
+    match code {
+        1 => c(1.0, 0.80, 0.26),
+        2 => c(0.16, 0.18, 0.25),
+        3 => c(0.20, 0.23, 0.33),
+        _ => c(0.09, 0.10, 0.14),
+    }
 }
 
 /// The vector display as uploaded.
