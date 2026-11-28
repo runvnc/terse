@@ -1161,10 +1161,10 @@ without a frame number run one after another, `wait <frames>` and `type
     time 1800000000       hold the Unix time the machines see (the shell's clock) at this value
     settle [max N]        until 10 presented pictures in a row are the same
     shot out.png          the picture last presented, as presented
-    dump page             page (this host's layout), terminal, vectors or state; `> file` to a file
+    dump page             page (this host's layout), terminal, vectors, state or host (the host's own screens, F10); `> file` to a file
     watch 120 [save dir]  report pictures that changed, where, how much, and blinks
     expect idle 60        fail if the picture changes in the next 60 frames
-    expect page contains Total     (or lacks; terminal, vectors, state)
+    expect page contains Total     (or lacks; terminal, vectors, state, host)
     expect budget 80      fail if a machine used more than 80% of a frame's budget
     expect no-slow        fail if a frame was late or the host warned
     perf / budget         the slow-frame notes / each machine's budget use
