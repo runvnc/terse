@@ -852,7 +852,10 @@ Commands:
 - `find <text>` asks your relays for listed feeds whose name contains the text
   (ASCII letters match either case; names starting with it first) and prints key
   and name; `find --entries <text>` finds articles and documents of listed feeds by title,
-  `find --programs <text>` programs by name (current versions only).
+  `find --programs <text>` programs by name (current versions only). It prints a
+  page of up to 16 results, and says when the relays have more: `--pages <n>`
+  prints the first n pages, `--all` every page (at most 64), each page the
+  next 16 not printed before (NETWORK 4.7, "More results").
 - `feed sync [--watch] [--auto-download <bytes>] [--no-prefetch] [--no-program-download]` connects to the relay, receives
   new entries of subscribed feeds, verifies and stores them, and downloads
   articles up to 16,384 bytes (or `--auto-download`), and with them the first
@@ -1481,7 +1484,9 @@ the terminal shows only the status row (row 29: key hints, the position such as
     articles (title; feed, date, size), or why the relays could not be
     searched (no relay could be reached; the relays refused, which a relay
     does when one connection searches more than 4 times a second, and which a
-    reading-profile host always does).
+    reading-profile host always does). A section the relays have more for
+    ends with **More results**: Enter on it adds the next page (up to 16,
+    op 12h) at the end of the section, up to 64 results a section.
 
   Both match as NETWORK.md 4.7 says: the query's bytes in a row, A–Z and
   a–z alike, every other byte only itself (`köln` finds `Köln`, `KÖLN` does
@@ -1605,7 +1610,7 @@ height arrives in the next; the whole height of a 48 KiB article arrives 16 fram
 after Enter. The busiest frame uses 76,183 units (61% of 125,000, building an
 article's document; 77,383 (62%) for a 48 KiB article of nothing but tables);
 a typical frame 183; no frame runs out of budget.
-ROM 60,000 bytes, 42 RAM pages (the 64 KiB document, the 48 KiB article, the
+ROM 60,000 bytes, 45 RAM pages (the 64 KiB document, the 48 KiB article, the
 timeline records, the names, the search results, a table's 1,024 cells, and about
 100 KiB for searching this host's articles: a 64 KiB ring of chunks, an 8 KiB
 timeline page, 16 entries in hand and 64 results). Following a `terse:` link to
@@ -2615,7 +2620,7 @@ recorded sessions.
 |---|---|---|---|---|---|
 | hello | 881 bytes | 1 page | 1,649 (1.3%, frame 0) | 152 (0.1%) | about 1 µs |
 | fetch | 1,544 bytes | 1 page | 2,239 (1.8%) | 36 | about 1 µs |
-| reader | 60,000 bytes | 42 pages | 77,383 (61.9%, building a 48 KiB article of tables) | 183 (0.1%) | — |
+| reader | 60,000 bytes | 45 pages | 77,383 (61.9%, building a 48 KiB article of tables) | 183 (0.1%) | — |
 | holo | 5,460 bytes | 2 pages | 24,898 (19.9%) in the city (11 solid blocks: 55 faces, 3,195 list bytes); 20,753 (16.6%) in the starfield | 10,698 (8.6%) | the city's projection 0.14 ms |
 | sparks | 6,464 bytes | 1 page | 8,953 (7.2%, frame 0); 5,400 (4.3%) after | 2,077 (1.7%) | 12 µs |
 | conform | 39,224 bytes | 16 pages | 125,000 (stress) | — | 0.57 ms (stress) |

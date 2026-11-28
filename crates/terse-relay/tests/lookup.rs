@@ -72,7 +72,7 @@ fn lookup_answers_and_rate_limit() {
     reqs.push(client.lookup(&key, 3, b"other"));
     let got = ask(&mut client, reqs);
     assert!(matches!(got[..3], [RelayReply::LookedUp(_), RelayReply::LookedUp(_), RelayReply::LookedUp(_)]), "{got:?}");
-    assert_eq!(got[3], RelayReply::Found(Vec::new()));
+    assert_eq!(got[3], RelayReply::Found(Vec::new(), Vec::new()));
     // The fifth in a second: refused, try again within a second (NETWORK 3.1).
     let RelayReply::Refused(terse_net::protocol::Refusal::TryLater(wait)) = got[4] else { panic!("{got:?}") };
     assert!(wait <= std::time::Duration::from_secs(1));

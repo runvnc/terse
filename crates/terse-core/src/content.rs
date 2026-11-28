@@ -33,6 +33,8 @@ pub const OP_SAVE: u8 = 0x0E;
 pub const OP_LOAD: u8 = 0x0F;
 pub const OP_DELETE: u8 = 0x10;
 pub const OP_RECORDS: u8 = 0x11;
+/// The next results of the machine's last find of a scope (SPEC §content.feeds).
+pub const OP_FIND_MORE: u8 = 0x12;
 
 /// Entry kinds a program may publish (SPEC §content.feeds, NETWORK 4.2).
 pub const ENTRY_ARTICLE: u8 = 1;
@@ -95,6 +97,10 @@ pub const FIND_ENTRIES: u8 = 2;
 pub const FIND_PROGRAMS: u8 = 3;
 /// Most results a find completes with.
 pub const MAX_FIND_RESULTS: u32 = 16;
+/// In the `total` of a find's or find more's [`Outcome::Records`]: the host
+/// has more results for a find more (SPEC §content.feeds). The device writes
+/// it to the first byte of `id`, and the rest of `total` to `size`.
+pub const FIND_MORE: u32 = 1 << 31;
 
 /// Status values (SPEC §content.status).
 pub mod status {
@@ -198,6 +204,9 @@ pub enum RequestKind {
     /// (1 to 48 bytes of UTF-8, copied at submit), results in at most
     /// `length` bytes (SPEC §content.feeds).
     Find { scope: u8, query: Vec<u8>, length: u16 },
+    /// The next results of the machine's last find of `scope`, in at most
+    /// `length` bytes (SPEC §content.feeds).
+    FindMore { scope: u8, length: u16 },
     /// Publish a new profile for the host's feed with display name `name`
     /// (copied at submit); needs the user's consent.
     SetProfile { name: Vec<u8>, listed: bool },
@@ -239,8 +248,9 @@ pub enum Outcome {
     /// A subscriptions, timeline, names, programs or records request
     /// succeeded: the number of records that exist and the whole records
     /// delivered from the requested index, as many as fit in `length` (SPEC
-    /// §content.feeds, §content.records). A find: the number of
-    /// results (at most 16) and as many whole records as fit.
+    /// §content.feeds, §content.records). A find or find more: the number
+    /// of results (at most 16), with [`FIND_MORE`] set if the host has more,
+    /// and as many whole records as fit.
     Records { total: u32, data: Vec<u8> },
     /// A subscribe, unsubscribe, set nickname, save or delete succeeded.
     Done,
@@ -277,8 +287,9 @@ enum Pending {
     /// Save, load and delete: the name as read at submit (zero padded), a
     /// save's size, a load's range and address.
     Named { op: u8, name: [u8; 32], offset: u32, length: u16, addr: u32, size: u32 },
-    /// The query's length is kept for the state record only.
-    Find { scope: u8, length: u16, addr: u32, query_len: u8 },
+    /// The query's length is kept for the state record only; `more`: a
+    /// find more (no query).
+    Find { scope: u8, length: u16, addr: u32, query_len: u8, more: bool },
     /// Subscribe, unsubscribe, publish, set profile and set nickname: the
     /// `id` read at submit (zero for set profile), set profile's listed bit
     /// or a publish's kind as given (`offset`) and the length of a
@@ -452,7 +463,15 @@ impl Content {
                 && ram_range(ram.len(), addr, size as usize).is_some_and(|q| std::str::from_utf8(&ram[q..q + size as usize]).is_ok()))
             .then(|| {
                 let (scope, length) = (offset as u8, length as u16);
-                (Pending::Find { scope, length, addr, query_len: size as u8 }, RequestKind::Find { scope, query: Vec::new(), length })
+                (Pending::Find { scope, length, addr, query_len: size as u8, more: false }, RequestKind::Find { scope, query: Vec::new(), length })
+            }),
+            // SPEC §content.feeds: a scope and a buffer in RAM; `size` is not read.
+            OP_FIND_MORE => ((FIND_FEEDS as u32..=FIND_PROGRAMS as u32).contains(&offset)
+                && (1..=MAX_GET_LENGTH as u32).contains(&length)
+                && in_ram(length as usize))
+            .then(|| {
+                let (scope, length) = (offset as u8, length as u16);
+                (Pending::Find { scope, length, addr, query_len: 0, more: true }, RequestKind::FindMore { scope, length })
             }),
             OP_SET_PROFILE => readable(rom, ram, addr, length as usize).is_some_and(valid_display_name).then(|| {
                 let listed = offset & 1 != 0;
@@ -565,13 +584,17 @@ impl Content {
                 status::DONE
             }
             (&Pending::Find { length, addr, .. }, Outcome::Records { total, data }) => {
-                if !records_fit(OP_FIND, 0, length, *total, data) {
+                let (more, total) = (total & FIND_MORE != 0, total & !FIND_MORE);
+                if !records_fit(OP_FIND, 0, length, total, data) {
                     return None;
                 }
                 let at = ram_range(ram.len(), addr, data.len())?;
                 ram[at..at + data.len()].copy_from_slice(data);
                 put32(ram, LENGTH, data.len() as u32);
-                put32(ram, SIZE, *total);
+                put32(ram, SIZE, total);
+                // SPEC §content.feeds: `id` byte 0 tells whether a find more has results.
+                ram[block + ID..block + ID + 32].fill(0);
+                ram[block + ID] = more as u8;
                 delivered = data.len();
                 status::DONE
             }
@@ -656,8 +679,9 @@ impl Content {
                     Pending::Get { id, offset, length, addr } => (OP_GET, *block, id, offset, length as u32, addr, 0),
                     Pending::Put { id, size } => (OP_PUT, *block, id, 0, 0, 0, size),
                     Pending::Records { op, offset, length, addr } => (op, *block, [0; 32], offset, length as u32, addr, 0),
-                    Pending::Find { scope, length, addr, query_len } => {
-                        (OP_FIND, *block, [0; 32], scope as u32, length as u32, addr, query_len as u32)
+                    Pending::Find { scope, length, addr, query_len, more } => {
+                        let op = if more { OP_FIND_MORE } else { OP_FIND };
+                        (op, *block, [0; 32], scope as u32, length as u32, addr, query_len as u32)
                     }
                     Pending::Feed { op, id, offset, len } => (op, *block, id, offset as u32, len as u32, 0, 0),
                     Pending::Identity { length, addr } => (OP_IDENTITY, *block, [0; 32], 0, length as u32, addr, 0),
@@ -700,7 +724,8 @@ impl Content {
                 OP_SUBSCRIPTIONS | OP_TIMELINE | OP_NAMES | OP_PROGRAMS | OP_RECORDS => {
                     Pending::Records { op, offset, length: length16, addr }
                 }
-                OP_FIND => Pending::Find { scope: small(offset)?, length: length16, addr, query_len: small(size)? },
+                OP_FIND => Pending::Find { scope: small(offset)?, length: length16, addr, query_len: small(size)?, more: false },
+                OP_FIND_MORE => Pending::Find { scope: small(offset)?, length: length16, addr, query_len: small(size)?, more: true },
                 OP_SUBSCRIBE | OP_UNSUBSCRIBE | OP_PUBLISH | OP_SET_PROFILE | OP_SET_NICKNAME => {
                     Pending::Feed { op, id, offset: small(offset)?, len: small(length)? }
                 }
@@ -913,7 +938,7 @@ mod tests {
         let ram_end = RAM_BASE + RAM_LEN as u32;
         let bad = [
             block(0, [0; 32], 0, 1, 0x1000, 1),
-            block(0x12, [0; 32], 0, 1, 0x1000, 1),
+            block(0x13, [0; 32], 0, 1, 0x1000, 1),
             block(0xFF, [0; 32], 0, 1, 0x1000, 1),
             get(0, 0),
             feed(OP_SUBSCRIPTIONS, 0, 0),
@@ -1678,6 +1703,41 @@ mod tests {
         }
         // A buffer shorter than a 4-byte query that ends at the end of RAM.
         assert_eq!(rig.submit(BLOCK, Some(&find(1, 4, 2, ram_end - 2))), (0, 0));
+    }
+
+    fn find_more(scope: u32, length: u32, addr: u32) -> [u8; BLOCK_LEN] {
+        block(OP_FIND_MORE, [7; 32], scope, length, addr, 99)
+    }
+
+    /// SPEC §content.feeds: find more takes a scope and a buffer (no query);
+    /// a find's and a find more's completion tells in `id` whether there
+    /// are more; a find more with nothing to continue is not found.
+    #[test]
+    fn find_more_requests() {
+        let ram_end = RAM_BASE + RAM_LEN as u32;
+        let mut rig = Rig::new();
+        for b in [find_more(0, 100, DATA), find_more(4, 100, DATA), find_more(1, 0, DATA), find_more(1, 5, ram_end - 4), find_more(1, 4, ROM_BASE)] {
+            assert_eq!(rig.submit(BLOCK, Some(&b)), (0, 0), "{b:02X?}");
+            assert_eq!(status(&rig, BLOCK), status::BAD_REQUEST);
+        }
+        let a = timeline_record(3, 1, 0xA1);
+        rig.write(DATA, b"query");
+        assert_eq!(rig.submit(BLOCK, Some(&find(2, 5, 400, DATA))), (1, 5));
+        assert_eq!(rig.submit(BLOCK + 64, Some(&find_more(3, 400, DATA + 400))), (2, 0), "nothing copied");
+        assert_eq!(rig.content.take_requests()[1], Request { handle: 2, kind: RequestKind::FindMore { scope: 3, length: 400 } });
+        let mut state = Vec::new();
+        rig.content.write_state(&mut state);
+        assert_eq!(state[53], OP_FIND_MORE, "the state record keeps the op");
+        assert_eq!(rig.complete(&[records(1, 1 | FIND_MORE, &a)]), (0, 0));
+        assert_eq!(rig.read(BLOCK + SIZE as u32, 4), [1, 0, 0, 0]);
+        assert_eq!(rig.read(BLOCK + 4, 32), [&[1][..], &[0; 31]].concat(), "more");
+        assert_eq!(rig.complete(&[records(2, 17 | FIND_MORE, &a)]), (1, 0), "more than 16 results");
+        assert_eq!(rig.complete(&[records(2, 1, &a)]), (0, 0));
+        assert_eq!(rig.read(BLOCK + 64 + 4, 32), [0; 32], "no more");
+        assert_eq!(rig.read(DATA + 400, a.len()), a);
+        assert_eq!(rig.submit(BLOCK, Some(&find_more(1, 400, DATA))).0, 1);
+        rig.complete(&[done(1, Outcome::NotFound)]);
+        assert_eq!(status(&rig, BLOCK), status::NOT_FOUND);
     }
 
     #[test]

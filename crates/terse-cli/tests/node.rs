@@ -8,6 +8,8 @@
 //!   closes;
 //! - `held_state_answers_while_the_network_waits`: LOCAL.md 4.5 with a relay
 //!   that never answers;
+//! - `find_pages_through_the_node`: Find with the node's cursor (LOCAL.md
+//!   4.2), page by page;
 //! - `one_node_per_socket`: a live node is not replaced, a stale socket is,
 //!   the socket goes when the node stops, the directory's rules;
 //! - with Go (skipped, saying so, when `go` is absent):
@@ -497,6 +499,50 @@ fn vector_session() {
         }
     }
     assert_eq!(compared, 17);
+}
+
+/// Find through the node (LOCAL.md 4.2, NETWORK.md 4.7): a find with `c`
+/// 0 gets the first 16 of the merged results and the node's cursor, which
+/// gives the next page; a cursor not the node's is refused with c 0; a
+/// find that ends at its query is answered without a cursor.
+#[test]
+fn find_pages_through_the_node() {
+    use terse_net::protocol::{Reply, decode_reply};
+    let tmp = tempfile::tempdir().unwrap();
+    let relay = start_relay(&tmp.path().join("relay"));
+    publish(&tmp.path().join("alice"), &relay, false);
+    let mut node = Node::new(BlobStore::open(&tmp.path().join("alice"), None).unwrap(), Some(RelayClient::websocket(&relay, TIMEOUT)));
+    node.set_identity(alice());
+    for n in 0..20 {
+        let draft = Draft { data: format!("page {n}").into_bytes(), title: format!("Page {n}"), reply_to: None, time: 1_700_001_000 + n };
+        assert!(matches!(node.publish_article(&draft), terse_net::Done::Published { .. }));
+    }
+    let socket = tmp.path().join("run/node.sock");
+    let _node = spawn_terse_node(tmp.path(), &socket, &["--relay", &relay]).wait_ready();
+    let (mut c, _) = Client::hello(&socket);
+    let found = |r: u32, st: u8, rest: &[u8]| match decode_reply(&msg(0x86, r, &[&[st], rest])) {
+        Some(Reply::Found { status, entries, cursor, .. }) => (status, entries, cursor),
+        other => panic!("{other:?}"),
+    };
+    let (st, rest) = c.ask(&msg(0x06, 2, &[&[2], &short(b"page"), &[0]]));
+    let (st, first, cursor) = found(2, st, &rest);
+    assert_eq!((st, first.len()), (1, 16));
+    assert!(!cursor.is_empty() && cursor.len() <= 64);
+    let (st, rest) = c.ask(&msg(0x06, 3, &[&[2], &short(b"page"), &short(&cursor)]));
+    let (st, second, end) = found(3, st, &rest);
+    assert_eq!((st, second.len(), end.len()), (1, 4, 0));
+    let mut all: Vec<Vec<u8>> = [first.clone(), second].concat();
+    all.sort();
+    all.dedup();
+    assert_eq!(all.len(), 20, "each result once");
+    // A cursor that is not the node's, or for another find.
+    assert_eq!(c.ask(&msg(0x06, 4, &[&[2], &short(b"page"), &short(&[7; 16])])), (3, vec![0, 0]));
+    assert_eq!(c.ask(&msg(0x06, 5, &[&[2], &short(b"pages"), &short(&cursor)])), (3, vec![0, 0]));
+    // As before paging: the first 16, the reply ending at the last entry.
+    let (st, rest) = c.ask(&msg(0x06, 6, &[&[2], &short(b"page")]));
+    let (st, old, none) = found(6, st, &rest);
+    assert_eq!((st, old.len(), none.len()), (1, 16, 0));
+    assert!(rest.ends_with(old.last().unwrap()));
 }
 
 fn hex_of(b: &[u8]) -> String {

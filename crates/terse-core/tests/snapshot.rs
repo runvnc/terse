@@ -183,7 +183,7 @@ fn malformed_states_are_refused() {
     bad(t + 10_375, &[1, 0xE6, 1], "padding after the sequence");
     bad(v + 1, &[2], "style");
     bad(v + 4, &16_385u32.to_le_bytes(), "list length");
-    bad(v + 8 + 1, &[0x12], "request op");
+    bad(v + 8 + 1, &[0x13], "request op");
     bad(v + 8 + 1, &[0x01, 0, 0, 0, 0], "a request block outside RAM");
     bad(p + 1, &700u16.to_le_bytes(), "a rectangle not clamped");
     bad(p + 17, &65_537u32.to_le_bytes(), "document length");

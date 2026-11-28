@@ -28,7 +28,7 @@
 
 
  0%                             ↑↓ scroll  T publish a test  F feeds  Esc back
--- page: height 1371, scroll 0 (stored 0), region 64 0 512 464 --
+-- page: height 1411, scroll 0 (stored 0), region 64 0 512 464 --
    16  30     0   sans24b |Help
    62  22     0   sans17b |Your feed address
    92  19    12   mono15 |91a28a0b 74381593 a4d94695 79208926

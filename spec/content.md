@@ -30,14 +30,14 @@ any alignment.
 
 | Offset | Size | Field | Written by |
 |---|---|---|---|
-| 0 | 1 | `op`: `01h` get, `02h` put (`03h`–`0Dh`: §content.feeds; `0Eh`–`11h`: §content.records) | program |
+| 0 | 1 | `op`: `01h` get, `02h` put (`03h`–`0Dh` and `12h`: §content.feeds; `0Eh`–`11h`: §content.records) | program |
 | 1 | 1 | `status` (§content.status) | device |
 | 2 | 2 | Reserved; ignored | — |
-| 4 | 32 | `id`: get and publish: blob hash; subscribe, unsubscribe and set nickname: feed key; save, load and delete: the record's name (§content.records). Put: the blob hash, written on completion; identity: the host's feed key, written on completion. | both |
-| 36 | 4 | `offset`: get: byte offset into the blob; load: byte offset into the record; records (subscriptions, timeline, names, programs, records): index of the first record; find: the scope, 1 to 3; set profile: bit 0 = listed, other bits ignored; publish: the entry's kind, 0 or 1 (article) or 4 (document) | program |
-| 40 | 4 | `length`: get, load, records and find: bytes wanted, 1 to 16,384. On completion: bytes delivered, which is fewer if the blob or record ends first. Publish: the title's length, 0 to 120, read at submit. Set profile: the name's length, 1 to 48; set nickname: 0 to 48; subscribe: the hints' length, 0 to 161; read at submit. Identity: the size of a buffer for the own address's hints, 0 (none) to 16,384; on completion, if not 0, the bytes written. | both |
-| 44 | 4 | `addr`: address of the data. Get, load, records and find: the `length` bytes there must lie in RAM. Put and save: the `size` bytes there must lie wholly in ROM or wholly in RAM. Publish: the title, `length` bytes of UTF-8, which must lie wholly in ROM or wholly in RAM. Find: also the query, the `size` bytes there, which must lie in RAM. Set profile and set nickname: the name, `length` bytes, which must lie wholly in ROM or wholly in RAM. Subscribe: the hints, `length` bytes, wholly in ROM or wholly in RAM. Identity: the buffer, `length` bytes, which must lie in RAM. | program |
-| 48 | 4 | `size`: get: blob size, written on completion; load: the record's size, written on completion. Put: 1 to 1,048,576, read at submit; save: 0 to 65,536, read at submit. Records: the number of records that exist, written on completion. Find: the query's length, 1 to 48, read at submit; the number of results, written on completion. Publish and set profile: the new entry's `seq`, written on completion. | both |
+| 4 | 32 | `id`: get and publish: blob hash; subscribe, unsubscribe and set nickname: feed key; save, load and delete: the record's name (§content.records). Put: the blob hash, written on completion; identity: the host's feed key, written on completion; find and find more: on completion, byte 0 is 1 if a find more has results, else 0, and the other bytes 0 (§content.feeds). | both |
+| 36 | 4 | `offset`: get: byte offset into the blob; load: byte offset into the record; records (subscriptions, timeline, names, programs, records): index of the first record; find and find more: the scope, 1 to 3; set profile: bit 0 = listed, other bits ignored; publish: the entry's kind, 0 or 1 (article) or 4 (document) | program |
+| 40 | 4 | `length`: get, load, records, find and find more: bytes wanted, 1 to 16,384. On completion: bytes delivered, which is fewer if the blob or record ends first. Publish: the title's length, 0 to 120, read at submit. Set profile: the name's length, 1 to 48; set nickname: 0 to 48; subscribe: the hints' length, 0 to 161; read at submit. Identity: the size of a buffer for the own address's hints, 0 (none) to 16,384; on completion, if not 0, the bytes written. | both |
+| 44 | 4 | `addr`: address of the data. Get, load, records, find and find more: the `length` bytes there must lie in RAM. Put and save: the `size` bytes there must lie wholly in ROM or wholly in RAM. Publish: the title, `length` bytes of UTF-8, which must lie wholly in ROM or wholly in RAM. Find: also the query, the `size` bytes there, which must lie in RAM. Set profile and set nickname: the name, `length` bytes, which must lie wholly in ROM or wholly in RAM. Subscribe: the hints, `length` bytes, wholly in ROM or wholly in RAM. Identity: the buffer, `length` bytes, which must lie in RAM. | program |
+| 48 | 4 | `size`: get: blob size, written on completion; load: the record's size, written on completion. Put: 1 to 1,048,576, read at submit; save: 0 to 65,536, read at submit. Records: the number of records that exist, written on completion. Find: the query's length, 1 to 48, read at submit; find and find more: the number of results, written on completion (find more does not read it). Publish and set profile: the new entry's `seq`, written on completion. | both |
 
 ## §content.submit Submit and completion
 
@@ -78,9 +78,9 @@ request:
 
 - get and load, on success: copies the delivered bytes to `addr`, writes
   `length` and `size`;
-- subscriptions, timeline, names, programs, records and find, on success:
-  copies the records to `addr`, writes `length` and `size` (§content.feeds,
-  §content.records);
+- subscriptions, timeline, names, programs, records, find and find more, on
+  success: copies the records to `addr`, writes `length` and `size`
+  (§content.feeds, §content.records), and for find and find more `id`;
 - put, on success: writes `id`;
 - subscribe, unsubscribe, set nickname, save and delete, on success: nothing
   more;
@@ -129,7 +129,7 @@ of the block is written.
 | `02h` | Not found |
 | `03h` | Failed (network error or timeout; the host decides when to give up) |
 | `04h` | Bad request |
-| `05h` | Refused: the user said no, the host does not permit it, the host does not provide the operation (a host with only the machine's reading profile, §profiles: put, publish, find, set profile, set nickname, programs, save, load, delete and records), or the relays refused a find (§content.feeds) |
+| `05h` | Refused: the user said no, the host does not permit it, the host does not provide the operation (a host with only the machine's reading profile, §profiles: put, publish, find, find more, set profile, set nickname, programs, save, load, delete and records), or the relays refused a find (§content.feeds) |
 | `06h` | No room: a save would exceed the owner's limits (§content.records) |
 
 ## §content.events Events
@@ -188,6 +188,7 @@ feed key.
 | `0Bh` | Set profile |
 | `0Ch` | Set nickname |
 | `0Dh` | Programs |
+| `12h` | Find more |
 
 **Reading.** For subscriptions, timeline, names and programs, `id` is not
 used;
@@ -317,6 +318,22 @@ one from a client that searches too often), the request completes with
 status `05h`; otherwise, if no relay could be asked or none answered, with
 `03h`. A host that offers only the machine's reading profile (§profiles) may complete every find with status `05h`.
 
+**Find more** (`12h`) shows the next results of the machine's last find
+of the scope `offset` (1 to 3; any other value is invalid): `NETWORK.md`
+section 4.7, "More results". `id` and `size` are not read; `length` is
+the size of the buffer at `addr` (1 to 16,384, in RAM). It completes
+like a find, with up to 16 results that the find and the find mores of
+that scope since it did not deliver, in the order of `NETWORK.md` 4.7
+(the host keeps each relay's cursor and the results it has delivered).
+On the completion of a find or a find more with status `01h`, the first
+byte of `id` is 1 if the host has more results for a find more of that
+scope, else 0; the other 31 bytes are 0. A find replaces the machine's
+last find of its scope. A find more completes with status `02h` if the
+host holds no find of that scope from the machine that has more results
+(none was made, the last had no more, or the host no longer holds it, as
+after it restarted); otherwise with `05h` or `03h` as a find does. A host
+keeps at least the last find of each scope of each machine that runs.
+
 **Set profile** (`0Bh`) publishes a new profile for the host's own feed.
 `id` is not used. The display name is the `length` bytes at `addr` (1 to
 48, a valid display name, copied at submit); bit 0 of `offset` is set if
@@ -444,7 +461,7 @@ Provisional values (§provisional):
 - blobs of 1 to 1,048,576 bytes; 8 requests pending; 16,384 bytes
   delivered by one get, load, records or find request;
 - display names, nicknames and queries of 48 bytes, titles of 120, and 16
-  results to a find (§content.feeds);
+  results to a find or find more (§content.feeds);
 - named records (§content.records): names of 32 bytes, records of 65,536 bytes,
   and per owner 256 records and 1,048,576 bytes in all.
 

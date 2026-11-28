@@ -119,7 +119,7 @@ fn programs_build_as_their_build_sh_does() {
         ("fetch", "fetch.c", &["--ram-pages", "1", "--device", "2:0", "--device", "4:0", "--optional", "10:0"]),
         ("holo", "holo.c", &["--ram-pages", "2", "--device", "2:0", "--device", "9:0"]),
         ("hostile", "hostile.S", &["--ram-pages", "2", "--device", "2:0", "--device", "3:0", "--device", "7:0"]),
-        ("reader", "reader.c", &["--ram-pages", "42", "--device", "2:0", "--device", "4:0", "--device", "7:0", "--device", "10:0"]),
+        ("reader", "reader.c", &["--ram-pages", "45", "--device", "2:0", "--device", "4:0", "--device", "7:0", "--device", "10:0"]),
         ("reports", "reports.c", &["--ram-pages", "32", "--device", "2:0", "--device", "4:0", "--optional", "10:0"]),
         (
             "shell",

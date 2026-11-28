@@ -16,7 +16,7 @@ use terse_core::{Event, FrameInput, FrameResult, Image, Machine, PageInput, RAM_
 use terse_net::{BlobStore, Consent, ContentService, Draft, FeedKey, Identity, Node, Subscriptions, blob_id, to_hex};
 
 const IMAGE: &[u8] = include_bytes!("../../../programs/reader/reader.terse");
-const RAM_PAGES: u8 = 42;
+const RAM_PAGES: u8 = 45;
 /// 2026-11-17 18:00 UTC: entry times count up from here.
 const T0: u32 = 1_794_938_400;
 /// The article's (and help's) rectangle (reader.c RECT_*).
@@ -2113,6 +2113,36 @@ fn search_finds_feeds_and_articles() {
     let (worst, waited) = run.busiest();
     assert!(waited);
     eprintln!("reader: search, busiest frame {worst} units ({:.2}%)", common::pct(worst));
+}
+
+/// More results (NETWORK 4.7, op 12h): 20 articles match, the relays'
+/// section shows 16 and a "More results" row; Enter on it adds the other
+/// 4 at the end of the section, and the row goes.
+#[test]
+fn search_more_results() {
+    let mut f = named();
+    f.profile(&bob(), "Bob the baker", true);
+    f.feeds.retain(|k| *k != bob().feed_key());
+    for i in 0..20 {
+        f.publish(&bob(), &format!("Batch {i:02}"), format!("Batch number {i}.\n").as_bytes(), None);
+    }
+    let (_relay, url) = relay_for(&f);
+    f.relays.push(url);
+    let mut run = Run::with_consent(&f, "10 text /\n", Consent::Allow);
+    run.frames(12);
+    run.text("batch");
+    run.press("enter");
+    run.frames(3);
+    assert_eq!(run.status(), " 0 feeds and 16 articles found on your relays");
+    run.press("end");
+    assert_eq!(run.selected(), "More results");
+    assert!(run.page_text().contains("Enter: the next articles your relays found"), "{}", run.page_text());
+    run.press("enter");
+    run.frames(3);
+    assert_eq!(run.status(), " 4 more articles found on your relays");
+    run.press("end");
+    assert_eq!(run.selected(), "Batch 00", "the oldest, last; no More results row");
+    assert!(!run.page_text().contains("More results"), "{}", run.page_text());
 }
 
 #[test]

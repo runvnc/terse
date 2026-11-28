@@ -27,9 +27,11 @@ A find's scope is 1 (feeds by display name), 2 (article and document titles) or 
 | 2 | article and document entries of feeds with a listed profile in force | newest first by the order the relay stored them |
 | 3 | program entries, current versions only, of feeds with a listed profile | newest first by store order |
 
-A relay returns at most 16 results from what it holds (a profile document it lacks or cannot parse counts as not listed), and may refuse a connection that searches too often.
+A relay returns at most 16 results a page from what it holds (a profile document it lacks or cannot parse counts as not listed), and may refuse a connection that searches too often.
 
-Clients ask all their relays and merge: they drop invalid entries, ones of the wrong kind and ones that do not match, and keep one per feed and `seq`. Scope 1 keeps the highest `seq` of each feed, ordered as above; scopes 2 and 3 go by rank (each relay's first result, then each one's second, and so on), and scope 3 drops a program another result has a higher `seq` of. The first 16 are kept. NETWORK.md 4.7 has the rest.
+A find ends with `c` and a cursor; `c` 0 asks for the first page. A reply whose results do not end the list carries a cursor (1 to 64 bytes, the relay's own), else `c` 0. The next page is the same find with that cursor, sent back unchanged to the relay that gave it: the results after the last one of the page before, in the same order; what the relay stored since the first page is not in it. A cursor the relay cannot continue from is refused (3), and the client starts again from the first page. Each page counts as a find. A find that ends at its query (before paging) is a first page, answered without a cursor.
+
+Clients ask all their relays and merge: they drop invalid entries, ones of the wrong kind and ones that do not match, and keep one per feed and `seq`. Scope 1 keeps the highest `seq` of each feed, ordered as above; scopes 2 and 3 go by rank (each relay's first result, then each one's second, and so on), and scope 3 drops a program another result has a higher `seq` of. The first 16 are kept. For more, a client sends the next find to each relay that gave a cursor, merges those pages the same way, drops the results it has shown (same feed and `seq`; scope 1, same feed) and shows up to 16 more. NETWORK.md 4.7 has the rest.
 
 ## Lookup
 

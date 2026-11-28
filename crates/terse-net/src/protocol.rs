@@ -127,8 +127,11 @@ pub enum Request<'a> {
     Publish { req: u32, entry: &'a [u8] },
     Subscribe { req: u32, feed: FeedKey, after: u32 },
     Unsubscribe { req: u32, feed: FeedKey },
-    /// `scope` and `query` are not yet checked.
-    Find { req: u32, scope: u8, query: &'a [u8] },
+    /// `scope`, `query` and `cursor` are not yet checked. `cursor` is
+    /// `None` for a find that ends at the query (before paging, NETWORK
+    /// 4.7: taken as `c` 0, and answered without a cursor), else the `c`
+    /// bytes after it (empty: the first page).
+    Find { req: u32, scope: u8, query: &'a [u8], cursor: Option<&'a [u8]> },
     Peer,
     /// `kind` and `name` are not yet checked.
     Lookup { req: u32, feed: FeedKey, kind: u8, name: &'a [u8] },
@@ -139,8 +142,10 @@ pub const SCOPE_FEEDS: u8 = 1;
 pub const SCOPE_ENTRIES: u8 = 2;
 /// Find programs by name (NETWORK 4.7).
 pub const SCOPE_PROGRAMS: u8 = 3;
-/// Most results in a find reply.
+/// Most results in a find reply (a page).
 pub const MAX_FIND_RESULTS: usize = 16;
+/// Longest cursor of a find reply (NETWORK 4.7).
+pub const MAX_FIND_CURSOR: usize = 64;
 
 /// Why a client message could not be decoded.
 #[derive(Debug, PartialEq, Eq)]
@@ -167,8 +172,10 @@ pub enum Reply {
     Subscribed { req: u32, highest: u32 },
     /// A pushed entry, not yet validated.
     Entry(Vec<u8>),
-    /// A find reply: the entries, not yet validated (empty unless done).
-    Found { req: u32, status: u8, entries: Vec<Vec<u8>> },
+    /// A find reply: the entries, not yet validated (empty unless done),
+    /// and the cursor for the next page (empty: `c` 0, or a reply that
+    /// ends at the last entry, NETWORK 4.7).
+    Found { req: u32, status: u8, entries: Vec<Vec<u8>>, cursor: Vec<u8> },
     /// A lookup reply: the entry, not yet validated, if found.
     LookedUp { req: u32, status: u8, entry: Option<Vec<u8>> },
 }
@@ -247,23 +254,39 @@ pub fn encode_status_reply(kind: u8, req: u32, status: u8) -> Vec<u8> {
     m
 }
 
-pub fn encode_find(req: u32, scope: u8, query: &[u8]) -> Vec<u8> {
-    let mut m = header(FIND, req, 2 + query.len());
+/// Find (NETWORK 4.7). `cursor`: `None` ends the find at the query (as
+/// before paging; a relay answers it without a cursor), `Some` adds `c`
+/// and the cursor (empty: the first page).
+pub fn encode_find(req: u32, scope: u8, query: &[u8], cursor: Option<&[u8]>) -> Vec<u8> {
+    let mut m = header(FIND, req, 3 + query.len() + cursor.map_or(0, <[u8]>::len));
     m.push(scope);
     m.push(query.len() as u8);
     m.extend_from_slice(query);
+    if let Some(c) = cursor {
+        m.push(c.len() as u8);
+        m.extend_from_slice(c);
+    }
     m
 }
 
-/// Find reply: `status`, the count, then each entry with its length.
-pub fn encode_find_reply<E: AsRef<[u8]>>(req: u32, status: u8, entries: &[E]) -> Vec<u8> {
-    let entries = if status == status::DONE { entries } else { &[] };
-    let mut m = header(FIND_REPLY, req, 2 + entries.iter().map(|e| 2 + e.as_ref().len()).sum::<usize>());
+/// Find reply: `status`, the count, then each entry with its length, then
+/// (if `cursor` is `Some`) `c` and the cursor, which is sent only with
+/// status 1. `None` ends the reply at the last entry, as before paging: the
+/// answer to a find that ended at its query.
+pub fn encode_find_reply<E: AsRef<[u8]>>(req: u32, status: u8, entries: &[E], cursor: Option<&[u8]>) -> Vec<u8> {
+    let done = status == status::DONE;
+    let entries = if done { entries } else { &[] };
+    let cursor = cursor.map(|c| if done { c } else { &[][..] });
+    let mut m = header(FIND_REPLY, req, 3 + entries.iter().map(|e| 2 + e.as_ref().len()).sum::<usize>() + cursor.map_or(0, <[u8]>::len));
     m.push(status);
     m.push(entries.len() as u8);
     for e in entries {
         m.extend_from_slice(&(e.as_ref().len() as u16).to_le_bytes());
         m.extend_from_slice(e.as_ref());
+    }
+    if let Some(c) = cursor {
+        m.push(c.len() as u8);
+        m.extend_from_slice(c);
     }
     m
 }
@@ -328,8 +351,14 @@ pub fn decode_request(msg: &[u8]) -> Result<Request<'_>, Malformed> {
             Ok(feed) => Ok(Request::Unsubscribe { req, feed }),
             Err(_) => Err(Malformed::Refuse { reply: UNSUBSCRIBE_REPLY, req }),
         },
-        (FIND, req, [scope, n, query @ ..]) if query.len() == *n as usize => {
-            Ok(Request::Find { req, scope: *scope, query })
+        (FIND, req, [scope, n, rest @ ..]) if rest.len() >= *n as usize => {
+            let (query, tail) = rest.split_at(*n as usize);
+            let cursor = match tail {
+                [] => None,
+                [c, cursor @ ..] if cursor.len() == *c as usize => Some(cursor),
+                _ => return Err(Malformed::Refuse { reply: FIND_REPLY, req }),
+            };
+            Ok(Request::Find { req, scope: *scope, query, cursor })
         }
         (FIND, req, _) => Err(Malformed::Refuse { reply: FIND_REPLY, req }),
         (LOOKUP, req, rest) if rest.len() >= 34 && rest.len() == 34 + rest[33] as usize => Ok(Request::Lookup {
@@ -343,8 +372,9 @@ pub fn decode_request(msg: &[u8]) -> Result<Request<'_>, Malformed> {
     }
 }
 
-/// The entries of a done find reply's body (after the status).
-fn decode_found(mut body: &[u8]) -> Option<Vec<Vec<u8>>> {
+/// The entries and the cursor of a done find reply's body (after the
+/// status); a body that ends at the last entry has cursor `c` 0.
+fn decode_found(mut body: &[u8]) -> Option<(Vec<Vec<u8>>, Vec<u8>)> {
     let (&count, rest) = body.split_first()?;
     body = rest;
     let mut entries = Vec::with_capacity(count as usize);
@@ -353,7 +383,12 @@ fn decode_found(mut body: &[u8]) -> Option<Vec<Vec<u8>>> {
         entries.push(body.get(2..2 + len)?.to_vec());
         body = &body[2 + len..];
     }
-    body.is_empty().then_some(entries)
+    let cursor = match body {
+        [] => Vec::new(),
+        [c, cursor @ ..] if cursor.len() == *c as usize && cursor.len() <= MAX_FIND_CURSOR => cursor.to_vec(),
+        _ => return None,
+    };
+    Some((entries, cursor))
 }
 
 /// `None` for anything that is not a well-formed reply.
@@ -370,8 +405,11 @@ pub fn decode_reply(msg: &[u8]) -> Option<Reply> {
         PUT_REPLY if body.is_empty() => Some(Reply::Put { req, status, id: None }),
         SUBSCRIBE_REPLY if done => Some(Reply::Subscribed { req, highest: u32::from_le_bytes(body.try_into().ok()?) }),
         PUBLISH_REPLY | SUBSCRIBE_REPLY | UNSUBSCRIBE_REPLY if body.is_empty() => Some(Reply::Status { kind, req, status }),
-        FIND_REPLY if done => Some(Reply::Found { req, status, entries: decode_found(body)? }),
-        FIND_REPLY if body == [0] => Some(Reply::Found { req, status, entries: Vec::new() }),
+        FIND_REPLY if done => {
+            let (entries, cursor) = decode_found(body)?;
+            Some(Reply::Found { req, status, entries, cursor })
+        }
+        FIND_REPLY if body == [0] || body == [0, 0] => Some(Reply::Found { req, status, entries: Vec::new(), cursor: Vec::new() }),
         LOOKUP_REPLY if done && !body.is_empty() => Some(Reply::LookedUp { req, status, entry: Some(body.to_vec()) }),
         LOOKUP_REPLY if !done && body.is_empty() => Some(Reply::LookedUp { req, status, entry: None }),
         _ => None,
@@ -451,22 +489,40 @@ mod tests {
 
     #[test]
     fn find_messages() {
-        let find = encode_find(0x0403_0201, SCOPE_FEEDS, b"ana");
+        let find = encode_find(0x0403_0201, SCOPE_FEEDS, b"ana", None);
         assert_eq!(find, [FIND, 1, 2, 3, 4, 1, 3, b'a', b'n', b'a']);
-        assert_eq!(decode_request(&find), Ok(Request::Find { req: 0x0403_0201, scope: 1, query: b"ana" }));
-        assert_eq!(decode_request(&find[..9]), Err(Malformed::Refuse { reply: FIND_REPLY, req: 0x0403_0201 }));
-        assert_eq!(decode_request(&find[..6]), Err(Malformed::Refuse { reply: FIND_REPLY, req: 0x0403_0201 }));
-        let reply = encode_find_reply(7, status::DONE, &[b"ab".to_vec(), b"c".to_vec()]);
+        let req = 0x0403_0201;
+        assert_eq!(decode_request(&find), Ok(Request::Find { req, scope: 1, query: b"ana", cursor: None }));
+        assert_eq!(decode_request(&find[..9]), Err(Malformed::Refuse { reply: FIND_REPLY, req }));
+        assert_eq!(decode_request(&find[..6]), Err(Malformed::Refuse { reply: FIND_REPLY, req }));
+        // NETWORK 4.7: `c` and the cursor after the query.
+        let first = encode_find(req, SCOPE_FEEDS, b"ana", Some(&[]));
+        assert_eq!(first, [FIND, 1, 2, 3, 4, 1, 3, b'a', b'n', b'a', 0]);
+        assert_eq!(decode_request(&first), Ok(Request::Find { req, scope: 1, query: b"ana", cursor: Some(&[]) }));
+        let next = encode_find(req, SCOPE_ENTRIES, b"ana", Some(b"xy"));
+        assert_eq!(next[10..], [2, b'x', b'y']);
+        assert_eq!(decode_request(&next), Ok(Request::Find { req, scope: 2, query: b"ana", cursor: Some(b"xy") }));
+        assert_eq!(decode_request(&next[..12]), Err(Malformed::Refuse { reply: FIND_REPLY, req }), "cursor cut short");
+        assert_eq!(decode_request(&[next.clone(), vec![0]].concat()), Err(Malformed::Refuse { reply: FIND_REPLY, req }));
+
+        let reply = encode_find_reply(7, status::DONE, &[b"ab".to_vec(), b"c".to_vec()], None);
         assert_eq!(reply, [FIND_REPLY, 7, 0, 0, 0, 1, 2, 2, 0, b'a', b'b', 1, 0, b'c']);
-        assert_eq!(
-            decode_reply(&reply),
-            Some(Reply::Found { req: 7, status: 1, entries: vec![b"ab".to_vec(), b"c".to_vec()] })
-        );
+        let found = |cursor: &[u8]| Some(Reply::Found { req: 7, status: 1, entries: vec![b"ab".to_vec(), b"c".to_vec()], cursor: cursor.to_vec() });
+        assert_eq!(decode_reply(&reply), found(b""), "a reply that ends at the last entry: c 0");
         assert_eq!(decode_reply(&reply[..reply.len() - 1]), None, "cut short");
-        assert_eq!(decode_reply(&[reply.clone(), vec![0]].concat()), None, "trailing byte");
-        let refused = encode_find_reply(7, status::REFUSED, &[b"x"]);
+        assert_eq!(decode_reply(&[reply.clone(), vec![0]].concat()), found(b""), "c 0");
+        assert_eq!(decode_reply(&[reply.clone(), vec![1]].concat()), None, "a cursor cut short");
+        let paged = encode_find_reply(7, status::DONE, &[b"ab".to_vec(), b"c".to_vec()], Some(b"next"));
+        assert_eq!(paged[14..], [4, b'n', b'e', b'x', b't']);
+        assert_eq!(decode_reply(&paged), found(b"next"));
+        assert_eq!(decode_reply(&[&paged[..14], &[65], &[0; 65][..]].concat()), None, "a cursor over 64 bytes");
+        let refused = encode_find_reply(7, status::REFUSED, &[b"x"], None);
         assert_eq!(refused, [FIND_REPLY, 7, 0, 0, 0, 3, 0]);
-        assert_eq!(decode_reply(&refused), Some(Reply::Found { req: 7, status: 3, entries: Vec::new() }));
+        let none = Some(Reply::Found { req: 7, status: 3, entries: Vec::new(), cursor: Vec::new() });
+        assert_eq!(decode_reply(&refused), none);
+        let refused = encode_find_reply(7, status::REFUSED, &[b"x"], Some(b"next"));
+        assert_eq!(refused, [FIND_REPLY, 7, 0, 0, 0, 3, 0, 0], "c 0 in a refused reply");
+        assert_eq!(decode_reply(&refused), none);
         assert_eq!(encode_peer(), [PEER]);
     }
 
@@ -504,7 +560,10 @@ mod tests {
         assert_eq!(Refusal::TryLater(secs(600)).describe(), "too many requests from this address; try again in 10 min");
         // Older clients read any refusal as one: the layouts do not change.
         assert_eq!(decode_reply(&encode_put_reply(1, status::FEED_FULL, &[0; 32])), Some(Reply::Put { req: 1, status: 4, id: None }));
-        assert_eq!(decode_reply(&encode_find_reply::<&[u8]>(1, 70, &[])), Some(Reply::Found { req: 1, status: 70, entries: Vec::new() }));
+        assert_eq!(
+            decode_reply(&encode_find_reply::<&[u8]>(1, 70, &[], None)),
+            Some(Reply::Found { req: 1, status: 70, entries: Vec::new(), cursor: Vec::new() })
+        );
     }
 
     #[test]

@@ -139,7 +139,7 @@ fn covers_the_spec() {
     let mut ops = vec![("01h".to_string(), "get".to_string()), ("02h".to_string(), "put".to_string())];
     ops.extend(spec_rows(&content, "## §content.feeds Feeds, names and search"));
     ops.extend(spec_rows(&content, "## §content.records Named records"));
-    assert_eq!(ops.len(), 17);
+    assert_eq!(ops.len(), 18);
     for (n, name) in &ops {
         find("content op", n, name);
     }

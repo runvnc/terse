@@ -232,6 +232,11 @@
  * comes back), or passes a document to the shell. Results of this host
  * come in while the list is shown: rows below them move down, and the
  * selection and the top with them, so what is selected stays.
+ * A relay section whose search has more (content_find_has_more) ends with
+ * a "More results" row: Enter or a click on it asks for the next page
+ * (find more, op 12h), whose results are added at the end of the section
+ * (each section holds at most FIND_MAX results, FIND_CAP bytes; past
+ * that its heading says to refine the search).
  *
  * In your articles: the search reads the timeline newest first (its own
  * requests, LS_PAGE bytes at a time) and tests each entry's title, then,
@@ -269,7 +274,7 @@
  * Memory: everything is a static array in RAM (flat addresses): the 16 KiB
  * timeline buffer, a 16 KiB buffer for counting, a 16 KiB buffer for
  * looking up a linked article's entry, 16 KiB of subscription records,
- * 16 KiB of names records, two 4 KiB search buffers, up to 48 KiB of the
+ * 16 KiB of names records, two 16 KiB search buffers, up to 48 KiB of the
  * article (ART_CAP), the 64 KiB article document, an 8 KiB document for
  * the other views, and for searching this host's articles about 100 KiB:
  * the 64 KiB ring of chunks, an 8 KiB timeline page, 16 entries being
@@ -490,14 +495,20 @@ static uint8_t nick_key[32]; /* the feed a nickname is typed for */
 /* Search (op 0Ah): the query, the two requests (feeds, articles), their
  * results (timeline records) and where each starts, and their status (0
  * while pending). The list's rows: the feeds' heading, the feeds, the
- * articles' heading, the articles. */
+ * articles' heading, the articles. A page (op 0Ah, then 12h for more) is
+ * delivered at the end of a section's results, FIND_LEN bytes at most;
+ * s_used, s_more and s_paging are per section (0 feeds, 1 articles):
+ * the bytes used, whether the host has more, a find more out. */
 #define FIND_LEN 4096
-#define FIND_MAX 16
+#define FIND_CAP 16384
+#define FIND_MAX 64
 static content_req sf_req, sa_req;
 static uint8_t sf_handle, sa_handle, sf_st, sa_st, s_ran;
-static uint8_t sf_buf[FIND_LEN], sa_buf[FIND_LEN];
+static uint8_t sf_buf[FIND_CAP], sa_buf[FIND_CAP];
 static uint16_t sf_at[FIND_MAX], sa_at[FIND_MAX];
 static uint8_t sf_n, sa_n;
+static uint16_t s_used[2];
+static uint8_t s_more[2], s_paging[2];
 static uint8_t s_query[48], s_qlen;
 static uint8_t s_back; /* the view search goes back to */
 
@@ -4039,14 +4050,26 @@ static uint16_t s_hf(void)
     return ls_n + 1;
 }
 
+/* Whether relay section k (0 feeds, 1 articles) has room for a page. */
+static uint8_t s_room(uint8_t k)
+{
+    return s_used[k] + FIND_LEN <= FIND_CAP && (k ? sa_n : sf_n) + 16 <= FIND_MAX;
+}
+
+/* Whether relay section k ends with a "More results" row. */
+static uint8_t s_more_row(uint8_t k)
+{
+    return s_paging[k] || (s_more[k] && s_room(k));
+}
+
 static uint16_t s_ha(void)
 {
-    return ls_n + sf_n + 2;
+    return ls_n + sf_n + s_more_row(0) + 2;
 }
 
 static uint16_t s_rows(void)
 {
-    return 3 + ls_n + sf_n + sa_n;
+    return 3 + ls_n + sf_n + s_more_row(0) + sa_n + s_more_row(1);
 }
 
 /* Whether row r is a section's heading. */
@@ -4062,7 +4085,13 @@ static uint8_t s_section(uint16_t r)
     return r < s_hf() ? 0 : r < s_ha() ? 1 : 2;
 }
 
-/* The result record of row r (not a heading). */
+/* Whether row r is a relay section's "More results" row. */
+static uint8_t s_is_more(uint16_t r)
+{
+    return (s_more_row(0) && r == s_hf() + sf_n + 1) || (s_more_row(1) && r == s_ha() + sa_n + 1);
+}
+
+/* The result record of row r (not a heading or a "More results" row). */
 static const uint8_t *s_record(uint16_t r)
 {
     switch (s_section(r)) {
@@ -4096,11 +4125,12 @@ static void s_fix(int8_t dir)
     lp_set(&srp, total, k, k == 1 ? 0 : srp.top);
 }
 
-/* A search's results: where each record starts. */
-static uint8_t find_parse(const uint8_t *buf, const content_req *r, uint16_t *at)
+/* A page of a search's results, delivered at `from` in buf after n
+ * results: where each record starts; returns the results now. */
+static uint8_t find_parse(const uint8_t *buf, uint16_t from, const content_req *r, uint16_t *at, uint8_t n)
 {
-    uint32_t a = 0, n = 0;
-    while (a < r->length && n < FIND_MAX) {
+    uint32_t a = from;
+    while (a < from + r->length && n < FIND_MAX) {
         at[n++] = a;
         a += 1 + buf[a];
     }
@@ -4742,8 +4772,8 @@ static void ls_slot(uint16_t i, uint8_t s)
     slot_end(i + 1);
 }
 
-/* The line under a relay section's heading. */
-static void s_section_meta(uint8_t st, uint8_t n)
+/* The line under relay section k's heading. */
+static void s_section_meta(uint8_t k, uint8_t st, uint8_t n)
 {
     tb_n = 0;
     if (!st)
@@ -4751,6 +4781,8 @@ static void s_section_meta(uint8_t st, uint8_t n)
     else if (st == STATUS_DONE && n) {
         tb_u(n);
         tb_s(" found");
+        if (s_more[k] && !s_room(k))
+            tb_s("; your relays have more: refine the search to see them");
     }
     else if (st == STATUS_DONE)
         tb_s("none found");
@@ -4795,7 +4827,7 @@ static void search_doc(void)
             } else {
                 doc_s(i == s_hf() ? "Feeds" : "Articles on your relays");
                 slot_meta(rgb_meta);
-                s_section_meta(i == s_hf() ? sf_st : sa_st, i == s_hf() ? sf_n : sa_n);
+                s_section_meta(i != s_hf(), i == s_hf() ? sf_st : sa_st, i == s_hf() ? sf_n : sa_n);
             }
             doc_text(tb, tb_n);
             continue;
@@ -4803,6 +4835,15 @@ static void search_doc(void)
         s = i == srp.sel;
         if (!s_section(i)) {
             ls_slot(i, s);
+            continue;
+        }
+        if (s_is_more(i)) {
+            uint8_t k = s_section(i) == 2;
+            slot_begin(s ? rgb_sel : rgb_entry, 0, i + 1);
+            doc_s(s_paging[k] ? "Asking your relays for more\xE2\x80\xA6" : "More results");
+            slot_meta(s ? rgb_sel_meta : rgb_meta);
+            doc_s(k ? "Enter: the next articles your relays found" : "Enter: the next feeds your relays found");
+            slot_end(i + 1);
             continue;
         }
         r = s_record(i);
@@ -5001,6 +5042,7 @@ static const char *const help_keys[] = {
              "a\xE2\x80\x93z match each other, other characters only themselves",
     "\xE2\x86\x91 \xE2\x86\x93  wheel, click", "select a result; Enter opens it (an article of yours at its first match; a "
                                        "feed's page, where S subscribes; a document as in the timeline)",
+    "Enter on More results", "the next results from your relays, added at the end of the section",
     "typing, Enter on a result, Esc", "stop the search of your articles",
     "Esc", "back",
     0, "Help",
@@ -5745,7 +5787,7 @@ static void dn_step(void)
     } else if (view == SEARCH && s_ran) {
         end = srp.top + vis() + 1;
         for (i = srp.top; i < end && i < s_rows(); i++)
-            if (!s_heading(i) && s_section(i) != 1 && dn_want(s_record(i)))
+            if (!s_heading(i) && s_section(i) != 1 && !s_is_more(i) && dn_want(s_record(i)))
                 return;
     }
     dn_scan = 0;
@@ -6270,6 +6312,8 @@ static void search_run(void)
     s_qlen = entry_n;
     memcpy(s_query, entry_buf, s_qlen);
     sf_n = sa_n = 0;
+    s_used[0] = s_used[1] = 0;
+    s_more[0] = s_more[1] = s_paging[0] = s_paging[1] = 0;
     s_ran = 1;
     ls_start();
     sf_handle = content_find(&sf_req, FIND_FEEDS, s_query, s_qlen, sf_buf, FIND_LEN);
@@ -6290,18 +6334,80 @@ static void search_run(void)
     say(C_INFO);
 }
 
+/* "More results" in relay section k: the next page (op 12h), added at
+ * the end of the section. */
+static void search_more(uint8_t k)
+{
+    content_req *r = k ? &sa_req : &sf_req;
+    uint8_t *h = k ? &sa_handle : &sf_handle;
+    tb_n = 0;
+    if (*h || !s_more[k] || !s_room(k))
+        return;
+    *h = content_find_more(r, k ? FIND_ENTRIES : FIND_FEEDS, (k ? sa_buf : sf_buf) + s_used[k], FIND_LEN);
+    if (!*h) {
+        tb_s("Could not ask for more: too many requests pending");
+        say(C_ERROR);
+        return;
+    }
+    s_paging[k] = 1;
+    page_dirty = 1;
+    tb_s(k ? "Asking your relays for more articles\xE2\x80\xA6" : "Asking your relays for more feeds\xE2\x80\xA6");
+    say(C_INFO);
+}
+
+/* A find more is in: its results follow the section's. */
+static void find_more_done(uint8_t k, uint8_t status)
+{
+    content_req *r = k ? &sa_req : &sf_req;
+    uint8_t before = k ? sa_n : sf_n, n;
+    s_paging[k] = 0;
+    page_dirty = 1;
+    tb_n = 0;
+    if (status != STATUS_DONE) {
+        if (status == STATUS_NOT_FOUND)
+            s_more[k] = 0;
+        tb_s(status == STATUS_NOT_FOUND ? "Your relays have nothing more for this search"
+                                        : "Your relays did not answer; try More results again");
+        say(C_INFO);
+        lp_keep(&srp, s_rows());
+        return;
+    }
+    if (k)
+        n = sa_n = find_parse(sa_buf, s_used[1], r, sa_at, sa_n);
+    else
+        n = sf_n = find_parse(sf_buf, s_used[0], r, sf_at, sf_n);
+    s_used[k] += r->length;
+    s_more[k] = content_find_has_more(r);
+    lp_keep(&srp, s_rows());
+    tb_u(n - before);
+    tb_s(k ? " more articles found on your relays" : " more feeds found on your relays");
+    say(C_OK);
+}
+
 /* A search request is in: when both are, the selection goes to the first
  * result and the status row says how it went. */
 static void find_done(uint8_t feeds, uint8_t status)
 {
+    if (s_paging[!feeds]) {
+        if (feeds)
+            sf_handle = 0;
+        else
+            sa_handle = 0;
+        find_more_done(!feeds, status);
+        return;
+    }
     if (feeds) {
         sf_handle = 0;
         sf_st = status;
-        sf_n = status == STATUS_DONE ? find_parse(sf_buf, &sf_req, sf_at) : 0;
+        sf_n = status == STATUS_DONE ? find_parse(sf_buf, 0, &sf_req, sf_at, 0) : 0;
+        s_used[0] = status == STATUS_DONE ? sf_req.length : 0;
+        s_more[0] = status == STATUS_DONE && content_find_has_more(&sf_req);
     } else {
         sa_handle = 0;
         sa_st = status;
-        sa_n = status == STATUS_DONE ? find_parse(sa_buf, &sa_req, sa_at) : 0;
+        sa_n = status == STATUS_DONE ? find_parse(sa_buf, 0, &sa_req, sa_at, 0) : 0;
+        s_used[1] = status == STATUS_DONE ? sa_req.length : 0;
+        s_more[1] = status == STATUS_DONE && content_find_has_more(&sa_req);
     }
     page_dirty = 1;
     if (sf_handle || sa_handle)
@@ -6657,6 +6763,10 @@ static void search_open_row(uint16_t r)
     uint8_t sec;
     if (r >= s_rows() || s_heading(r))
         return;
+    if (s_is_more(r)) {
+        search_more(s_section(r) == 2);
+        return;
+    }
     rec = s_record(r);
     sec = s_section(r);
     ls_halt(LS_STOPPED); /* opening a result stops the search */

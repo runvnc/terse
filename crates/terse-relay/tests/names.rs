@@ -172,7 +172,7 @@ fn find_rate_limit() {
         replies.into_iter().map(|r| r.1).collect::<Vec<_>>()
     };
     let got = ask(&mut client, 6);
-    let found = RelayReply::Found(Vec::new());
+    let found = RelayReply::Found(Vec::new(), Vec::new());
     assert_eq!(got[..4], [found.clone(), found.clone(), found.clone(), found.clone()]);
     // NETWORK 3.1: refused with a wait of at most a second.
     let later = RelayReply::Refused(terse_net::protocol::Refusal::TryLater(std::time::Duration::from_secs(1)));

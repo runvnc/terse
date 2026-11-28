@@ -246,6 +246,15 @@ uint32_t content_find(content_req *r, uint8_t scope, const void *query, uint32_t
     return content_submit(r);
 }
 
+uint32_t content_find_more(content_req *r, uint8_t scope, void *buf, uint32_t buflen)
+{
+    r->op = CONTENT_FIND_MORE;
+    r->offset = scope;
+    r->length = buflen;
+    r->addr = (uint32_t)buf;
+    return content_submit(r);
+}
+
 uint32_t content_set_profile(content_req *r, const void *name, uint32_t len, uint8_t listed)
 {
     r->op = CONTENT_SET_PROFILE;
